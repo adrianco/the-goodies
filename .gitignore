@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+.DS_Store
+downloads/
+sessions/
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+memory_key.txt
