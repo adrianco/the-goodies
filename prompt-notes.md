@@ -1,0 +1,25 @@
+# IGNORE THIS FILE
+
+# Keep notes on what prompts have been used for claude-flow
+
+hive mind created with Objective: 
+review the plan in homegraph_mcp_library_initial.md and the plans in related project github.com/adrianco/c11s-ios-house/plans which haven't been implemented yet. Write detailed step 
+  by step plans in a new /plans directory for how to build and test this system, including a pull request against c11s-house-ios/plans that details how to interface to the finished 
+  the-goodies/WildThing MCP service, don't start creating project structure or code files yet, just plans ready for review and refinement
+
+
+claude-flow alpha swarm bug - can't find analyst agent-type
+do not use the 'coordinator' agent-type use the 'adaptiv-coordinator' (or hierarchical-coordinator or mesh-coordinator)
+do not use 'analyst' use 'code-analyzer'
+do not use 'architect' use 'system-architect'
+
+> do not use the 'analyst' agent-type, use code-analyzer
+
+● I'll correct the agent type and continue with the swarm orchestration using the proper agent types.
+
+
+Objective: simplify the plans, the system only needs to support one house with a few hundred entities, a handful of users, and a low update rate. Use sqlite everywhere with last write wins and timestamps. 
+  re-sequence the work to build all the python code first making sure it all works, before building the Swift/WildThing code
+
+
+  

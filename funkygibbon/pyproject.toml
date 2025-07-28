@@ -1,0 +1,42 @@
+[tool.poetry]
+name = "funkygibbon"
+version = "0.1.0"
+description = "Simplified smart home knowledge graph backend"
+authors = ["The Goodies Team"]
+readme = "README.md"
+python = "^3.11"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.23"}
+aiosqlite = "^0.19.0"
+pydantic = "^2.5.0"
+fastapi = "^0.104.1"
+click = "^8.1.7"
+python-dateutil = "^2.8.2"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-asyncio = "^0.21.1"
+pytest-cov = "^4.1.0"
+mypy = "^1.7.0"
+black = "^23.11.0"
+ruff = "^0.1.6"
+httpx = "^0.25.2"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
