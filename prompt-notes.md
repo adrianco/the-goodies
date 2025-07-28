@@ -22,4 +22,7 @@ Objective: simplify the plans, the system only needs to support one house with a
   re-sequence the work to build all the python code first making sure it all works, before building the Swift/WildThing code
 
 
-  
+  > I see code in directories - tests and FunkyGibbon/tests and funkygibbon/tests - please clean up the directory structure and implement the remaining tests for Python functionality. Create a document that summarizes
+   what the tests do and the test results
+
+   
