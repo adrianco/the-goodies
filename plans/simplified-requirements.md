@@ -1,3 +1,30 @@
+<!--
+The Goodies - Simplified Requirements Document
+
+DEVELOPMENT CONTEXT:
+Created after the initial project scope proved too ambitious. This document
+captures the dramatically simplified requirements focusing on a single-house
+deployment with pragmatic technical choices.
+
+DOCUMENT PURPOSE:
+Defines the current, realistic scope of The Goodies project after the pivot
+from enterprise-scale to single-house deployment. This is the authoritative
+source for what we're actually building.
+
+REVISION HISTORY:
+- 2024-01-15: Created to document simplified scope
+- 2024-01-15: Reduced from 12-week to 4-week timeline
+- 2024-01-15: Changed from PostgreSQL+Redis to SQLite only
+- 2024-01-15: Simplified from vector clocks to last-write-wins
+
+KEY DECISIONS:
+- Single house only (no multi-tenancy)
+- ~300 entities maximum
+- SQLite for all storage
+- Last-write-wins conflict resolution
+- REST API only (no WebSockets)
+-->
+
 # The Goodies - Simplified Requirements Document
 
 ## Overview

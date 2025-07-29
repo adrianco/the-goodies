@@ -1,3 +1,27 @@
+<!--
+The Goodies - System Architecture Documentation
+
+DEVELOPMENT CONTEXT:
+Originally created as a comprehensive distributed smart home system with
+multiple houses and complex synchronization. Later simplified to focus on
+single-house deployments with SQLite and last-write-wins conflict resolution.
+
+DOCUMENT PURPOSE:
+Provides the high-level system architecture and design decisions for The
+Goodies smart home knowledge graph system. Serves as the primary technical
+reference for understanding system components and their interactions.
+
+REVISION HISTORY:
+- 2024-01-10: Initial architecture for distributed multi-house system
+- 2024-01-15: Simplified to single-house deployment with SQLite
+- 2024-01-15: Added Blowing-Off test client to architecture
+
+CURRENT STATUS:
+This document reflects the ORIGINAL ambitious architecture. The actual
+implementation has been significantly simplified. See simplified-requirements.md
+for the current scope.
+-->
+
 # The Goodies - System Architecture Specification
 
 ## Executive Summary

@@ -7,6 +7,8 @@ This directory contains planning and development documentation for The Goodies s
 ### Requirements & Scope
 - **[simplified-requirements.md](simplified-requirements.md)** - Current simplified scope (single house, SQLite, last-write-wins)
 - **[funkygibbon-python-implementation.md](funkygibbon-python-implementation.md)** - Python backend implementation details
+- **[inbetweenies-protocol.md](inbetweenies-protocol.md)** - Synchronization protocol specification
+- **[blowing-off-client-implementation.md](blowing-off-client-implementation.md)** - Python test client implementation
 
 ### Development Steps
 - **[funkygibbon-development-steps.md](funkygibbon-development-steps.md)** - Python backend development plan
@@ -18,6 +20,7 @@ This directory contains planning and development documentation for The Goodies s
 - **[project-timeline.md](project-timeline.md)** - Development timeline (4 weeks instead of 12)
 - **[weekly-deliverables.md](weekly-deliverables.md)** - Week-by-week deliverables
 - **[risk-mitigation-plan.md](risk-mitigation-plan.md)** - Risk assessment and mitigation
+- **[DOCUMENTATION_STATUS.md](DOCUMENTATION_STATUS.md)** - Source code documentation tracking
 
 ### Implementation & Deployment
 - **[implementation-guide.md](implementation-guide.md)** - Overall implementation strategy
@@ -39,5 +42,7 @@ The [archive](archive/) directory contains obsolete planning documents from when
 ## Current Status
 
 - ✅ **FunkyGibbon (Python)**: Functional with API, models, repositories, and tests
+- 🚧 **Blowing-Off (Python Client)**: In development - test client implementation
+- 🚧 **Inbetweenies Protocol**: Specified - synchronization protocol
 - 📋 **WildThing (Swift)**: Planned, interface designed
 - 📋 **iOS Integration**: Ready to begin once WildThing is implemented

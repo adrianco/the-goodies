@@ -1,3 +1,26 @@
+<!--
+The Goodies - Project Root Documentation
+
+DEVELOPMENT CONTEXT:
+Created as the main entry point for The Goodies smart home knowledge graph
+system. Originally envisioned as an enterprise-scale distributed system,
+later simplified to a practical single-house deployment.
+
+DOCUMENT PURPOSE:
+Provides project overview, quick start guide, and navigation to all other
+documentation. First point of contact for new developers and users.
+
+REVISION HISTORY:
+- 2024-01-10: Initial creation with ambitious multi-house vision
+- 2024-01-15: Simplified to single-house, added FunkyGibbon details
+- 2024-01-15: Added Blowing-Off client documentation
+- 2024-01-15: Updated with comprehensive documentation links
+
+NAMING:
+Named after the BBC TV comedy show "The Goodies" who had some hit singles
+in the 1970s, continuing the Python (Monty Python) naming tradition.
+-->
+
 # The Goodies
 
 ## Smart Home Knowledge Graph System
@@ -5,6 +28,8 @@
 A simplified smart home system designed for single-house deployments with SQLite storage and last-write-wins conflict resolution. Built with Python (FunkyGibbon backend) and Swift (WildThing iOS/macOS) components.
 
 ### 🚀 Quick Start
+
+#### 1. Start the Backend Server
 
 ```bash
 # Install and run the Python backend
@@ -16,33 +41,55 @@ python -m funkygibbon.main
 # API docs at http://localhost:8000/docs
 ```
 
+#### 2. Install and Use the Client
+
+```bash
+# Install the Python test client
+cd blowing-off
+pip install -e .
+
+# Connect to server
+blowing-off connect --server-url http://localhost:8000 --auth-token test-token
+
+# Sync data
+blowing-off sync
+
+# View synchronized data
+blowing-off house show
+blowing-off device list
+```
+
 ### 📋 Features
 
 - **Simple Scale**: Designed for 1 house, ~300 entities, 3-5 users
 - **SQLite Storage**: Single file database with optimizations
 - **Last-Write-Wins**: Simple timestamp-based conflict resolution
 - **REST API**: FastAPI-based endpoints for all entities
+- **Sync Protocol**: Inbetweenies bidirectional synchronization
+- **Offline Support**: Client works offline with automatic sync
 - **Type Safety**: Full Python 3.11+ type hints
 - **Performance**: <1s for 300 entity operations
 
 ### 🏗️ Architecture
 
-The system consists of two main components:
+The system consists of three main components:
 
 1. **FunkyGibbon** (Python Backend) - REST API server with SQLite storage
-2. **WildThing** (Swift Package) - iOS/macOS client library (in development)
+2. **Blowing-Off** (Python Client) - Test client with Inbetweenies sync protocol
+3. **WildThing** (Swift Package) - iOS/macOS client library (in development)
 
 ### 📚 Documentation
 
 - **[Architecture Overview](architecture/SYSTEM_ARCHITECTURE.md)** - System design and components
 - **[API Documentation](architecture/api/MCP_TOOLS_API.md)** - REST API endpoints
 - **[Database Schema](architecture/database/SCHEMA_DESIGN_DECISIONS.md)** - SQLite schema design
-- **[Claude Configuration](docs/CLAUDE_CONFIGURATION.md)** - Claude Code setup and commands
 
 #### Component Documentation
 
 - **[FunkyGibbon Backend](funkygibbon/README.md)** - Python backend implementation
 - **[FunkyGibbon Tests](funkygibbon/TEST_SUMMARY.md)** - Test suite documentation
+- **[Blowing-Off Client](blowing-off/README.md)** - Python test client implementation
+- **[Inbetweenies Protocol](plans/inbetweenies-protocol.md)** - Synchronization protocol
 - **[Implementation Summary](funkygibbon/IMPLEMENTATION_SUMMARY.md)** - Development progress
 
 #### Planning & Development
