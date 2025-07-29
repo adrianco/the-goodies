@@ -1,5 +1,53 @@
 """
-House model - top level entity in the knowledge graph.
+FunkyGibbon - House Model (Root Entity)
+
+DEVELOPMENT CONTEXT:
+Created in January 2024 as the root entity of the smart home knowledge graph.
+In our simplified single-house design, there's typically only one House record
+per deployment, representing the entire smart home installation.
+
+FUNCTIONALITY:
+- Root entity that contains all rooms, devices, and users
+- Stores house-level metadata (name, address, location, timezone)
+- Maintains denormalized counters for performance (room/device/user counts)
+- Provides settings storage via JSON field for flexibility
+- Implements cascading deletes to remove all child entities
+- Supports soft deletes for sync scenarios
+
+PURPOSE:
+The House model serves as the entry point for all smart home data. Since we
+target single-family homes, this simplifies the data model compared to
+multi-tenant systems while still providing a logical hierarchy.
+
+KNOWN ISSUES:
+- Denormalized counters can drift from actual counts without triggers
+- settings_json is Text not JSON type (SQLite compatibility)
+- No validation on latitude/longitude ranges
+- Timezone field doesn't validate against known timezones
+- Address field is unstructured text (no geocoding integration)
+
+REVISION HISTORY:
+- 2024-01-15: Initial model with basic fields
+- 2024-01-16: Added location fields (lat/long/timezone)
+- 2024-01-17: Added denormalized counters for performance
+- 2024-01-18: Added cascade delete for child entities
+- 2024-01-19: Added to_dict method for API serialization
+
+DEPENDENCIES:
+- sqlalchemy: ORM mappings and relationships
+- .base: BaseEntity for common fields and timestamps
+
+USAGE:
+# Create a house:
+house = House(
+    name="Smith Residence",
+    address="123 Main St",
+    timezone="America/New_York"
+)
+
+# Access relationships:
+for room in house.rooms:
+    print(f"Room: {room.name}")
 """
 
 from typing import Optional

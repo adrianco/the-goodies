@@ -1,5 +1,58 @@
 """
-Device model - represents smart home devices.
+FunkyGibbon - Device Model (Smart Home Devices)
+
+DEVELOPMENT CONTEXT:
+Created in January 2024 as part of the core smart home entity hierarchy.
+Devices are the primary entities users interact with - lights, switches,
+sensors, etc. The model is designed to be flexible enough to support
+various device types while maintaining performance at scale (~300 devices).
+
+FUNCTIONALITY:
+- Represents any smart home device (lights, switches, sensors, thermostats)
+- Belongs to a room and house with denormalized names for performance
+- Stores device state and capabilities as JSON for flexibility
+- Tracks network information (IP/MAC) for debugging and discovery
+- Maintains relationships to entity states for state history
+- Supports manufacturer/model info for device identification
+
+PURPOSE:
+Central to the smart home system - devices are what users control and
+monitor. The flexible JSON fields allow supporting new device types
+without schema changes, critical for the evolving IoT ecosystem.
+
+KNOWN ISSUES:
+- state_json and capabilities_json are Text not JSON (SQLite compatibility)
+- No validation on device_type values (should use enum)
+- IP/MAC address formats aren't validated
+- Denormalized room/house names can become stale
+- No foreign key indexes on room_id/house_id for performance
+
+REVISION HISTORY:
+- 2024-01-15: Initial model with basic device fields
+- 2024-01-16: Added state_json for flexible state storage
+- 2024-01-17: Added denormalized room/house names for query performance
+- 2024-01-18: Added network info fields (IP/MAC addresses)
+- 2024-01-19: Added capabilities_json for device feature discovery
+
+DEPENDENCIES:
+- sqlalchemy: ORM mappings and relationships
+- .base: BaseEntity for common fields and timestamps
+
+USAGE:
+# Create a device:
+device = Device(
+    name="Living Room Light",
+    device_type="light",
+    room_id=room.id,
+    house_id=house.id,
+    room_name=room.name,  # Denormalized
+    house_name=house.name,  # Denormalized
+    state_json='{"on": true, "brightness": 80}',
+    capabilities_json='{"dimmable": true, "color": false}'
+)
+
+# Query devices by type:
+lights = session.query(Device).filter_by(device_type="light").all()
 """
 
 from sqlalchemy import Column, ForeignKey, String, Text

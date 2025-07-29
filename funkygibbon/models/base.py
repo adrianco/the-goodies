@@ -1,5 +1,56 @@
 """
-Base model classes for FunkyGibbon entities.
+FunkyGibbon - Base Model Classes and Mixins
+
+DEVELOPMENT CONTEXT:
+Created in January 2024 as the foundation for all database models in the
+simplified single-house smart home system. This module embodies key design
+decisions: UUID-based IDs for sync, soft deletes, and timestamp-based
+conflict resolution ("last write wins").
+
+FUNCTIONALITY:
+- Provides Base declarative class for all SQLAlchemy models
+- TimestampMixin adds created_at/updated_at with UTC timestamps
+- BaseEntity provides common fields for all entities (id, sync_id, version)
+- Supports soft deletes via is_deleted flag
+- Includes metadata_json for flexible schema evolution
+- ConflictResolution model for sync conflict reporting
+- Automatic timestamp conversion to milliseconds for easy comparison
+
+PURPOSE:
+Ensures consistency across all database models and implements the core
+patterns needed for bidirectional sync with conflict resolution. The
+design prioritizes simplicity over complex distributed systems patterns.
+
+KNOWN ISSUES:
+- Version field is string-based, not a proper increment counter
+- No automatic version bumping on updates (must be handled manually)
+- metadata_json is Text not JSON type (SQLite compatibility)
+- Soft deletes can accumulate and impact performance over time
+- No built-in mechanism to prevent sync_id collisions across devices
+
+REVISION HISTORY:
+- 2024-01-15: Initial implementation with basic timestamp mixin
+- 2024-01-16: Added sync_id and version fields for synchronization
+- 2024-01-17: Added soft delete support with is_deleted flag
+- 2024-01-18: Added metadata_json for flexible attributes
+- 2024-01-19: Added ConflictResolution model for sync reporting
+
+DEPENDENCIES:
+- sqlalchemy: ORM framework and database toolkit
+- pydantic: Data validation for API models
+- uuid: Generate unique identifiers
+- datetime: UTC timestamp handling
+
+USAGE:
+# Create a new model:
+class Device(Base, BaseEntity):
+    __tablename__ = "devices"
+    name = Column(String(100), nullable=False)
+    # Inherits id, sync_id, version, timestamps, etc.
+
+# Check conflicts:
+if entity1.timestamp_millis > entity2.timestamp_millis:
+    # entity1 wins
 """
 
 import uuid

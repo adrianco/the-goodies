@@ -1,5 +1,43 @@
 """
-Pytest configuration and fixtures for smart home knowledge graph tests
+FunkyGibbon - Test Configuration and Fixtures
+
+DEVELOPMENT CONTEXT:
+Created during the initial FunkyGibbon development phase when the project
+pivoted from a complex multi-house system to a simplified single-house
+deployment. This file provides the test infrastructure for all test modules.
+
+FUNCTIONALITY:
+- Provides pytest fixtures for in-memory and file-based SQLite databases
+- Generates sample test data (entities, relationships, conflict scenarios)
+- Configures custom pytest markers for test categorization
+- Includes utilities for performance testing and timing
+- Creates realistic home graph structures for integration tests
+
+PURPOSE:
+Centralizes test configuration to ensure consistent test environments
+and provides reusable test data generators. Supports both unit tests
+(fast, isolated) and integration tests (realistic scenarios).
+
+KNOWN ISSUES:
+- Some fixtures still reference old schema (needs updating)
+- Performance fixtures could be more comprehensive
+- Missing async fixtures for the new async codebase
+
+REVISION HISTORY:
+- 2024-01-15: Initial creation with basic fixtures
+- 2024-01-15: Added performance testing fixtures (300 entities)
+- 2024-01-15: Added conflict scenario generators
+- 2024-01-15: Needs update for async SQLAlchemy models
+
+DEPENDENCIES:
+- pytest: Test framework
+- sqlite3: Database for testing
+- datetime/random: Test data generation
+
+TODO:
+- Update for async SQLAlchemy models
+- Add fixtures for new entity types (EntityState, Event)
+- Add fixtures for sync testing
 """
 import pytest
 import sqlite3

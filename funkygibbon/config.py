@@ -1,5 +1,43 @@
 """
-Configuration for FunkyGibbon.
+FunkyGibbon - Configuration Management
+
+DEVELOPMENT CONTEXT:
+Created in January 2024 as the central configuration module for FunkyGibbon.
+Designed to support both development and production environments through
+environment variables, with sensible defaults for single-house deployments.
+
+FUNCTIONALITY:
+- Centralizes all application configuration using Pydantic Settings
+- Loads configuration from environment variables and .env files
+- Provides type-safe configuration with validation
+- Defines limits based on single-house scale (300 entities, 10 users)
+- Manages database, API, security, sync, and performance settings
+
+PURPOSE:
+Single source of truth for all configuration values across the application.
+This ensures consistency, type safety, and easy environment-specific overrides
+without hardcoding values throughout the codebase.
+
+KNOWN ISSUES:
+- Default secret key is insecure and must be changed in production
+- SQLite database path is relative, which can cause issues with working directories
+- No configuration validation for production deployment (e.g., secure secret key)
+- Database echo can impact performance if accidentally left on in production
+
+REVISION HISTORY:
+- 2024-01-15: Initial implementation with basic settings
+- 2024-01-16: Added sync configuration for conflict resolution
+- 2024-01-17: Added performance limits for single-house scale
+- 2024-01-18: Switched to Pydantic Settings v2 syntax
+
+DEPENDENCIES:
+- pydantic_settings: For environment variable loading and validation
+- pydantic: For configuration model and field validation
+- pathlib: For path handling (though not fully utilized yet)
+
+USAGE:
+from funkygibbon.config import settings
+print(f"API running on {settings.api_host}:{settings.api_port}")
 """
 
 import os

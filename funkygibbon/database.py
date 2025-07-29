@@ -1,5 +1,53 @@
 """
-Database setup and session management.
+FunkyGibbon - Database Configuration and Session Management
+
+DEVELOPMENT CONTEXT:
+Created in January 2024 as the database layer for the simplified single-house
+smart home system. This module replaced a more complex multi-tenant database
+design when we pivoted to focus on single-family deployments with SQLite.
+
+FUNCTIONALITY:
+- Creates and configures async SQLAlchemy engine with SQLite optimizations
+- Provides async session factory for database connections
+- Initializes database schema from SQLAlchemy models
+- Applies SQLite-specific performance optimizations (WAL mode, caching)
+- Manages database session lifecycle with proper cleanup
+- Provides both dependency injection and context manager patterns
+
+PURPOSE:
+Centralizes all database configuration and connection management to ensure
+consistent settings, proper async handling, and optimal SQLite performance
+for our target scale of ~300 entities per house.
+
+KNOWN ISSUES:
+- SQLite file locking can cause issues with multiple processes
+- No automatic migration support - schema changes require manual handling
+- Connection timeout (30s) might be too long for some operations
+- No connection pooling for SQLite (not needed but could confuse developers)
+- WAL mode can leave -wal and -shm files that need cleanup
+
+REVISION HISTORY:
+- 2024-01-15: Initial async SQLAlchemy setup
+- 2024-01-16: Added SQLite-specific optimizations (WAL, cache size)
+- 2024-01-17: Added both dependency injection and context manager patterns
+- 2024-01-18: Increased timeout and added pool_pre_ping for reliability
+
+DEPENDENCIES:
+- sqlalchemy: Async ORM and database toolkit
+- sqlalchemy.ext.asyncio: Async extensions for SQLAlchemy
+- .config: Application settings
+- .models.base: Base model class with common fields
+
+USAGE:
+# For FastAPI dependency injection:
+@app.get("/items")
+async def get_items(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Item))
+    return result.scalars().all()
+
+# For standalone scripts:
+async with get_db_context() as db:
+    await db.execute(...)
 """
 
 from contextlib import asynccontextmanager

@@ -1,5 +1,59 @@
 """
-Room model - represents rooms within a house.
+FunkyGibbon - Room Model (House Subdivision)
+
+DEVELOPMENT CONTEXT:
+Created in January 2024 as part of the smart home entity hierarchy.
+Rooms provide logical grouping of devices within a house, enabling
+location-based automation and queries. The model includes denormalized
+fields for performance optimization at our target scale.
+
+FUNCTIONALITY:
+- Represents physical rooms within a house (kitchen, bedroom, etc.)
+- Groups devices by location for easier management
+- Stores environmental sensor data (temperature, humidity, motion)
+- Maintains denormalized device count for performance
+- Supports floor numbers for multi-story homes
+- Flexible settings storage via JSON field
+- Cascading delete removes all devices in the room
+
+PURPOSE:
+Provides spatial organization for smart home devices. Users typically
+interact with devices by room ("turn off living room lights"), making
+this a critical entity for natural user interactions and automations.
+
+KNOWN ISSUES:
+- room_type should be an enum but uses free-form string
+- last_motion_at stored as string not datetime (SQLite compatibility)
+- No validation on temperature/humidity ranges
+- Denormalized house_name can become stale
+- No support for room dimensions or layout
+- Floor number doesn't support basements (negative numbers)
+
+REVISION HISTORY:
+- 2024-01-15: Initial model with basic room fields
+- 2024-01-16: Added environmental sensor fields
+- 2024-01-17: Added denormalized house_name for performance
+- 2024-01-18: Added floor field for multi-story support
+- 2024-01-19: Added last_motion_at for presence detection
+
+DEPENDENCIES:
+- sqlalchemy: ORM mappings and relationships
+- .base: BaseEntity for common fields and timestamps
+
+USAGE:
+# Create a room:
+room = Room(
+    name="Living Room",
+    room_type="living_room",
+    house_id=house.id,
+    house_name=house.name,  # Denormalized
+    floor=1,
+    temperature=72.5,
+    humidity=45.0
+)
+
+# Query devices in a room:
+devices = room.devices  # Via relationship
 """
 
 from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text

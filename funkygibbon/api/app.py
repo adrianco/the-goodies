@@ -1,5 +1,57 @@
 """
-FastAPI application factory.
+FunkyGibbon - FastAPI Application Factory
+
+DEVELOPMENT CONTEXT:
+Created in January 2024 as the main API application factory following
+FastAPI best practices. This module bootstraps the REST API server that
+provides endpoints for the smart home knowledge graph system.
+
+FUNCTIONALITY:
+- Application factory pattern for testability and configuration
+- Lifespan context manager for startup/shutdown events
+- Database initialization on startup
+- CORS middleware configuration for cross-origin requests
+- Router registration for all entity endpoints
+- Health and status endpoints for monitoring
+- API versioning through URL prefix
+
+PURPOSE:
+Central configuration point for the FastAPI application. This factory
+pattern allows easy testing with different configurations and ensures
+consistent setup across development, testing, and production environments.
+
+KNOWN ISSUES:
+- CORS allows all origins (*) which is insecure for production
+- No authentication middleware configured yet
+- No rate limiting or request throttling
+- Missing OpenAPI customization for better docs
+- No structured logging configuration
+- Shutdown doesn't close database connections explicitly
+
+REVISION HISTORY:
+- 2024-01-15: Initial FastAPI setup with basic routers
+- 2024-01-16: Added lifespan events for database initialization
+- 2024-01-17: Added CORS middleware for frontend development
+- 2024-01-18: Added health check endpoint
+- 2024-01-19: Moved to factory pattern for better testing
+
+DEPENDENCIES:
+- fastapi: Modern web framework for building APIs
+- ..config: Application settings
+- ..database: Database initialization
+- .routers: All API endpoint routers
+
+USAGE:
+# Create application instance:
+app = create_app()
+
+# Run with uvicorn:
+uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# For testing:
+from fastapi.testclient import TestClient
+client = TestClient(create_app())
+response = client.get("/health")
 """
 
 from contextlib import asynccontextmanager

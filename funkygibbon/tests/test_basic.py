@@ -28,29 +28,13 @@ from funkygibbon.repositories import (
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture
-async def db_session():
-    """Create a test database session."""
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-    
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    
-    async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    
-    async with async_session_maker() as session:
-        yield session
-    
-    await engine.dispose()
-
-
 @pytest.mark.asyncio
-async def test_create_house(db_session: AsyncSession):
+async def test_create_house(async_session: AsyncSession):
     """Test creating a house."""
     house_repo = HouseRepository()
     
     house = await house_repo.create(
-        db_session,
+        async_session,
         name="Test House",
         address="123 Test St",
         timezone="America/New_York"
@@ -66,17 +50,17 @@ async def test_create_house(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_create_room_with_house(db_session: AsyncSession):
+async def test_create_room_with_house(async_session: AsyncSession):
     """Test creating a room in a house."""
     house_repo = HouseRepository()
     room_repo = RoomRepository()
     
     # Create house
-    house = await house_repo.create(db_session, name="Test House")
+    house = await house_repo.create(async_session, name="Test House")
     
     # Create room
     room = await room_repo.create_with_house_name(
-        db_session,
+        async_session,
         house_id=house.id,
         house_name=house.name,
         name="Living Room",
@@ -94,16 +78,16 @@ async def test_create_room_with_house(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_create_device_with_room(db_session: AsyncSession):
+async def test_create_device_with_room(async_session: AsyncSession):
     """Test creating a device in a room."""
     house_repo = HouseRepository()
     room_repo = RoomRepository()
     device_repo = DeviceRepository()
     
     # Create house and room
-    house = await house_repo.create(db_session, name="Test House")
+    house = await house_repo.create(async_session, name="Test House")
     room = await room_repo.create_with_house_name(
-        db_session,
+        async_session,
         house_id=house.id,
         house_name=house.name,
         name="Living Room"
@@ -111,7 +95,7 @@ async def test_create_device_with_room(db_session: AsyncSession):
     
     # Create device
     device = await device_repo.create_with_names(
-        db_session,
+        async_session,
         room_id=room.id,
         room_name=room.name,
         house_id=house.id,
@@ -160,33 +144,33 @@ async def test_conflict_resolution():
 
 
 @pytest.mark.asyncio
-async def test_soft_delete(db_session: AsyncSession):
+async def test_soft_delete(async_session: AsyncSession):
     """Test soft delete functionality."""
     house_repo = HouseRepository()
     
     # Create and then delete a house
-    house = await house_repo.create(db_session, name="To Delete")
+    house = await house_repo.create(async_session, name="To Delete")
     house_id = house.id
     
     # Soft delete
-    success = await house_repo.soft_delete(db_session, house_id)
+    success = await house_repo.soft_delete(async_session, house_id)
     assert success is True
     
     # Should not find with regular get
-    deleted_house = await house_repo.get_by_id(db_session, house_id)
+    deleted_house = await house_repo.get_by_id(async_session, house_id)
     assert deleted_house is None
     
     # But should still exist in database with is_deleted=True
     from sqlalchemy import select
     stmt = select(House).where(House.id == house_id)
-    result = await db_session.execute(stmt)
+    result = await async_session.execute(stmt)
     actual_house = result.scalar_one_or_none()
     assert actual_house is not None
     assert actual_house.is_deleted is True
 
 
 @pytest.mark.asyncio
-async def test_sync_entity_new(db_session: AsyncSession):
+async def test_sync_entity_new(async_session: AsyncSession):
     """Test syncing a new entity."""
     house_repo = HouseRepository()
     
@@ -204,7 +188,7 @@ async def test_sync_entity_new(db_session: AsyncSession):
         "is_deleted": False
     }
     
-    entity, updated, conflict = await house_repo.sync_entity(db_session, remote_data)
+    entity, updated, conflict = await house_repo.sync_entity(async_session, remote_data)
     
     assert entity is not None
     assert updated is True
@@ -214,22 +198,22 @@ async def test_sync_entity_new(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_get_changes_since(db_session: AsyncSession):
+async def test_get_changes_since(async_session: AsyncSession):
     """Test getting entities changed since a timestamp."""
     house_repo = HouseRepository()
     
     # Create some houses
-    await house_repo.create(db_session, name="House 1")
+    await house_repo.create(async_session, name="House 1")
     await asyncio.sleep(0.1)  # Small delay
     
     checkpoint = datetime.now(UTC)
     await asyncio.sleep(0.1)  # Small delay
     
-    house2 = await house_repo.create(db_session, name="House 2")
-    await house_repo.create(db_session, name="House 3")
+    house2 = await house_repo.create(async_session, name="House 2")
+    await house_repo.create(async_session, name="House 3")
     
     # Get changes since checkpoint
-    changes = await house_repo.get_changes_since(db_session, checkpoint)
+    changes = await house_repo.get_changes_since(async_session, checkpoint)
     
     assert len(changes) == 2
     assert all(h.name in ["House 2", "House 3"] for h in changes)

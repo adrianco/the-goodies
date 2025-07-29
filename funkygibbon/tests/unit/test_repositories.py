@@ -1,5 +1,8 @@
 """
 Unit tests for repository layer.
+
+REVISION HISTORY:
+- 2025-07-28: Fixed fixture name from db_session to async_session for proper test execution
 """
 
 import asyncio
@@ -103,12 +106,12 @@ class TestConflictResolver:
 class TestHouseRepository:
     """Test House repository operations."""
     
-    async def test_create_house(self, db_session: AsyncSession):
+    async def test_create_house(self, async_session: AsyncSession):
         """Test creating a house."""
         repo = HouseRepository()
         
         house = await repo.create(
-            db_session,
+            async_session,
             name="Test House",
             address="123 Test St",
             timezone="UTC"
@@ -120,42 +123,42 @@ class TestHouseRepository:
         assert house.version == "1"
         assert house.is_deleted is False
     
-    async def test_get_by_id(self, db_session: AsyncSession):
+    async def test_get_by_id(self, async_session: AsyncSession):
         """Test getting house by ID."""
         repo = HouseRepository()
         
         # Create house
-        house = await repo.create(db_session, name="Test House")
+        house = await repo.create(async_session, name="Test House")
         
         # Get by ID
-        retrieved = await repo.get_by_id(db_session, house.id)
+        retrieved = await repo.get_by_id(async_session, house.id)
         
         assert retrieved is not None
         assert retrieved.id == house.id
         assert retrieved.name == "Test House"
     
-    async def test_get_by_sync_id(self, db_session: AsyncSession):
+    async def test_get_by_sync_id(self, async_session: AsyncSession):
         """Test getting house by sync ID."""
         repo = HouseRepository()
         
         # Create house
-        house = await repo.create(db_session, name="Test House")
+        house = await repo.create(async_session, name="Test House")
         
         # Get by sync ID
-        retrieved = await repo.get_by_sync_id(db_session, house.sync_id)
+        retrieved = await repo.get_by_sync_id(async_session, house.sync_id)
         
         assert retrieved is not None
         assert retrieved.sync_id == house.sync_id
         assert retrieved.name == "Test House"
     
-    async def test_update_house(self, db_session: AsyncSession):
+    async def test_update_house(self, async_session: AsyncSession):
         """Test updating a house."""
         repo = HouseRepository()
         
         # Create and update
-        house = await repo.create(db_session, name="Old Name")
+        house = await repo.create(async_session, name="Old Name")
         updated = await repo.update(
-            db_session,
+            async_session,
             house.id,
             name="New Name",
             address="456 New St"
@@ -166,31 +169,31 @@ class TestHouseRepository:
         assert updated.address == "456 New St"
         assert updated.version == "2"
     
-    async def test_soft_delete(self, db_session: AsyncSession):
+    async def test_soft_delete(self, async_session: AsyncSession):
         """Test soft deleting a house."""
         repo = HouseRepository()
         
         # Create and delete
-        house = await repo.create(db_session, name="To Delete")
-        success = await repo.soft_delete(db_session, house.id)
+        house = await repo.create(async_session, name="To Delete")
+        success = await repo.soft_delete(async_session, house.id)
         
         assert success is True
         
         # Should not find deleted house
-        deleted = await repo.get_by_id(db_session, house.id)
+        deleted = await repo.get_by_id(async_session, house.id)
         assert deleted is None
     
-    async def test_get_all(self, db_session: AsyncSession):
+    async def test_get_all(self, async_session: AsyncSession):
         """Test getting all houses."""
         repo = HouseRepository()
         
         # Create multiple houses
-        await repo.create(db_session, name="House 1")
-        await repo.create(db_session, name="House 2")
-        await repo.create(db_session, name="House 3")
+        await repo.create(async_session, name="House 1")
+        await repo.create(async_session, name="House 2")
+        await repo.create(async_session, name="House 3")
         
         # Get all
-        houses = await repo.get_all(db_session)
+        houses = await repo.get_all(async_session)
         
         assert len(houses) >= 3
         names = [h.name for h in houses]
@@ -204,17 +207,17 @@ class TestHouseRepository:
 class TestRoomRepository:
     """Test Room repository operations."""
     
-    async def test_create_room_with_house_name(self, db_session: AsyncSession):
+    async def test_create_room_with_house_name(self, async_session: AsyncSession):
         """Test creating a room with denormalized house name."""
         house_repo = HouseRepository()
         room_repo = RoomRepository()
         
         # Create house
-        house = await house_repo.create(db_session, name="Test House")
+        house = await house_repo.create(async_session, name="Test House")
         
         # Create room
         room = await room_repo.create_with_house_name(
-            db_session,
+            async_session,
             house_id=house.id,
             house_name=house.name,
             name="Living Room",
@@ -228,23 +231,23 @@ class TestRoomRepository:
         assert room.room_type == "living_room"
         assert room.floor == 1
     
-    async def test_get_by_house(self, db_session: AsyncSession):
+    async def test_get_by_house(self, async_session: AsyncSession):
         """Test getting rooms by house."""
         house_repo = HouseRepository()
         room_repo = RoomRepository()
         
         # Create house and rooms
-        house = await house_repo.create(db_session, name="Test House")
+        house = await house_repo.create(async_session, name="Test House")
         
         await room_repo.create_with_house_name(
-            db_session, house.id, house.name, name="Room 1"
+            async_session, house.id, house.name, name="Room 1"
         )
         await room_repo.create_with_house_name(
-            db_session, house.id, house.name, name="Room 2"
+            async_session, house.id, house.name, name="Room 2"
         )
         
         # Get rooms
-        rooms = await room_repo.get_by_house(db_session, house.id)
+        rooms = await room_repo.get_by_house(async_session, house.id)
         
         assert len(rooms) == 2
         names = [r.name for r in rooms]
@@ -257,21 +260,21 @@ class TestRoomRepository:
 class TestDeviceRepository:
     """Test Device repository operations."""
     
-    async def test_create_device_with_names(self, db_session: AsyncSession):
+    async def test_create_device_with_names(self, async_session: AsyncSession):
         """Test creating a device with denormalized names."""
         house_repo = HouseRepository()
         room_repo = RoomRepository()
         device_repo = DeviceRepository()
         
         # Create house and room
-        house = await house_repo.create(db_session, name="Test House")
+        house = await house_repo.create(async_session, name="Test House")
         room = await room_repo.create_with_house_name(
-            db_session, house.id, house.name, name="Living Room"
+            async_session, house.id, house.name, name="Living Room"
         )
         
         # Create device
         device = await device_repo.create_with_names(
-            db_session,
+            async_session,
             room_id=room.id,
             room_name=room.name,
             house_id=house.id,
@@ -286,19 +289,19 @@ class TestDeviceRepository:
         assert device.house_name == "Test House"
         assert device.name == "Smart Light"
     
-    async def test_update_device_state(self, db_session: AsyncSession):
+    async def test_update_device_state(self, async_session: AsyncSession):
         """Test updating device state."""
         house_repo = HouseRepository()
         room_repo = RoomRepository()
         device_repo = DeviceRepository()
         
         # Setup
-        house = await house_repo.create(db_session, name="Test House")
+        house = await house_repo.create(async_session, name="Test House")
         room = await room_repo.create_with_house_name(
-            db_session, house.id, house.name, name="Living Room"
+            async_session, house.id, house.name, name="Living Room"
         )
         device = await device_repo.create_with_names(
-            db_session,
+            async_session,
             room_id=room.id,
             room_name=room.name,
             house_id=house.id,
@@ -309,7 +312,7 @@ class TestDeviceRepository:
         
         # Update state
         state = await device_repo.update_state(
-            db_session,
+            async_session,
             device_id=device.id,
             state_type="on_off",
             state_value="on",
@@ -329,15 +332,15 @@ class TestDeviceRepository:
 class TestUserRepository:
     """Test User repository operations."""
     
-    async def test_get_by_email(self, db_session: AsyncSession):
+    async def test_get_by_email(self, async_session: AsyncSession):
         """Test getting user by email."""
         house_repo = HouseRepository()
         user_repo = UserRepository()
         
         # Create house and user
-        house = await house_repo.create(db_session, name="Test House")
+        house = await house_repo.create(async_session, name="Test House")
         user = await user_repo.create(
-            db_session,
+            async_session,
             house_id=house.id,
             name="John Doe",
             email="john@example.com",
@@ -345,32 +348,32 @@ class TestUserRepository:
         )
         
         # Get by email
-        retrieved = await user_repo.get_by_email(db_session, "john@example.com")
+        retrieved = await user_repo.get_by_email(async_session, "john@example.com")
         
         assert retrieved is not None
         assert retrieved.id == user.id
         assert retrieved.email == "john@example.com"
     
-    async def test_get_admins(self, db_session: AsyncSession):
+    async def test_get_admins(self, async_session: AsyncSession):
         """Test getting admin users."""
         house_repo = HouseRepository()
         user_repo = UserRepository()
         
         # Create house and users
-        house = await house_repo.create(db_session, name="Test House")
+        house = await house_repo.create(async_session, name="Test House")
         
         await user_repo.create(
-            db_session, house_id=house.id, name="Admin 1", role="admin"
+            async_session, house_id=house.id, name="Admin 1", role="admin"
         )
         await user_repo.create(
-            db_session, house_id=house.id, name="Admin 2", role="admin"
+            async_session, house_id=house.id, name="Admin 2", role="admin"
         )
         await user_repo.create(
-            db_session, house_id=house.id, name="Member", role="member"
+            async_session, house_id=house.id, name="Member", role="member"
         )
         
         # Get admins
-        admins = await user_repo.get_admins(db_session, house.id)
+        admins = await user_repo.get_admins(async_session, house.id)
         
         assert len(admins) == 2
         for admin in admins:
