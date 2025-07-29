@@ -29,31 +29,46 @@ async def create_device(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new device."""
-    # Verify room exists
-    room = await room_repo.get_by_id(db, room_id)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
-    
-    device = await device_repo.create_with_names(
-        db,
-        room_id=room_id,
-        room_name=room.name,
-        house_id=room.house_id,
-        house_name=room.house_name,
-        name=name,
-        device_type=device_type,
-        manufacturer=manufacturer,
-        model=model
-    )
-    
-    # Update counters
-    room.device_count += 1
-    house = await house_repo.get_by_id(db, room.house_id)
-    if house:
-        house.device_count += 1
-    await db.commit()
-    
-    return device.to_dict()
+    try:
+        # Verify room exists
+        room = await room_repo.get_by_id(db, room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        # Check if device with same name already exists in the room
+        existing_devices = await device_repo.get_by_room(db, room_id)
+        if any(d.name == name for d in existing_devices):
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Device with name '{name}' already exists in room '{room.name}'"
+            )
+        
+        device = await device_repo.create_with_names(
+            db,
+            room_id=room_id,
+            room_name=room.name,
+            house_id=room.house_id,
+            house_name=room.house_name,
+            name=name,
+            device_type=device_type,
+            manufacturer=manufacturer,
+            model=model
+        )
+        
+        # Update counters
+        room.device_count += 1
+        house = await house_repo.get_by_id(db, room.house_id)
+        if house:
+            house.device_count += 1
+        await db.commit()
+        
+        return device.to_dict()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create device: {str(e)}")
 
 
 @router.get("/{device_id}", response_model=dict)

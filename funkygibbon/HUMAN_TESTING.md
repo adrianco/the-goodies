@@ -4,9 +4,29 @@ Welcome to the FunkyGibbon Smart Home API! This guide will help you quickly set 
 
 ## 🚀 Quick Start (Recommended)
 
-### Option 1: Use End-to-End Tests (Guaranteed Working)
+### Option 1: Use the Population Script ✅ FIXED
 
-The most reliable way to get a populated database for testing:
+The simplest and most reliable way to populate your database:
+
+```bash
+# From the funkygibbon directory
+cd funkygibbon
+python populate_db.py
+
+# Start the server to explore the API with test data
+python -m funkygibbon
+```
+
+This creates:
+- 1 House (The Martinez Smart Home)
+- 4 Rooms (Living Room, Kitchen, Master Bedroom, Home Office)
+- 6 Devices (TV, Thermostat, Fridge, various lights)
+- 3 Users (Carlos, Maria, Sofia)
+- Device states for testing
+
+### Option 2: Use End-to-End Tests
+
+An alternative way to get a populated database:
 
 ```bash
 # Run end-to-end tests which create comprehensive test data
@@ -16,27 +36,14 @@ python -m pytest tests/integration/test_end_to_end.py -v
 python -m funkygibbon
 ```
 
-The end-to-end tests create:
-- Multiple houses with realistic layouts
-- Comprehensive device setups
-- User accounts with different roles
-- Device states and history
-- All data relationships properly established
+## 🔧 Recent Fixes
 
-### Option 2: Interactive Database Setup
+Based on human testing feedback, the following issues have been resolved:
 
-For a more comprehensive setup (when import issues are resolved):
-
-```bash
-# Interactive setup - choose your scenario  
-python start.py
-
-# Or directly specify a scenario
-python start.py comprehensive  # Full smart home ecosystem
-python start.py minimal        # Simple test setup
-```
-
-**Note**: The comprehensive seeding system is implemented but may have import path issues when run directly. The end-to-end tests provide the same realistic data and work reliably.
+1. **Clear Working Directory Instructions**: The README now explicitly shows to run commands from the `funkygibbon` directory
+2. **Working Database Population**: New `populate_db.py` script that reliably creates test data
+3. **Duplicate Device/Room Handling**: API now returns proper 409 Conflict errors instead of 500 errors
+4. **Improved Error Messages**: All creation endpoints now have descriptive error handling
 
 ## 📋 Available Test Scenarios
 

@@ -23,9 +23,14 @@ poetry install
 
 2. Run the server:
 ```bash
+# From the funkygibbon directory
+cd funkygibbon
 python -m funkygibbon.main
 # or
 uvicorn funkygibbon.main:app --reload
+
+# Alternative: from project root
+python -m funkygibbon.main
 ```
 
 3. Access the API:

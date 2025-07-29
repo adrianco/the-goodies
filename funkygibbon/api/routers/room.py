@@ -25,25 +25,40 @@ async def create_room(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new room."""
-    # Verify house exists
-    house = await house_repo.get_by_id(db, house_id)
-    if not house:
-        raise HTTPException(status_code=404, detail="House not found")
-    
-    room = await room_repo.create_with_house_name(
-        db,
-        house_id=house_id,
-        house_name=house.name,
-        name=name,
-        room_type=room_type,
-        floor=floor
-    )
-    
-    # Update house room count
-    house.room_count += 1
-    await db.commit()
-    
-    return room.to_dict()
+    try:
+        # Verify house exists
+        house = await house_repo.get_by_id(db, house_id)
+        if not house:
+            raise HTTPException(status_code=404, detail="House not found")
+        
+        # Check if room with same name already exists in the house
+        existing_rooms = await room_repo.get_by_house(db, house_id)
+        if any(r.name == name for r in existing_rooms):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Room with name '{name}' already exists in house '{house.name}'"
+            )
+        
+        room = await room_repo.create_with_house_name(
+            db,
+            house_id=house_id,
+            house_name=house.name,
+            name=name,
+            room_type=room_type,
+            floor=floor
+        )
+        
+        # Update house room count
+        house.room_count += 1
+        await db.commit()
+        
+        return room.to_dict()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create room: {str(e)}")
 
 
 @router.get("/{room_id}", response_model=dict)

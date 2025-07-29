@@ -2,19 +2,20 @@
 Blowing-Off Client - Main Client Implementation
 
 DEVELOPMENT CONTEXT:
-Created as part of The Goodies smart home ecosystem development in January 2024.
+Created as part of The Goodies smart home ecosystem development in July 2025.
 This is the Python test client that implements the Inbetweenies protocol for
 synchronizing smart home data between the cloud and local databases. This client
 serves as the reference implementation that will guide the Swift/WildThing client
-development for Apple platforms.
+development for Apple platforms. Updated to use HomeKit-compatible models from
+the shared Inbetweenies package.
 
 FUNCTIONALITY:
 - Manages local SQLite database for offline-first operation
 - Implements bidirectional sync with cloud server using Inbetweenies protocol
-- Provides async API for CRUD operations on houses, rooms, and devices
-- Supports real-time state updates and change notifications
+- Provides async API for CRUD operations on homes, rooms, and accessories
 - Handles conflict resolution and sync failure recovery
 - Enables background sync with configurable intervals
+- Works with shared HomeKit models and ClientSyncTracking for local changes
 
 PURPOSE:
 This client enables:
@@ -25,33 +26,40 @@ This client enables:
 - Reference for Swift/WildThing implementation
 
 KNOWN ISSUES:
-- Single house assumption (multi-house support planned)
+- Single home assumption (multi-home support planned)
 - Basic conflict resolution (last-write-wins)
 - No encryption for local database yet
 - Background sync task needs better error recovery
+- No automatic cleanup of old sync tracking records
 
 REVISION HISTORY:
-- 2024-01-15: Initial implementation (Python test client for Inbetweenies protocol)
-- 2024-01-20: Added background sync support
-- 2024-01-22: Implemented observer pattern for change notifications
+- 2025-07-28: Initial implementation (Python test client for Inbetweenies protocol)
+- 2025-07-28: Added background sync support
+- 2025-07-28: Implemented observer pattern for change notifications
+- 2025-07-29: Migrated to shared Inbetweenies models
+- 2025-07-29: Updated entity names (House→Home, Device→Accessory)
+- 2025-07-29: Implemented ClientSyncTracking for local change detection
+- 2025-07-29: Repository operations now automatically track sync status
 
 DEPENDENCIES:
-- SQLAlchemy with async support for database operations
+- SQLAlchemy with async support for database operations 
 - aiosqlite for async SQLite operations
 - Custom sync engine implementing Inbetweenies protocol
 - Repository pattern for data access abstraction
+- inbetweenies.models for shared HomeKit models
+- ClientSyncTracking model for local change detection
 
 USAGE:
     client = BlowingOffClient("local.db")
     await client.connect("https://api.thegoodies.app", auth_token)
     await client.start_background_sync(interval=30)
     
-    # Get devices in a room
-    devices = await client.get_devices(room_id="living-room-1")
+    # Get accessories in a room
+    accessories = await client.get_accessories(room_id="living-room-1")
     
-    # Update device state
-    await client.update_device_state(
-        device_id="light-1",
+    # Update accessory state
+    await client.update_accessory_state(
+        accessory_id="light-1",
         state={"on": True, "brightness": 80}
     )
 """
@@ -61,19 +69,19 @@ from typing import Optional, List, Dict, Any, Callable
 from datetime import datetime
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import event
+from sqlalchemy import event, text
 import json
 
-from .models.base import Base
+from .models import Base
 from .sync.engine import SyncEngine
 from .sync.state import SyncResult
 from .repositories import (
-    ClientHouseRepository,
+    ClientHomeRepository,
     ClientRoomRepository,
-    ClientDeviceRepository,
+    ClientAccessoryRepository,
     ClientUserRepository,
-    ClientEntityStateRepository,
-    ClientEventRepository
+    # ClientEntityStateRepository,  # Removed for HomeKit focus
+    # ClientEventRepository         # Removed for HomeKit focus
 )
 
 
@@ -93,11 +101,27 @@ class BlowingOffClient:
         """Connect to server and initialize local database."""
         # Initialize database
         db_url = f"sqlite+aiosqlite:///{self.db_path}"
-        self.engine = create_async_engine(db_url, echo=False)
+        self.engine = create_async_engine(
+            db_url, 
+            echo=False,
+            connect_args={
+                "check_same_thread": False,
+                "timeout": 30,
+            },
+            pool_pre_ping=True,  # Verify connections before use
+            poolclass=None  # Disable pooling for SQLite
+        )
         
         # Create tables
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            
+            # Enable SQLite optimizations for better concurrency
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA synchronous=NORMAL"))
+            await conn.execute(text("PRAGMA busy_timeout=5000"))
+            await conn.execute(text("PRAGMA cache_size=10000"))
+            await conn.execute(text("PRAGMA temp_store=MEMORY"))
             
         # Create session factory
         self.session_factory = async_sessionmaker(
@@ -114,9 +138,16 @@ class BlowingOffClient:
         """Disconnect and cleanup resources."""
         if self._background_task:
             self._background_task.cancel()
+            try:
+                await self._background_task
+            except asyncio.CancelledError:
+                pass
             
         if self.engine:
             await self.engine.dispose()
+            # Force garbage collection to ensure all connections are closed
+            import gc
+            gc.collect()
             
     async def sync(self) -> SyncResult:
         """Perform manual sync with server."""
@@ -146,116 +177,126 @@ class BlowingOffClient:
                     
         self._background_task = asyncio.create_task(sync_loop())
         
-    async def get_house(self) -> Optional[Dict[str, Any]]:
-        """Get the house data."""
+    async def get_home(self, home_id: str = None) -> Optional[Dict[str, Any]]:
+        """Get home data by ID, or the first home if no ID specified."""
         async with self.session_factory() as session:
-            repo = ClientHouseRepository(session)
-            houses = await repo.get_all()
-            if houses:
-                house = houses[0]  # Assume single house
-                return {
-                    "id": house.id,
-                    "name": house.name,
-                    "address": house.address,
-                    "timezone": house.timezone,
-                    "metadata": json.loads(house.metadata_json) if house.metadata_json else {}
-                }
+            repo = ClientHomeRepository(session)
+            
+            if home_id:
+                home = await repo.get(home_id)
+                if home:
+                    return {
+                        "id": home.id,
+                        "name": home.name,
+                        "is_primary": home.is_primary
+                    }
+            else:
+                homes = await repo.get_all()
+                if homes:
+                    home = homes[0]  # Assume single home
+                    return {
+                        "id": home.id,
+                        "name": home.name,
+                        "is_primary": home.is_primary
+                    }
         return None
+    
+    async def get_homes(self) -> List[Dict[str, Any]]:
+        """Get all homes."""
+        async with self.session_factory() as session:
+            repo = ClientHomeRepository(session)
+            homes = await repo.get_all()
+            return [
+                {
+                    "id": home.id,
+                    "name": home.name,
+                    "is_primary": home.is_primary
+                }
+                for home in homes
+            ]
         
-    async def get_rooms(self, house_id: str = None) -> List[Dict[str, Any]]:
+    async def get_rooms(self, home_id: str = None) -> List[Dict[str, Any]]:
         """Get all rooms."""
         async with self.session_factory() as session:
             repo = ClientRoomRepository(session)
-            if house_id:
-                rooms = await repo.get_by_house(house_id)
+            if home_id:
+                rooms = await repo.get_by_home(home_id)
             else:
                 rooms = await repo.get_all()
                 
             return [
                 {
                     "id": room.id,
-                    "house_id": room.house_id,
-                    "name": room.name,
-                    "floor": room.floor,
-                    "room_type": room.room_type,
-                    "metadata": json.loads(room.metadata_json) if room.metadata_json else {}
+                    "home_id": room.home_id,
+                    "name": room.name
                 }
                 for room in rooms
             ]
             
-    async def get_devices(self, room_id: str = None) -> List[Dict[str, Any]]:
-        """Get devices, optionally filtered by room."""
+    async def get_accessories(self, room_id: str = None) -> List[Dict[str, Any]]:
+        """Get accessories, optionally filtered by room."""
         async with self.session_factory() as session:
-            repo = ClientDeviceRepository(session)
+            repo = ClientAccessoryRepository(session)
             if room_id:
-                devices = await repo.get_by_room(room_id)
+                accessories = await repo.get_by_room(room_id)
             else:
-                devices = await repo.get_all()
+                accessories = await repo.get_all()
                 
             return [
                 {
-                    "id": device.id,
-                    "room_id": device.room_id,
-                    "name": device.name,
-                    "device_type": device.device_type.value,
-                    "manufacturer": device.manufacturer,
-                    "model": device.model,
-                    "capabilities": json.loads(device.capabilities) if device.capabilities else [],
-                    "configuration": json.loads(device.configuration) if device.configuration else {},
-                    "metadata": json.loads(device.metadata_json) if device.metadata_json else {}
+                    "id": accessory.id,
+                    "home_id": accessory.home_id,
+                    "name": accessory.name,
+                    "manufacturer": accessory.manufacturer,
+                    "model": accessory.model,
+                    "serial_number": accessory.serial_number,
+                    "firmware_version": accessory.firmware_version,
+                    "is_reachable": accessory.is_reachable,
+                    "is_blocked": accessory.is_blocked,
+                    "is_bridge": accessory.is_bridge
                 }
-                for device in devices
+                for accessory in accessories
             ]
             
-    async def get_device_state(self, device_id: str) -> Optional[Dict[str, Any]]:
-        """Get current state of a device."""
-        async with self.session_factory() as session:
-            repo = ClientEntityStateRepository(session)
-            state = await repo.get_latest_by_entity(device_id)
-            if state:
-                return {
-                    "id": state.id,
-                    "entity_id": state.entity_id,
-                    "state": json.loads(state.state) if state.state else {},
-                    "attributes": json.loads(state.attributes) if state.attributes else {},
-                    "updated_at": state.updated_at.isoformat()
-                }
+    async def get_accessory_state(self, accessory_id: str) -> Optional[Dict[str, Any]]:
+        """Get current state of an accessory."""
+        # TODO: Implement with HomeKit characteristic tracking
         return None
         
-    async def update_device_state(self, device_id: str, state: Dict[str, Any], attributes: Dict[str, Any] = None):
-        """Update device state."""
-        async with self.session_factory() as session:
-            repo = ClientEntityStateRepository(session)
-            
-            # Create new state entry
-            entity_state = await repo.create(
-                id=f"state-{device_id}-{datetime.now().timestamp()}",
-                entity_id=device_id,
-                entity_type="device",
-                state=json.dumps(state),
-                attributes=json.dumps(attributes or {})
-            )
-            
-            await session.commit()
-            
-        # Notify observers
+    async def update_accessory_state(self, accessory_id: str, state: Dict[str, Any], attributes: Dict[str, Any] = None):
+        """Update accessory state."""
+        # TODO: Implement with HomeKit characteristic updates
+        # For now, just notify observers
         await self._notify_observers("state_change", {
-            "device_id": device_id,
+            "accessory_id": accessory_id,
             "state": state,
             "attributes": attributes
         })
         
-    async def create_room(self, house_id: str, name: str, **kwargs) -> str:
+    async def create_home(self, name: str, **kwargs) -> str:
+        """Create a new home."""
+        async with self.session_factory() as session:
+            repo = ClientHomeRepository(session)
+            home = await repo.create(
+                id=f"home-{datetime.now().timestamp()}",
+                name=name,
+                is_primary=kwargs.get("is_primary", False)
+            )
+            await session.commit()
+            
+        # Notify observers
+        await self._notify_observers("home_created", {"home_id": home.id})
+        
+        return home.id
+        
+    async def create_room(self, home_id: str, name: str, **kwargs) -> str:
         """Create a new room."""
         async with self.session_factory() as session:
             repo = ClientRoomRepository(session)
             room = await repo.create(
                 id=f"room-{datetime.now().timestamp()}",
-                house_id=house_id,
-                name=name,
-                floor=kwargs.get("floor", 0),
-                room_type=kwargs.get("room_type"),
-                metadata=json.dumps(kwargs.get("metadata", {}))
+                home_id=home_id,
+                name=name
             )
             await session.commit()
             
@@ -264,32 +305,41 @@ class BlowingOffClient:
         
         return room.id
         
-    async def create_device(self, room_id: str, name: str, device_type: str, **kwargs) -> str:
-        """Create a new device."""
+    async def create_accessory(self, room_id: str, name: str, accessory_type: str, **kwargs) -> str:
+        """Create a new accessory."""
         async with self.session_factory() as session:
-            repo = ClientDeviceRepository(session)
+            repo = ClientAccessoryRepository(session)
+            room_repo = ClientRoomRepository(session)
+            home_repo = ClientHomeRepository(session)
             
-            # Import device type enum
-            from .models.device import ClientDeviceType
-            device_type_enum = ClientDeviceType(device_type)
+            # Get room to find home_id
+            room = await room_repo.get(room_id)
+            if not room:
+                raise ValueError(f"Room {room_id} not found")
             
-            device = await repo.create(
-                id=f"device-{datetime.now().timestamp()}",
-                room_id=room_id,
+            # Get home
+            home = await home_repo.get(room.home_id)
+            if not home:
+                raise ValueError(f"Home {room.home_id} not found")
+            
+            accessory = await repo.create(
+                id=f"accessory-{datetime.now().timestamp()}",
+                home_id=room.home_id,
                 name=name,
-                device_type=device_type_enum,
                 manufacturer=kwargs.get("manufacturer"),
                 model=kwargs.get("model"),
-                capabilities=json.dumps(kwargs.get("capabilities", [])),
-                configuration=json.dumps(kwargs.get("configuration", {})),
-                metadata=json.dumps(kwargs.get("metadata", {}))
+                serial_number=kwargs.get("serial_number", f"SN-{datetime.now().timestamp()}"),
+                firmware_version=kwargs.get("firmware_version", "1.0.0"),
+                is_reachable=kwargs.get("is_reachable", True),
+                is_blocked=kwargs.get("is_blocked", False),
+                is_bridge=kwargs.get("is_bridge", False)
             )
             await session.commit()
             
         # Notify observers
-        await self._notify_observers("device_created", {"device_id": device.id})
+        await self._notify_observers("accessory_created", {"accessory_id": accessory.id})
         
-        return device.id
+        return accessory.id
         
     async def observe_changes(self, callback: Callable):
         """Register observer for changes."""

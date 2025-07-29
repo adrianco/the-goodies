@@ -2,24 +2,25 @@
 Blowing-Off Client - Base Repository Pattern
 
 DEVELOPMENT CONTEXT:
-Created as the foundation for all data access in January 2024. This repository
+Created as the foundation for all data access in July 2025. This repository
 pattern provides a clean abstraction over SQLAlchemy for all client-side database
 operations. It implements sync-aware CRUD operations that automatically track
-local changes for the Inbetweenies protocol.
+local changes for the Inbetweenies protocol. Updated to work with shared
+HomeKit-compatible models from Inbetweenies package.
 
 FUNCTIONALITY:
 - Generic repository pattern for type-safe data access
-- Automatic sync status tracking on all mutations
 - Specialized queries for sync operations (pending, conflicts)
+- Automatic sync tracking for create/update operations
 - Conflict resolution support with optimistic locking
 - Time-based change tracking for incremental sync
-- Bulk operations for efficient sync processing
+- Client-side sync status tracking via ClientSyncTracking model
 - Transaction-aware with explicit flush control
+- Works with shared HomeKit-compatible models
 
 PURPOSE:
 This base repository ensures:
 - Consistent data access patterns across all entities
-- Automatic sync tracking without manual intervention
 - Clean separation between business logic and data access
 - Type safety with Generic[T] pattern
 - Efficient queries for sync engine operations
@@ -30,24 +31,30 @@ KNOWN ISSUES:
 - Bulk operations could be more efficient
 - Missing query caching for frequently accessed data
 - No built-in pagination support yet
+- No automatic cleanup of old sync tracking records
 
 REVISION HISTORY:
-- 2024-01-15: Initial implementation with basic CRUD
-- 2024-01-18: Added sync-aware operations
-- 2024-01-20: Enhanced conflict resolution support
-- 2024-01-22: Added time-based change queries
+- 2025-07-28: Initial implementation with basic CRUD
+- 2025-07-28: Added sync-aware operations
+- 2025-07-28: Enhanced conflict resolution support
+- 2025-07-28: Added time-based change queries
+- 2025-07-29: Updated to work with shared Inbetweenies models
+- 2025-07-29: Implemented ClientSyncTracking for local change detection
+- 2025-07-29: Added get_pending(), get_conflicts(), mark_synced() methods
+- 2025-07-29: Automatic sync tracking on create/update operations
 
 DEPENDENCIES:
 - SQLAlchemy 2.0+ with async support
 - Generic typing for type safety
-- Base model with ClientTimestampMixin
+- inbetweenies.models for shared base classes
+- ClientSyncTracking model for local change tracking
 
 USAGE:
-    class DeviceRepository(ClientBaseRepository[ClientDevice]):
+    class AccessoryRepository(ClientBaseRepository[Accessory]):
         def __init__(self, session: AsyncSession):
-            super().__init__(ClientDevice, session)
+            super().__init__(Accessory, session)
             
-        async def get_by_room(self, room_id: str) -> List[ClientDevice]:
+        async def get_by_room(self, room_id: str) -> List[Accessory]:
             # Custom query methods can extend base functionality
             result = await self.session.execute(
                 select(self.model).where(self.model.room_id == room_id)
@@ -56,11 +63,11 @@ USAGE:
 """
 
 from typing import TypeVar, Generic, Type, Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, UTC
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from sqlalchemy.orm import selectinload
-from ..models.base import Base, SyncStatus
+from ..models import Base
 
 T = TypeVar("T", bound=Base)
 
@@ -86,19 +93,47 @@ class ClientBaseRepository(Generic[T]):
         
     async def get_pending(self) -> List[T]:
         """Get entities with pending changes."""
+        from ..models.sync_tracking import ClientSyncTracking
+        
+        # Get entity IDs with pending sync status
+        pending_result = await self.session.execute(
+            select(ClientSyncTracking.entity_id)
+            .where(and_(
+                ClientSyncTracking.entity_type == self.model.__tablename__.rstrip('s'),
+                ClientSyncTracking.sync_status == "pending"
+            ))
+        )
+        pending_ids = [row[0] for row in pending_result.fetchall()]
+        
+        if not pending_ids:
+            return []
+        
+        # Get the actual entities
         result = await self.session.execute(
-            select(self.model).where(
-                self.model.sync_status == SyncStatus.PENDING
-            )
+            select(self.model).where(self.model.id.in_(pending_ids))
         )
         return list(result.scalars().all())
         
     async def get_conflicts(self) -> List[T]:
         """Get entities with conflicts."""
+        from ..models.sync_tracking import ClientSyncTracking
+        
+        # Get entity IDs with conflict status
+        conflict_result = await self.session.execute(
+            select(ClientSyncTracking.entity_id)
+            .where(and_(
+                ClientSyncTracking.entity_type == self.model.__tablename__.rstrip('s'),
+                ClientSyncTracking.sync_status == "conflict"
+            ))
+        )
+        conflict_ids = [row[0] for row in conflict_result.fetchall()]
+        
+        if not conflict_ids:
+            return []
+        
+        # Get the actual entities
         result = await self.session.execute(
-            select(self.model).where(
-                self.model.sync_status == SyncStatus.CONFLICT
-            )
+            select(self.model).where(self.model.id.in_(conflict_ids))
         )
         return list(result.scalars().all())
         
@@ -112,11 +147,14 @@ class ClientBaseRepository(Generic[T]):
         return list(result.scalars().all())
         
     async def create(self, **kwargs) -> T:
-        """Create new entity with pending status."""
+        """Create new entity."""
         entity = self.model(**kwargs)
-        entity.mark_pending()
         self.session.add(entity)
         await self.session.flush()
+        
+        # Mark as pending for sync
+        await self._mark_pending(entity.id, "create")
+        
         return entity
         
     async def update(self, id: str, **kwargs) -> Optional[T]:
@@ -129,7 +167,9 @@ class ClientBaseRepository(Generic[T]):
             if hasattr(entity, key):
                 setattr(entity, key, value)
                 
-        entity.mark_pending()
+        # Mark as pending for sync
+        await self._mark_pending(id, "update")
+        
         await self.session.flush()
         return entity
         
@@ -145,18 +185,32 @@ class ClientBaseRepository(Generic[T]):
         
     async def mark_synced(self, id: str, server_updated_at: datetime) -> Optional[T]:
         """Mark entity as synced."""
+        from ..models.sync_tracking import ClientSyncTracking
+        
         entity = await self.get(id)
-        if entity:
-            entity.mark_synced(server_updated_at)
-            await self.session.flush()
+        if not entity:
+            return None
+        
+        # Find or create sync tracking record
+        sync_record = await self._get_or_create_sync_record(id)
+        sync_record.mark_synced()
+        
+        await self.session.flush()
         return entity
         
     async def mark_conflict(self, id: str, error: str) -> Optional[T]:
         """Mark entity as having conflict."""
+        from ..models.sync_tracking import ClientSyncTracking
+        
         entity = await self.get(id)
-        if entity:
-            entity.mark_conflict(error)
-            await self.session.flush()
+        if not entity:
+            return None
+        
+        # Find or create sync tracking record
+        sync_record = await self._get_or_create_sync_record(id)
+        sync_record.mark_conflict(error)
+        
+        await self.session.flush()
         return entity
         
     async def resolve_conflict(self, id: str, **kwargs) -> Optional[T]:
@@ -169,6 +223,39 @@ class ClientBaseRepository(Generic[T]):
             if hasattr(entity, key):
                 setattr(entity, key, value)
                 
-        entity.mark_synced(kwargs.get("updated_at", datetime.now()))
+        # Mark as pending for sync
+        await self._mark_pending(id, "update")
+        
         await self.session.flush()
         return entity
+    
+    async def _get_or_create_sync_record(self, entity_id: str):
+        """Get or create sync tracking record for entity."""
+        from ..models.sync_tracking import ClientSyncTracking
+        
+        # Try to find existing record
+        result = await self.session.execute(
+            select(ClientSyncTracking)
+            .where(and_(
+                ClientSyncTracking.entity_id == entity_id,
+                ClientSyncTracking.entity_type == self.model.__tablename__.rstrip('s')
+            ))
+        )
+        sync_record = result.scalar_one_or_none()
+        
+        if not sync_record:
+            # Create new record
+            sync_record = ClientSyncTracking(
+                entity_id=entity_id,
+                entity_type=self.model.__tablename__.rstrip('s'),
+                entity_updated_at=datetime.now(UTC)
+            )
+            self.session.add(sync_record)
+            
+        return sync_record
+    
+    async def _mark_pending(self, entity_id: str, operation: str = "update"):
+        """Mark entity as having pending changes."""
+        sync_record = await self._get_or_create_sync_record(entity_id)
+        sync_record.mark_pending(operation)
+        await self.session.flush()

@@ -216,6 +216,20 @@ def house_show():
     asyncio.run(_show())
 
 
+@house.command("create")
+@click.option("--name", required=True, help="House name")
+@click.option("--address", help="House address")
+@click.option("--timezone", default="UTC", help="Timezone (default: UTC)")
+def house_create(name, address, timezone):
+    """Create a new house."""
+    async def _create():
+        client = await load_client()
+        house_id = await client.create_house(name, address=address, timezone=timezone)
+        click.echo(f"✅ Created house: {house_id}")
+        
+    asyncio.run(_create())
+
+
 @cli.group()
 def room():
     """Room management commands."""

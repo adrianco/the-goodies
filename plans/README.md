@@ -2,6 +2,12 @@
 
 This directory contains planning and development documentation for The Goodies smart home system.
 
+## Recent Updates
+
+- **2025-07-29**: Fixed human testing issues
+  - `human-testing-fixes.md` - Detailed fixes based on user feedback
+  - `fixes-summary-2025-07-29.md` - Summary of all implemented fixes
+
 ## Current Plans
 
 ### Requirements & Scope

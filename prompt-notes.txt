@@ -34,3 +34,6 @@ modify the plans to document, create and test a client implementation of the pro
    update all source code files with a comprehensive block comment at the start that summarizes their development context, what they do, why and maintain bugs and revision history. This makes future edits more 
   reliable, remember to create context blocks in any new files and to update them when code is changed
 
+Day 2 - July 29th
+look at human test results in error-logs.txt and tidy up the system
+

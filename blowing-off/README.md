@@ -14,8 +14,11 @@ Blowing-Off is a Python test client for The Goodies smart home system. It implem
 ## Installation
 
 ```bash
+# From the blowing-off directory
 cd blowing-off
 pip install -e .
+
+# This installs the 'blowingoff' command globally
 ```
 
 ## Quick Start
@@ -57,6 +60,12 @@ blowing-off device state device-123
 ### 4. Create Entities
 
 ```bash
+# Create house
+blowing-off house create \
+  --name "My Home" \
+  --address "123 Main St" \
+  --timezone "America/New_York"
+
 # Create room
 blowing-off room create \
   --house-id house-1 \
