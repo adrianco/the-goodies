@@ -432,6 +432,103 @@ oook tools  # Should list all MCP tools
 6. **Oook CLI**: Powerful testing tool for MCP operations
 7. **Population Script**: Comprehensive test data generator (populate_graph_db.py)
 
+## 🔄 Phase 3: Enhanced Sync Protocol
+
+Phase 3 adds the enhanced Inbetweenies synchronization protocol with:
+
+### Features
+- **Full Entity & Relationship Sync**: Complete graph synchronization
+- **Immutable Version History**: Track all changes with parent versions
+- **Advanced Conflict Resolution**: Multiple strategies (merge, last-write-wins, manual)
+- **Delta Synchronization**: Efficient partial updates
+- **Vector Clocks**: Distributed state tracking
+
+### Sync API Endpoints
+
+#### Check Sync Status
+```bash
+curl "http://localhost:8000/api/v1/sync/status?device_id=my-device"
+```
+
+Response:
+```json
+{
+  "device_id": "my-device",
+  "last_sync": "2025-07-30T22:00:00Z",
+  "protocol_version": "inbetweenies-v2"
+}
+```
+
+#### Perform Full Sync
+```bash
+curl -X POST http://localhost:8000/api/v1/sync/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "protocol_version": "inbetweenies-v2",
+    "device_id": "my-device",
+    "user_id": "test-user",
+    "sync_type": "full",
+    "vector_clock": {"clocks": {}},
+    "changes": []
+  }'
+```
+
+### Sync Client Usage (Python)
+
+```python
+from blowing_off.sync.client import EnhancedSyncClient, SyncType
+
+# Initialize client
+client = EnhancedSyncClient("http://localhost:8000", device_id="my-device")
+
+# Perform full sync
+progress = await client.full_sync()
+print(f"Synced {progress.synced_entities} entities")
+
+# Delta sync with filtering
+from datetime import datetime, timedelta
+since = datetime.now() - timedelta(hours=1)
+progress = await client.sync_entities(since=since)
+
+# Handle conflicts
+await client.resolve_conflicts(strategy=ConflictStrategy.MERGE)
+```
+
+### Version Management
+
+The system maintains complete version history:
+
+```python
+# Every change creates a new version
+entity.version = "2025-07-30T22:00:00.000000Z-user123"
+
+# Track parent versions for merge history
+entity.parent_versions = ["v1", "v2"]  # This entity merges v1 and v2
+```
+
+### Conflict Resolution Strategies
+
+1. **Last Write Wins**: Most recent update wins
+2. **Merge**: Intelligently merge non-conflicting changes
+3. **Manual**: Queue for user resolution
+4. **Client/Server Wins**: Force one side to win
+5. **Custom**: Entity-type specific rules
+
+### Testing Sync
+
+A test script is provided to demonstrate sync functionality:
+
+```bash
+cd /workspaces/the-goodies
+python funkygibbon/examples/test_sync.py
+```
+
+This demonstrates:
+- Full and delta sync
+- Creating and syncing entities
+- Conflict generation and resolution
+- Vector clock updates
+
 ## 🔄 Cleaning Up
 
 When you're done testing:
