@@ -53,53 +53,9 @@ pip install -e .
 cd ..
 ```
 
-### Step 4: Start the FunkyGibbon Server
-```bash
-# From project root with PYTHONPATH set
-export PYTHONPATH=/workspaces/the-goodies
-python -m funkygibbon
-```
+### Step 4: Populate the Database with Test Data (Optional but Recommended)
 
-Expected output:
-```
-INFO:     Started server process [xxxxx]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-DEBUG: Starting server with DATABASE_URL=sqlite+aiosqlite:///./funkygibbon.db
-Database initialized
-```
-
-### Step 5: Test the Graph Operations API
-
-Open a new terminal and run these commands:
-
-#### Test Health Endpoint
-```bash
-curl http://localhost:8000/health
-# Output: {"status":"healthy"}
-```
-
-#### Test Graph Statistics (empty initially)
-```bash
-curl http://localhost:8000/api/v1/graph/statistics
-```
-
-Expected output:
-```json
-{
-  "total_entities": 0,
-  "total_relationships": 0,
-  "entity_types": {},
-  "relationship_types": {},
-  "average_degree": 0.0,
-  "isolated_entities": 0
-}
-```
-
-### Step 6: Populate the Database with Test Data
-
-Before testing with Oook CLI, you can populate the database with comprehensive test data:
+Before starting the server, you can populate the database with comprehensive test data:
 
 ```bash
 # Run the population script
@@ -119,6 +75,71 @@ This script creates:
 - 1 Schedule (Vacation Mode)
 - 2 Notes (WiFi Configuration, HVAC Maintenance)
 - 30+ Relationships connecting all entities
+
+### Step 5: Start the FunkyGibbon Server
+```bash
+# From project root with PYTHONPATH set
+export PYTHONPATH=/workspaces/the-goodies
+python -m funkygibbon
+```
+
+Expected output:
+```
+INFO:     Started server process [xxxxx]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+DEBUG: Starting server with DATABASE_URL=sqlite+aiosqlite:///./funkygibbon.db
+Database initialized
+```
+
+### Step 6: Test the Graph Operations API
+
+Open a new terminal and run these commands:
+
+#### Test Health Endpoint
+```bash
+curl http://localhost:8000/health
+# Output: {"status":"healthy"}
+```
+
+#### Test Graph Statistics
+```bash
+curl http://localhost:8000/api/v1/graph/statistics
+```
+
+Expected output (if you ran the population script):
+```json
+{
+  "total_entities": 25,
+  "total_relationships": 35,
+  "entity_types": {
+    "home": 1,
+    "room": 6,
+    "device": 6,
+    "zone": 3,
+    "door": 1,
+    "procedure": 2,
+    "manual": 1,
+    "note": 2,
+    "schedule": 1,
+    "automation": 2
+  },
+  "relationship_types": {
+    "part_of": 9,
+    "located_in": 11,
+    "connects_to": 3,
+    "monitors": 1,
+    "procedure_for": 2,
+    "documented_by": 3,
+    "automates": 2,
+    "controls": 2,
+    "manages": 2
+  },
+  "average_degree": 2.80,
+  "isolated_entities": 0
+}
+```
 
 ### Step 7: Use Oook CLI for Testing
 
@@ -528,6 +549,131 @@ This demonstrates:
 - Creating and syncing entities
 - Conflict generation and resolution
 - Vector clock updates
+
+### 🚀 New: Shared MCP and Graph Functionality
+
+Phase 3 now includes shared code between FunkyGibbon (server) and Blowing-Off (client) for graph operations and MCP tools.
+
+#### Server-Side (FunkyGibbon)
+
+The server now uses shared abstractions from the `inbetweenies` package:
+
+```python
+# FunkyGibbon uses SQLGraphOperations for database-backed graph operations
+from funkygibbon.repositories.graph_impl import SQLGraphOperations
+
+# MCP tools work the same as before, but now use shared implementation
+curl -X POST http://localhost:8000/api/v1/mcp/tools/get_devices_in_room \
+  -H "Content-Type: application/json" \
+  -d '{"arguments": {"room_id": "living-room-123"}}'
+```
+
+#### Client-Side (Blowing-Off)
+
+The client now has local MCP functionality that works offline:
+
+```python
+from blowingoff.client import BlowingOffClient
+
+# Initialize client
+client = BlowingOffClient("test.db")
+await client.connect("http://localhost:8000", "auth-token")
+
+# Sync HomeKit data to local graph
+entities, relationships = await client.sync_graph_from_homekit()
+print(f"Synced {entities} entities and {relationships} relationships")
+
+# Execute MCP tools locally (works offline!)
+result = await client.execute_mcp_tool(
+    "get_devices_in_room",
+    room_id="living-room-123"
+)
+print(f"Devices in room: {result}")
+
+# Search entities locally
+result = await client.execute_mcp_tool(
+    "search_entities",
+    query="light",
+    entity_types=["device"],
+    limit=5
+)
+print(f"Found {result['result']['count']} lights")
+
+# Create relationships locally
+result = await client.execute_mcp_tool(
+    "create_relationship",
+    from_entity_id="device-123",
+    to_entity_id="room-456",
+    relationship_type="located_in",
+    user_id="local-user"
+)
+
+# Demo MCP functionality
+await client.demo_mcp_functionality()
+```
+
+#### Testing Shared Functionality
+
+1. **Test server MCP tools work as before**:
+```bash
+cd /workspaces/the-goodies
+# Run the populate script first
+cd funkygibbon && python populate_graph_db.py && cd ..
+
+# Start server
+cd funkygibbon && python -m uvicorn api.app:app --reload
+
+# Test MCP tools
+oook execute get_devices_in_room -a room_id="living-room-1"
+```
+
+2. **Test client local MCP functionality**:
+```python
+# In a Python script or interactive session
+import asyncio
+from blowingoff.client import BlowingOffClient
+
+async def test_local_mcp():
+    client = BlowingOffClient("test_local.db")
+    
+    # Demo creates sample data and tests tools
+    await client.demo_mcp_functionality()
+    
+    # List available tools
+    tools = client.get_available_mcp_tools()
+    print(f"Available tools: {tools}")
+
+asyncio.run(test_local_mcp())
+```
+
+3. **Test sync between server and client graph data**:
+```python
+# This requires both server running and client connected
+async def test_graph_sync():
+    client = BlowingOffClient("test_sync.db")
+    await client.connect("http://localhost:8000", "test-token")
+    
+    # Sync HomeKit data to graph format
+    entities, rels = await client.sync_graph_from_homekit()
+    print(f"Converted {entities} HomeKit entities to graph format")
+    
+    # Now MCP tools work with HomeKit data
+    result = await client.execute_mcp_tool(
+        "search_entities",
+        query="room"
+    )
+    print(f"Found rooms: {result}")
+
+asyncio.run(test_graph_sync())
+```
+
+#### Benefits of Shared Code
+
+1. **No duplication**: Server and client use the same MCP tool implementations
+2. **Offline capability**: Client can use MCP tools without server connection
+3. **Consistent behavior**: Same results whether online or offline
+4. **Easy testing**: Can test MCP functionality without full server setup
+5. **Future Swift implementation**: The abstract interfaces guide the Swift/WildThing implementation
 
 ## 🔄 Cleaning Up
 

@@ -75,6 +75,8 @@ import json
 from .models import Base
 from .sync.engine import SyncEngine
 from .sync.state import SyncResult
+from ..mcp import LocalMCPClient
+from ..graph import LocalGraphStorage
 from .repositories import (
     ClientHomeRepository,
     ClientRoomRepository,
@@ -96,6 +98,10 @@ class BlowingOffClient:
         self.sync_engine = None
         self._observers = []
         self._background_task = None
+        
+        # Initialize MCP and graph functionality
+        self.graph_storage = LocalGraphStorage()
+        self.mcp_client = LocalMCPClient(self.graph_storage)
         
     async def connect(self, server_url: str, auth_token: str, client_id: str = None):
         """Connect to server and initialize local database."""
@@ -380,3 +386,138 @@ class BlowingOffClient:
             "sync_in_progress": False,
             "last_error": None
         }
+    
+    # MCP and Graph Operations
+    
+    async def execute_mcp_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:
+        """
+        Execute an MCP tool locally using graph data.
+        
+        Args:
+            tool_name: Name of the MCP tool to execute
+            **kwargs: Tool arguments
+            
+        Returns:
+            Tool execution result
+        """
+        return await self.mcp_client.execute_tool(tool_name, **kwargs)
+    
+    def get_available_mcp_tools(self) -> List[str]:
+        """Get list of available MCP tools"""
+        return self.mcp_client.get_available_tools()
+    
+    async def sync_graph_from_homekit(self):
+        """
+        Sync graph data from HomeKit data.
+        
+        This converts HomeKit entities (homes, rooms, accessories) to
+        graph entities and relationships for use with MCP tools.
+        """
+        from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
+        
+        async with self.session_factory() as session:
+            # Get all homes
+            home_repo = ClientHomeRepository(session)
+            homes = await home_repo.get_all()
+            
+            entities = []
+            relationships = []
+            
+            for home in homes:
+                # Create home entity
+                home_entity = Entity(
+                    id=home.id,
+                    version=Entity.create_version("homekit-sync"),
+                    entity_type=EntityType.BUILDING,
+                    name=home.name,
+                    content={"homekit_id": home.id},
+                    source_type=SourceType.HOMEKIT,
+                    user_id="homekit-sync",
+                    parent_versions=[]
+                )
+                entities.append(home_entity)
+                
+                # Get rooms
+                room_repo = ClientRoomRepository(session)
+                rooms = await room_repo.get_by_home(home.id)
+                
+                for room in rooms:
+                    # Create room entity
+                    room_entity = Entity(
+                        id=room.id,
+                        version=Entity.create_version("homekit-sync"),
+                        entity_type=EntityType.ROOM,
+                        name=room.name,
+                        content={"homekit_id": room.id},
+                        source_type=SourceType.HOMEKIT,
+                        user_id="homekit-sync",
+                        parent_versions=[]
+                    )
+                    entities.append(room_entity)
+                    
+                    # Create relationship: room -> home
+                    rel = EntityRelationship(
+                        id=f"{room.id}-in-{home.id}",
+                        from_entity_id=room.id,
+                        from_entity_version=room_entity.version,
+                        to_entity_id=home.id,
+                        to_entity_version=home_entity.version,
+                        relationship_type=RelationshipType.LOCATED_IN,
+                        properties={},
+                        user_id="homekit-sync"
+                    )
+                    relationships.append(rel)
+                
+                # Get accessories
+                accessory_repo = ClientAccessoryRepository(session)
+                accessories = await accessory_repo.get_by_home(home.id)
+                
+                for accessory in accessories:
+                    # Create device entity
+                    device_entity = Entity(
+                        id=accessory.id,
+                        version=Entity.create_version("homekit-sync"),
+                        entity_type=EntityType.DEVICE,
+                        name=accessory.name,
+                        content={
+                            "homekit_id": accessory.id,
+                            "model": accessory.model,
+                            "manufacturer": accessory.manufacturer,
+                            "firmware_version": accessory.firmware_version,
+                            "capabilities": ["homekit"]
+                        },
+                        source_type=SourceType.HOMEKIT,
+                        user_id="homekit-sync",
+                        parent_versions=[]
+                    )
+                    entities.append(device_entity)
+                    
+                    # Create relationship: device -> room (if assigned)
+                    if accessory.room_id:
+                        rel = EntityRelationship(
+                            id=f"{accessory.id}-in-{accessory.room_id}",
+                            from_entity_id=accessory.id,
+                            from_entity_version=device_entity.version,
+                            to_entity_id=accessory.room_id,
+                            to_entity_version=Entity.create_version("homekit-sync"),
+                            relationship_type=RelationshipType.LOCATED_IN,
+                            properties={},
+                            user_id="homekit-sync"
+                        )
+                        relationships.append(rel)
+        
+        # Sync to local graph storage
+        await self.mcp_client.sync_with_server({
+            "entities": entities,
+            "relationships": relationships
+        })
+        
+        return len(entities), len(relationships)
+    
+    async def demo_mcp_functionality(self):
+        """Demonstrate MCP functionality with local data"""
+        await self.mcp_client.demo_local_functionality()
+    
+    def clear_graph_data(self):
+        """Clear all local graph data"""
+        self.mcp_client.clear_local_data()

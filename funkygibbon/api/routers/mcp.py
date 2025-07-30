@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from ...database import get_db
-from ...repositories.graph import GraphRepository
+from ...repositories.graph_impl import SQLGraphOperations
 from ...graph.index import GraphIndex
 from ...mcp.server import FunkyGibbonMCPServer
 from ..routers.graph import get_graph_index
@@ -37,8 +37,8 @@ async def get_mcp_server(
     global _mcp_server
     
     if _mcp_server is None:
-        repo = GraphRepository(db)
-        _mcp_server = FunkyGibbonMCPServer(graph, repo)
+        graph_ops = SQLGraphOperations(db)
+        _mcp_server = FunkyGibbonMCPServer(graph, graph_ops)
     
     return _mcp_server
 
