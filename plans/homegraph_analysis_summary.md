@@ -9,24 +9,24 @@
   - SQLite storage implementation
   - In-memory graph operations
   - MCP server implementation
-  - HomeKit integration (iOS only)
+  - HomeKit integration (iOS as data source), with extensions for other device types and documentation
   - Command-line tool for testing
 
 ### FunkyGibbon (Python Package)
 - **Purpose**: Python backend service for cloud/server deployment
 - **Key Features**:
-  - FastAPI-based REST API
-  - PostgreSQL storage backend
-  - Redis caching support
-  - Inbetweenies sync service
+  - Platform-agnostic data models
+  - SQLite storage implementation
+  - In-memory graph operations
   - MCP server implementation
+  - HomeKit model support, with extensions for other device types and documentation
+  - Command-line tool for testing
 
 ### Inbetweenies Protocol
 - **Purpose**: Distributed synchronization protocol between Swift and Python components
 - **Key Features**:
   - JSON-based message format
-  - Vector clock synchronization
-  - Conflict resolution
+  - Versioned immutable entity writes with last write wins conflict resolution
   - Bidirectional sync support
 
 ## 2. Technical Requirements
@@ -42,8 +42,6 @@
 - FastAPI (>= 0.104.0)
 - SQLAlchemy (>= 2.0.0)
 - Pydantic (>= 2.5.0)
-- Redis (>= 5.0.0)
-- AsyncPG (>= 0.29.0)
 
 ### Platform Requirements
 - iOS 15+, macOS 12+, watchOS 8+, tvOS 15+
@@ -56,11 +54,12 @@
 - **Entity Types**: home, room, device, accessory, service, zone, door, window, procedure, manual, note, schedule, automation
 - **Relationship Types**: located_in, controls, connects_to, part_of, manages, documented_by, procedure_for, triggered_by, depends_on
 - **Source Types**: homekit, matter, manual, imported, generated
-- **Version Control**: Entity versioning with parent version tracking
+- **Version Control**: Entity versioning with parent version tracking, immutable entities providing history, create/read/delete only
 - **Binary Content**: Support for images, PDFs, and other attachments
 
 ### MCP Tools Available
 1. **Graph Query Tools**:
+TODO: this list of tools needs to be refined and extended
    - get_devices_in_room
    - find_device_controls
    - get_room_connections
@@ -68,7 +67,6 @@
 2. **Entity Management**:
    - create_entity
    - create_relationship
-   - delete_entity
 
 3. **Content Management**:
    - add_device_manual
@@ -81,63 +79,49 @@
 
 ### Storage Capabilities
 - SQLite for Swift (local storage)
-- PostgreSQL for Python (cloud storage)
+- SQLite for Python (local storage)
 - Binary content storage with checksums
 - Full-text search support
 - Graph indexing for fast queries
 
 ## 4. Implementation Phases
 
-### Phase 1: Foundation (2-3 weeks)
-- Core data models and protocols
-- SQLite storage implementation
-- Basic MCP server functionality
-- Python package setup
-- Test infrastructure
+### Phase 1: The-Goodies Foundation (COMPLETED)
+- [ ] Python package with HomeKit based data models and Inbetweenies protocol
+- [ ] SQLite Storage implementation
+- [ ] FunkyGibbon Python backend and Blowing-off front end with shared models
+- [ ] Comprehensive test suite for both packages
 
-### Phase 2: Graph Operations (2 weeks)
-- In-memory graph with indexing
-- Path finding algorithms
-- Search optimization
-- CLI tool development
+### Phase 2: Graph Operations in Python on server (2 weeks)
+- [ ] In-memory graph with relationship indexing in Python
+- [ ] Path finding and traversal algorithms
+- [ ] Search and query optimization
+- [ ] Basic MCPServer with essential tools
+- [ ] New Oook CLI tool for FunkyGibbon development and testing
 
-### Phase 3: Inbetweenies Protocol (2 weeks)
-- Protocol specification
-- Swift client implementation
-- Python server implementation
-- Basic sync without conflicts
+### Phase 3: Inbetweenies Protocol in Python (2 weeks)
+- [ ] Inbetweenies protocol specification and JSON schemas
+- [ ] InbetweeniesServer implementation in FunkyGibbon
+- [ ] InbetweeniesClient Python implementation in Blowing-off
+- [ ] Basic sync functionality with last-write-wins conflict resolution
 
-### Phase 4: Platform Integration (2 weeks)
-- HomeKit integration module
-- Matter/Thread investigation
-- Binary content support
-- Example apps
-
-### Phase 5: Advanced Sync (3 weeks)
-- Vector clock implementation
-- Conflict resolution
-- Multi-device testing
-- Performance optimization
-
-### Phase 6: Documentation & Release (1 week)
-- API documentation
-- Protocol specification
-- Usage guides
-- Performance benchmarking
+### Phase 4: Swift Implementation (2 weeks)
+- [ ] InbetweeniesClient Swift implementation in WildThing
+- [ ] HomeKit integration module (iOS/macOS)
+- [ ] Matter/Thread support investigation
+- [ ] Binary content storage (images, PDFs)
+- [ ] Integrate into c11s-house-ios project
 
 ## 5. Integration Points
 
 ### iOS/HomeKit Integration
-- Direct HomeKit API access
-- Automatic device discovery
-- Real-time state synchronization
-- HomeKit scene support
+- handled by apps like c11s-ios-house that depend on the-goodies
 
 ### Cloud Sync Architecture
 - FunkyGibbon serves as central sync hub
 - Multiple WildThing clients sync via Inbetweenies
 - Conflict resolution at server level
-- Optional offline operation
+- Offline operation with full locally cached data
 
 ### MCP Integration
 - Standard MCP tool interface
@@ -148,10 +132,10 @@
 ## 6. Gaps Requiring Detailed Planning
 
 ### Security & Authentication
-- User authentication strategy not detailed
-- API key management for sync
-- Encryption for sensitive data
-- Access control mechanisms
+- User authentication strategy - server managed passwords
+- Encryption for stored device passwords
+- Client apps only create and read entities, no delete or update
+- Server based admin scripts to archive/compact data and delete/rollback unwanted changes
 
 ### Conflict Resolution
 - Specific conflict resolution algorithms

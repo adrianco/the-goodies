@@ -2,9 +2,13 @@
 
 ## Project Overview
 
-A standalone, reusable Swift/Python MCP server library optimized for knowledge graphs representing homes, rooms, devices, and their relationships. Uses the **Inbetweenies** protocol for distributed synchronization between **WildThing** (Swift) and **FunkyGibbon** (Python) components.
+A standalone, reusable Swift/Python MCP server library optimized for knowledge graphs representing homes, rooms, devices, and their relationships. Uses the **Inbetweenies** protocol for distributed synchronization between **WildThing** (Swift) and **Blowing-Off** (Python) clients and **FunkyGibbon** (Python) server components.
+
+Initial prototype in Python used a simplified protocol setup, and has been implemented successfully. No Swift code will be generated until fully tested Python is working.
 
 ## Repository Structure
+
+TODO: This needs to be updated to add the current blowing-off structure. The WildThing layout won't be implemented until later. Inbetweenies includes the models that are shared for the protocol, and all shared models and protocol should use the Inbetweenies naming scheme for both Python and Swift versions.
 
 ```
 the-goodies/
@@ -59,6 +63,8 @@ the-goodies/
 ```
 
 ## WildThing Swift Package Design
+
+TODO: Old design, use as a guide only and update when Python version is complete
 
 ### Package Definition
 ```swift
@@ -120,6 +126,9 @@ let package = Package(
 ## Core Data Models
 
 ### Platform-Agnostic Models
+
+TODO: These models should be Inbetweenies not WildThing naming scheme
+
 ```swift
 // Sources/WildThing/Core/Models.swift
 import Foundation
@@ -1204,7 +1213,7 @@ public class WildThingMCPServer: MCPServer {
 ## Inbetweenies Sync Protocol
 
 ### Protocol Specification
-The **Inbetweenies** protocol handles distributed synchronization between WildThing (Swift) clients and FunkyGibbon (Python) servers.
+The **Inbetweenies** protocol handles distributed synchronization and all shared models between WildThing (Swift) and Blowing-off (Python) clients and FunkyGibbon (Python) servers.
 
 ```json
 // Inbetweenies/schemas/sync-request.json
@@ -1241,197 +1250,6 @@ The **Inbetweenies** protocol handles distributed synchronization between WildTh
 }
 ```
 
-### WildThing Sync Implementation
-```swift
-// Sources/WildThing/Inbetweenies/SyncManager.swift
-import Foundation
-
-public struct InbetweeniesRequest: Codable {
-    public let protocolVersion: String
-    public let deviceId: String
-    public let userId: String
-    public let vectorClock: [String: String]
-    public let changes: [EntityChange]
-    
-    public init(
-        protocolVersion: String = "inbetweenies-v1",
-        deviceId: String,
-        userId: String,
-        vectorClock: [String: String],
-        changes: [EntityChange]
-    ) {
-        self.protocolVersion = protocolVersion
-        self.deviceId = deviceId
-        self.userId = userId
-        self.vectorClock = vectorClock
-        self.changes = changes
-    }
-}
-
-public struct InbetweeniesResponse: Codable {
-    public let changes: [EntityChange]
-    public let vectorClock: [String: String]
-    public let conflicts: [String]
-}
-
-public struct EntityChange: Codable {
-    public let changeType: ChangeType
-    public let entityId: String
-    public let entityVersion: String
-    public let entityType: String?
-    public let content: [String: AnyCodable]?
-    public let timestamp: Date
-    
-    public enum ChangeType: String, Codable {
-        case create = "create"
-        case update = "update"
-        case delete = "delete"
-    }
-}
-
-public class InbetweeniesClient {
-    private let storage: WildThingStorage
-    private let networkService: NetworkService
-    private let conflictResolver: ConflictResolver
-    
-    public init(storage: WildThingStorage, networkService: NetworkService) {
-        self.storage = storage
-        self.networkService = networkService
-        self.conflictResolver = ConflictResolver(storage: storage)
-    }
-    
-    public struct SyncResult {
-        public let uploaded: Int
-        public let downloaded: Int
-        public let conflicts: Int
-        public let errors: [Error]
-    }
-    
-    public func performFullSync() async throws -> SyncResult {
-        var result = SyncResult(uploaded: 0, downloaded: 0, conflicts: 0, errors: [])
-        
-        // 1. Get current vector clock
-        let localVectorClock = try await storage.getVectorClock()
-        
-        // 2. Send our changes using Inbetweenies protocol
-        let pendingChanges = try await getPendingChanges()
-        let inbetweeniesRequest = InbetweeniesRequest(
-            deviceId: getCurrentDeviceId(),
-            userId: getCurrentUserId(),
-            vectorClock: localVectorClock,
-            changes: pendingChanges
-        )
-        
-        let serverResponse = try await networkService.sendInbetweeniesRequest(inbetweeniesRequest)
-        
-        // 3. Apply incoming changes
-        for change in serverResponse.changes {
-            do {
-                try await applyChange(change)
-                result.downloaded += 1
-            } catch let error as ConflictError {
-                try await conflictResolver.recordConflict(error.conflict)
-                result.conflicts += 1
-            } catch {
-                result.errors.append(error)
-            }
-        }
-        
-        // 4. Update vector clock
-        try await storage.updateVectorClock(serverResponse.vectorClock)
-        
-        return SyncResult(
-            uploaded: pendingChanges.count,
-            downloaded: result.downloaded,
-            conflicts: result.conflicts,
-            errors: result.errors
-        )
-    }
-    
-    private func getPendingChanges() async throws -> [EntityChange] {
-        let lastSyncTime = Date() // This would be stored
-        let changedEntities = try await storage.getChangedEntities(since: lastSyncTime, userId: nil)
-        
-        return changedEntities.map { entity in
-            EntityChange(
-                changeType: .update, // Would determine based on entity state
-                entityId: entity.id,
-                entityVersion: entity.version,
-                entityType: entity.entityType.rawValue,
-                content: entity.content,
-                timestamp: entity.lastModified
-            )
-        }
-    }
-    
-    private func applyChange(_ change: EntityChange) async throws {
-        switch change.changeType {
-        case .create, .update:
-            guard let content = change.content,
-                  let entityType = EntityType(rawValue: change.entityType ?? "") else {
-                throw WildThingError.invalidEntityType
-            }
-            
-            let entity = HomeEntity(
-                id: change.entityId,
-                entityType: entityType,
-                content: content,
-                userId: getCurrentUserId()
-            )
-            
-            try await storage.store(entity: entity)
-            
-        case .delete:
-            try await storage.deleteEntity(id: change.entityId, version: change.entityVersion)
-        }
-    }
-    
-    private func getCurrentDeviceId() -> String {
-        #if os(iOS)
-        return UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
-        #else
-        return "unknown"
-        #endif
-    }
-    
-    private func getCurrentUserId() -> String {
-        return "default" // Would be implemented with proper authentication
-    }
-}
-
-public protocol NetworkService {
-    func sendInbetweeniesRequest(_ request: InbetweeniesRequest) async throws -> InbetweeniesResponse
-}
-
-public class ConflictResolver {
-    private let storage: WildThingStorage
-    
-    public init(storage: WildThingStorage) {
-        self.storage = storage
-    }
-    
-    public func recordConflict(_ conflict: Conflict) async throws {
-        // Implementation for recording conflicts
-    }
-}
-
-public struct Conflict {
-    public let entityId: String
-    public let localVersion: String
-    public let remoteVersion: String
-    public let conflictType: ConflictType
-    
-    public enum ConflictType {
-        case versionConflict
-        case typeConflict
-        case contentConflict
-    }
-}
-
-public struct ConflictError: Error {
-    public let conflict: Conflict
-}
-```
 
 ## FunkyGibbon Python Package
 
@@ -1473,6 +1291,9 @@ funkygibbon-server = "funkygibbon.cli:main"
 ```
 
 ### Core Python Models
+
+TODO: this needs to be modified to fit in with the Inbetweenies model packaging that has already been implemented, but with new capabilities added
+
 ```python
 # funkygibbon/core/models.py
 from typing import Dict, List, Optional, Any, Union
@@ -1552,799 +1373,46 @@ class InbetweeniesResponse(BaseModel):
     conflicts: List[str] = Field(default_factory=list)
 ```
 
-### FunkyGibbon Sync Service
-```python
-# funkygibbon/inbetweenies/sync_service.py
-from typing import Dict, List, Any
-from ..core.models import HomeEntity, InbetweeniesRequest, InbetweeniesResponse
+# sync services
+TODO: sync service with last write wins has already been implemented, the initial idea to use vector clocks and support large scale was abandoned as unneccesary
+TODO: immutable versioned entities will be used, so writes create a new version rather than an update. Sync obtains all versions so that history of changes is available to the app.
 
-class InbetweeniesServer:
-    """Handles Inbetweenies protocol on the server side"""
-    
-    def __init__(self, storage):
-        self.storage = storage
-    
-    async def handle_sync_request(self, request: InbetweeniesRequest) -> InbetweeniesResponse:
-        """Process an Inbetweenies sync request"""
-        conflicts = []
-        
-        # Process incoming changes
-        for change in request.changes:
-            try:
-                await self.apply_change(change)
-            except ConflictError as e:
-                conflicts.append(e.conflict_id)
-        
-        # Get changes for client
-        client_changes = await self.get_changes_since(
-            user_id=request.user_id,
-            vector_clock=request.vector_clock
-        )
-        
-        # Update and return vector clock
-        updated_vector_clock = await self.update_vector_clock(
-            user_id=request.user_id,
-            device_id=request.device_id,
-            client_clock=request.vector_clock
-        )
-        
-        return InbetweeniesResponse(
-            changes=client_changes,
-            vector_clock=updated_vector_clock,
-            conflicts=conflicts
-        )
-    
-    async def apply_change(self, change: Dict[str, Any]):
-        """Apply a single change from a client"""
-        change_type = change.get("change_type")
-        entity_id = change.get("entity_id")
-        
-        if change_type in ["create", "update"]:
-            # Check for conflicts
-            existing = await self.storage.get_entity(entity_id)
-            if existing and self.has_conflict(existing, change):
-                raise ConflictError(f"Version conflict for entity {entity_id}")
-            
-            # Apply the change
-            entity = self.change_to_entity(change)
-            await self.storage.store_entity(entity)
-            
-        elif change_type == "delete":
-            await self.storage.delete_entity(entity_id, change.get("entity_version"))
-    
-    async def get_changes_since(self, user_id: str, vector_clock: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Get all changes since the client's vector clock"""
-        # Implementation would query database for changes
-        return []
-    
-    async def update_vector_clock(self, user_id: str, device_id: str, client_clock: Dict[str, str]) -> Dict[str, str]:
-        """Update and return the current vector clock"""
-        # Implementation would merge vector clocks
-        return client_clock
-    
-    def has_conflict(self, existing_entity: HomeEntity, change: Dict[str, Any]) -> bool:
-        """Check if there's a conflict between existing entity and incoming change"""
-        # Simple timestamp-based conflict detection
-        existing_timestamp = existing_entity.last_modified
-        change_timestamp = datetime.fromisoformat(change.get("timestamp", ""))
-        
-        return existing_timestamp > change_timestamp
-    
-    def change_to_entity(self, change: Dict[str, Any]) -> HomeEntity:
-        """Convert a change dictionary to a HomeEntity"""
-        return HomeEntity(
-            id=change["entity_id"],
-            version=change["entity_version"],
-            entity_type=EntityType(change.get("entity_type", "device")),
-            content=change.get("content", {}),
-            user_id=change.get("user_id", "unknown")
-        )
 
-class ConflictError(Exception):
-    def __init__(self, message: str):
-        self.conflict_id = str(uuid.uuid4())
-        super().__init__(message)
-```
-
-### FastAPI Integration
-```python
-# funkygibbon/api/main.py
-from fastapi import FastAPI, HTTPException, Depends
-from ..core.models import InbetweeniesRequest, InbetweeniesResponse
-from ..inbetweenies.sync_service import InbetweeniesServer
-from ..storage.postgresql import PostgreSQLStorage
-
-app = FastAPI(title="FunkyGibbon Sync Service")
-
-# Initialize storage and sync service
-storage = PostgreSQLStorage(database_url="postgresql://...")
-sync_service = InbetweeniesServer(storage=storage)
-
-@app.post("/api/inbetweenies/sync", response_model=InbetweeniesResponse)
-async def sync_data(request: InbetweeniesRequest) -> InbetweeniesResponse:
-    """Bidirectional data synchronization using Inbetweenies protocol"""
-    try:
-        return await sync_service.handle_sync_request(request)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "funkygibbon"}
-
-@app.get("/api/entities/{entity_type}")
-async def get_entities(entity_type: str, user_id: str = "default"):
-    """Get all entities of a specific type"""
-    try:
-        entities = await storage.get_entities_by_type(entity_type, user_id)
-        return {"entities": [entity.dict() for entity in entities]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/entities")
-async def create_entity(entity_data: dict, user_id: str = "default"):
-    """Create a new entity"""
-    try:
-        entity = HomeEntity(**entity_data, user_id=user_id)
-        await storage.store_entity(entity)
-        return {"id": entity.id, "version": entity.version}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-```
-
-## Testing Strategy
-
-### WildThing Swift Tests
-```swift
-// Tests/WildThingTests/WildThingTests.swift
-import XCTest
-@testable import WildThing
-
-final class WildThingTests: XCTestCase {
-    var storage: WildThingStorage!
-    var graph: HomeGraph!
-    
-    override func setUp() async throws {
-        // Use in-memory SQLite for tests
-        storage = try SQLiteWildThingStorage(databasePath: ":memory:")
-        graph = HomeGraph(storage: storage)
-    }
-    
-    func testCreateAndRetrieveEntity() async throws {
-        let entity = HomeEntity(
-            entityType: .room,
-            content: ["name": AnyCodable("Living Room")],
-            userId: "test-user"
-        )
-        
-        try await storage.store(entity: entity)
-        let retrieved = try await storage.getEntity(id: entity.id)
-        
-        XCTAssertEqual(retrieved?.id, entity.id)
-        XCTAssertEqual(retrieved?.entityType, .room)
-        XCTAssertEqual(retrieved?.content["name"]?.value as? String, "Living Room")
-    }
-    
-    func testRoomDeviceRelationships() async throws {
-        // Create room
-        let room = HomeEntity(
-            entityType: .room,
-            content: ["name": AnyCodable("Kitchen")],
-            userId: "test-user"
-        )
-        try await storage.store(entity: room)
-        
-        // Create device
-        let device = HomeEntity(
-            entityType: .device,
-            content: ["name": AnyCodable("Smart Light")],
-            userId: "test-user"
-        )
-        try await storage.store(entity: device)
-        
-        // Create relationship
-        let relationship = EntityRelationship(
-            fromEntityId: device.id,
-            toEntityId: room.id,
-            relationshipType: .locatedIn,
-            userId: "test-user"
-        )
-        try await storage.store(relationship: relationship)
-        
-        // Test query
-        let devicesInRoom = try await storage.getEntitiesInRoom(room.id)
-        XCTAssertEqual(devicesInRoom.count, 1)
-        XCTAssertEqual(devicesInRoom.first?.id, device.id)
-    }
-    
-    func testWildThingMCPServerTools() async throws {
-        let server = WildThingMCPServer(storage: storage)
-        try await server.start()
-        
-        // Create test data
-        let room = HomeEntity(
-            entityType: .room,
-            content: ["name": AnyCodable("Test Room")],
-            userId: "test-user"
-        )
-        try await storage.store(entity: room)
-        
-        // Test room creation tool
-        let createResult = try await server.handleToolCall(MCPToolRequest(
-            name: "create_entity",
-            arguments: [
-                "entity_type": "device",
-                "name": "Test Device",
-                "properties": ["room_id": room.id]
-            ]
-        ))
-        
-        XCTAssertTrue(createResult.content.first?.text?.contains("Created device: Test Device") == true)
-        
-        // Test device query
-        let queryResult = try await server.handleToolCall(MCPToolRequest(
-            name: "get_devices_in_room",
-            arguments: ["room_name": "Test Room"]
-        ))
-        
-        XCTAssertTrue(queryResult.content.first?.text?.contains("Test Device") == true)
-    }
-    
-    func testSearchFunctionality() async throws {
-        // Create test entities
-        let entities = [
-            HomeEntity(entityType: .room, content: ["name": AnyCodable("Living Room")], userId: "test"),
-            HomeEntity(entityType: .device, content: ["name": AnyCodable("Smart TV")], userId: "test"),
-            HomeEntity(entityType: .device, content: ["name": AnyCodable("Smart Lights")], userId: "test")
-        ]
-        
-        for entity in entities {
-            try await storage.store(entity: entity)
-        }
-        
-        try await graph.loadFromStorage()
-        
-        // Test search
-        let results = try await graph.semanticSearch(query: "Smart")
-        XCTAssertEqual(results.count, 2)
-        XCTAssertTrue(results.allSatisfy { $0.score > 0 })
-    }
-    
-    func testInbetweeniesSync() async throws {
-        let networkService = MockNetworkService()
-        let syncClient = InbetweeniesClient(storage: storage, networkService: networkService)
-        
-        // Create local changes
-        let entity = HomeEntity(
-            entityType: .device,
-            content: ["name": AnyCodable("New Device")],
-            userId: "test-user"
-        )
-        try await storage.store(entity: entity)
-        
-        // Mock server response
-        networkService.mockResponse = InbetweeniesResponse(
-            changes: [],
-            vectorClock: ["server": "123"],
-            conflicts: []
-        )
-        
-        let result = try await syncClient.performFullSync()
-        XCTAssertEqual(result.uploaded, 1)
-        XCTAssertEqual(result.conflicts, 0)
-    }
-}
-
-class MockNetworkService: NetworkService {
-    var mockResponse: InbetweeniesResponse?
-    
-    func sendInbetweeniesRequest(_ request: InbetweeniesRequest) async throws -> InbetweeniesResponse {
-        guard let response = mockResponse else {
-            throw NSError(domain: "MockError", code: 1, userInfo: nil)
-        }
-        return response
-    }
-}
-```
-
-### FunkyGibbon Python Tests
-```python
-# tests/test_models.py
-import pytest
-from datetime import datetime
-from funkygibbon.core.models import HomeEntity, EntityType, SourceType
-
-def test_create_home_entity():
-    entity = HomeEntity(
-        entity_type=EntityType.ROOM,
-        content={"name": "Living Room", "area": 200},
-        user_id="test-user"
-    )
-    
-    assert entity.entity_type == EntityType.ROOM
-    assert entity.content["name"] == "Living Room"
-    assert entity.user_id == "test-user"
-    assert entity.source_type == SourceType.MANUAL
-    assert isinstance(entity.created_at, datetime)
-
-def test_entity_serialization():
-    entity = HomeEntity(
-        entity_type=EntityType.DEVICE,
-        content={"name": "Smart Thermostat", "brand": "Nest"},
-        user_id="test-user"
-    )
-    
-    # Test JSON serialization
-    json_data = entity.model_dump_json()
-    assert "Smart Thermostat" in json_data
-    assert "device" in json_data
-    
-    # Test deserialization
-    entity_copy = HomeEntity.model_validate_json(json_data)
-    assert entity_copy.id == entity.id
-    assert entity_copy.content == entity.content
-
-# tests/test_sync_service.py
-import pytest
-from funkygibbon.inbetweenies.sync_service import InbetweeniesServer
-from funkygibbon.core.models import InbetweeniesRequest, HomeEntity, EntityType
-
-@pytest.mark.asyncio
-async def test_inbetweenies_sync():
-    # Mock storage
-    storage = MockStorage()
-    sync_service = InbetweeniesServer(storage)
-    
-    # Create sync request
-    request = InbetweeniesRequest(
-        device_id="test-device",
-        user_id="test-user",
-        vector_clock={"client": "100"},
-        changes=[
-            {
-                "change_type": "create",
-                "entity_id": "entity-1",
-                "entity_version": "v1",
-                "entity_type": "room",
-                "content": {"name": "New Room"},
-                "timestamp": "2024-01-01T00:00:00Z"
-            }
-        ]
-    )
-    
-    response = await sync_service.handle_sync_request(request)
-    
-    assert len(response.conflicts) == 0
-    assert "client" in response.vector_clock
-
-class MockStorage:
-    def __init__(self):
-        self.entities = {}
-    
-    async def get_entity(self, entity_id):
-        return self.entities.get(entity_id)
-    
-    async def store_entity(self, entity):
-        self.entities[entity.id] = entity
-    
-    async def delete_entity(self, entity_id, version=None):
-        if entity_id in self.entities:
-            del self.entities[entity_id]
-```
-
-## WildThing CLI Tool
-
-### Command Line Interface
-```swift
-// Sources/WildThingCLI/main.swift
-import ArgumentParser
-import WildThing
-import Foundation
-
-@main
-struct WildThingCLI: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "wildthing",
-        abstract: "WildThing MCP command line tool",
-        subcommands: [
-            CreateEntity.self,
-            ListEntities.self,
-            Search.self,
-            StartServer.self,
-            Sync.self
-        ]
-    )
-}
-
-struct CreateEntity: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "Create a new entity in the home graph"
-    )
-    
-    @Option(help: "Database file path")
-    var database: String = "wildthing.db"
-    
-    @Option(help: "Entity type")
-    var type: String
-    
-    @Option(help: "Entity name")
-    var name: String
-    
-    @Option(help: "Additional properties as JSON")
-    var properties: String?
-    
-    func run() async throws {
-        let storage = try SQLiteWildThingStorage(databasePath: database)
-        
-        guard let entityType = EntityType(rawValue: type) else {
-            print("Invalid entity type: \(type)")
-            print("Available types: \(EntityType.allCases.map(\.rawValue).joined(separator: ", "))")
-            return
-        }
-        
-        var content: [String: AnyCodable] = ["name": AnyCodable(name)]
-        
-        if let propertiesJson = properties {
-            let data = Data(propertiesJson.utf8)
-            let props = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-            for (key, value) in props {
-                content[key] = AnyCodable(value)
-            }
-        }
-        
-        let entity = HomeEntity(
-            entityType: entityType,
-            content: content,
-            userId: "cli-user"
-        )
-        
-        try await storage.store(entity: entity)
-        print("Created \(type): \(name) (ID: \(entity.id))")
-    }
-}
-
-struct ListEntities: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "List entities in the home graph"
-    )
-    
-    @Option(help: "Database file path")
-    var database: String = "wildthing.db"
-    
-    @Option(help: "Filter by entity type")
-    var type: String?
-    
-    func run() async throws {
-        let storage = try SQLiteWildThingStorage(databasePath: database)
-        
-        if let typeString = type,
-           let entityType = EntityType(rawValue: typeString) {
-            let entities = try await storage.getEntities(ofType: entityType)
-            print("\(entityType.rawValue.capitalized)s:")
-            for entity in entities {
-                let name = entity.content["name"]?.value as? String ?? "Unnamed"
-                print("  • \(name) (ID: \(entity.id))")
-            }
-        } else {
-            // List all types
-            for entityType in EntityType.allCases {
-                let entities = try await storage.getEntities(ofType: entityType)
-                if !entities.isEmpty {
-                    print("\n\(entityType.rawValue.capitalized)s:")
-                    for entity in entities {
-                        let name = entity.content["name"]?.value as? String ?? "Unnamed"
-                        print("  • \(name) (ID: \(entity.id))")
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct Search: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "Search entities by name or content"
-    )
-    
-    @Option(help: "Database file path")
-    var database: String = "wildthing.db"
-    
-    @Argument(help: "Search query")
-    var query: String
-    
-    func run() async throws {
-        let storage = try SQLiteWildThingStorage(databasePath: database)
-        let graph = HomeGraph(storage: storage)
-        try await graph.loadFromStorage()
-        
-        let results = try await graph.semanticSearch(query: query)
-        
-        if results.isEmpty {
-            print("No results found for '\(query)'")
-        } else {
-            print("Search results for '\(query)':")
-            for result in results {
-                let name = result.entity.content["name"]?.value as? String ?? result.entity.id
-                print("  • \(result.entity.entityType.rawValue): \(name) (score: \(String(format: "%.2f", result.score)))")
-            }
-        }
-    }
-}
-
-struct StartServer: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "Start the MCP server"
-    )
-    
-    @Option(help: "Database file path")
-    var database: String = "wildthing.db"
-    
-    @Option(help: "Port to listen on")
-    var port: Int = 8080
-    
-    func run() async throws {
-        let storage = try SQLiteWildThingStorage(databasePath: database)
-        let server = WildThingMCPServer(storage: storage)
-        
-        try await server.start()
-        print("WildThing MCP server started on port \(port)")
-        print("Database: \(database)")
-        print("Available tools:")
-        
-        // List available MCP tools
-        let tools = [
-            "get_devices_in_room", "find_device_controls", "get_room_connections",
-            "create_entity", "create_relationship", "add_device_manual",
-            "create_procedure", "add_device_image", "search_entities"
-        ]
-        
-        for tool in tools {
-            print("  • \(tool)")
-        }
-        
-        print("\nPress Ctrl+C to stop the server")
-        
-        // Keep running
-        try await Task.sleep(for: .seconds(3600))
-    }
-}
-
-struct Sync: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "Sync with FunkyGibbon server"
-    )
-    
-    @Option(help: "Database file path")
-    var database: String = "wildthing.db"
-    
-    @Option(help: "FunkyGibbon server URL")
-    var server: String = "http://localhost:8000"
-    
-    func run() async throws {
-        let storage = try SQLiteWildThingStorage(databasePath: database)
-        let networkService = HTTPNetworkService(baseURL: server)
-        let syncClient = InbetweeniesClient(storage: storage, networkService: networkService)
-        
-        print("Syncing with FunkyGibbon server at \(server)...")
-        
-        do {
-            let result = try await syncClient.performFullSync()
-            print("Sync completed successfully!")
-            print("  Uploaded: \(result.uploaded) changes")
-            print("  Downloaded: \(result.downloaded) changes")
-            print("  Conflicts: \(result.conflicts)")
-            
-            if !result.errors.isEmpty {
-                print("  Errors: \(result.errors.count)")
-                for error in result.errors {
-                    print("    - \(error.localizedDescription)")
-                }
-            }
-        } catch {
-            print("Sync failed: \(error.localizedDescription)")
-        }
-    }
-}
-
-// Simple HTTP network service implementation
-class HTTPNetworkService: NetworkService {
-    private let baseURL: String
-    
-    init(baseURL: String) {
-        self.baseURL = baseURL
-    }
-    
-    func sendInbetweeniesRequest(_ request: InbetweeniesRequest) async throws -> InbetweeniesResponse {
-        guard let url = URL(string: "\(baseURL)/api/inbetweenies/sync") else {
-            throw URLError(.badURL)
-        }
-        
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        urlRequest.httpBody = try encoder.encode(request)
-        
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw URLError(.badServerResponse)
-        }
-        
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(InbetweeniesResponse.self, from: data)
-    }
-}
-```
-
-## Distribution and Installation
-
-### Swift Package Manager Integration
-```swift
-// Users can add WildThing to their Package.swift:
-dependencies: [
-    .package(url: "https://github.com/your-org/the-goodies.git", from: "0.1.0")
-],
-targets: [
-    .target(
-        name: "YourApp",
-        dependencies: [
-            .product(name: "WildThing", package: "the-goodies")
-        ]
-    )
-]
-```
-
-### Python Package Installation
-```bash
-# Install FunkyGibbon from PyPI (when published)
-pip install funkygibbon
-
-# Or install from source
-pip install git+https://github.com/your-org/the-goodies.git#subdirectory=FunkyGibbon
-```
-
-## Example Usage
-
-### iOS App Integration
-```swift
-import WildThing
-import HomeKit
-
-class HomeManager: ObservableObject {
-    private let mcpServer: WildThingMCPServer
-    private let storage: WildThingStorage
-    private let syncClient: InbetweeniesClient?
-    
-    init() async throws {
-        self.storage = try SQLiteWildThingStorage(databasePath: "wildthing.db")
-        self.mcpServer = WildThingMCPServer(storage: storage)
-        
-        // Optional: Set up sync with FunkyGibbon server
-        if let serverURL = Bundle.main.object(forInfoDictionaryKey: "FunkyGibbonServerURL") as? String {
-            let networkService = HTTPNetworkService(baseURL: serverURL)
-            self.syncClient = InbetweeniesClient(storage: storage, networkService: networkService)
-        } else {
-            self.syncClient = nil
-        }
-        
-        try await mcpServer.start()
-    }
-    
-    func importHomeKitData() async throws {
-        // This would be implemented in the HomeKit extension
-        #if canImport(HomeKit)
-        let bridge = HomeKitBridge(storage: storage)
-        try await bridge.importAllData()
-        #endif
-    }
-    
-    func queryDevicesInRoom(_ roomName: String) async throws -> [String] {
-        let result = try await mcpServer.handleToolCall(MCPToolRequest(
-            name: "get_devices_in_room",
-            arguments: ["room_name": roomName]
-        ))
-        
-        // Parse result and return device names
-        return parseDeviceNames(from: result)
-    }
-    
-    func syncWithServer() async throws {
-        guard let syncClient = syncClient else {
-            throw WildThingError.syncError("No sync client configured")
-        }
-        
-        let result = try await syncClient.performFullSync()
-        print("Sync completed: \(result.uploaded) uploaded, \(result.downloaded) downloaded")
-    }
-    
-    private func parseDeviceNames(from result: MCPToolResponse) -> [String] {
-        // Implementation would parse the MCP response and extract device names
-        return []
-    }
-}
-```
-
-### Python Server Integration
-```python
-from fastapi import FastAPI
-from funkygibbon import FunkyGibbonMCPServer
-from funkygibbon.storage import PostgreSQLStorage
-from funkygibbon.inbetweenies import InbetweeniesServer
-
-app = FastAPI()
-storage = PostgreSQLStorage(database_url="postgresql://user:pass@localhost/funkygibbon")
-mcp_server = FunkyGibbonMCPServer(storage=storage)
-sync_service = InbetweeniesServer(storage=storage)
-
-@app.on_event("startup")
-async def startup():
-    await mcp_server.start()
-    await storage.initialize()
-
-@app.post("/api/inbetweenies/sync")
-async def sync_via_inbetweenies(request: InbetweeniesRequest):
-    result = await sync_service.handle_sync_request(request)
-    return result
-
-@app.post("/api/mcp/query")
-async def query_mcp(request: dict):
-    result = await mcp_server.handle_tool_call(request)
-    return result
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-```
 
 ## Development Roadmap
 
-### Phase 1: WildThing Foundation (2-3 weeks)
-- [ ] Swift package with core data models and WildThingEntity protocol
-- [ ] SQLiteWildThingStorage implementation
-- [ ] Basic WildThingMCPServer with essential tools
-- [ ] FunkyGibbon Python package with equivalent models
+TODO: this section has been updated to reflect the desired project phases
+
+### Phase 1: The-Goodies Foundation (COMPLETED)
+- [ ] Python package with HomeKit based data models and Inbetweenies protocol
+- [ ] SQLite Storage implementation
+- [ ] FunkyGibbon Python backend and Blowing-off front end with shared models
 - [ ] Comprehensive test suite for both packages
 
-### Phase 2: Graph Operations (2 weeks)
-- [ ] In-memory graph with relationship indexing in WildThing
+### Phase 2: Graph Operations in Python on server (2 weeks)
+- [ ] In-memory graph with relationship indexing in Python
 - [ ] Path finding and traversal algorithms
 - [ ] Search and query optimization
-- [ ] WildThing CLI tool for development and testing
+- [ ] MCPServer interface with tools and resources
+- [ ] New Oook CLI tool for FunkyGibbon development and testing directly against the API
 
-### Phase 3: Inbetweenies Protocol (2 weeks)
-- [ ] Inbetweenies protocol specification and JSON schemas
-- [ ] InbetweeniesClient implementation in WildThing
+### Phase 3: Inbetweenies Protocol in Python (2 weeks)
+- [ ] Inbetweenies protocol specification and JSON schemas for immutable versioned entities
 - [ ] InbetweeniesServer implementation in FunkyGibbon
-- [ ] Basic sync functionality without conflict resolution
+- [ ] InbetweeniesClient Python implementation in Blowing-off
+- [ ] Basic sync functionality with last-write-wins conflict resolution
 
-### Phase 4: Platform Integration (2 weeks)
-- [ ] WildThingHomeKit integration module (iOS/macOS)
+### Phase 4: Swift Implementation (2 weeks)
+- [ ] InbetweeniesClient Swift implementation in WildThing
+- [ ] HomeKit integration module (iOS/macOS)
 - [ ] Matter/Thread support investigation
 - [ ] Binary content storage (images, PDFs)
-- [ ] Example iOS and macOS apps using WildThing
-
-### Phase 5: Advanced Sync & Conflicts (3 weeks)
-- [ ] Vector clock implementation in Inbetweenies protocol
-- [ ] Conflict detection and resolution strategies
-- [ ] Multi-device testing with FunkyGibbon backend
-- [ ] Performance optimization for large datasets
-
-### Phase 6: Documentation & Release (1 week)
-- [ ] Complete API documentation for WildThing and FunkyGibbon
-- [ ] Inbetweenies protocol specification
-- [ ] Usage guides and tutorials
-- [ ] Performance benchmarking and release preparation
+- [ ] Integrate into c11s-house-ios project
 
 ## Success Metrics
 
 ### Functionality
-- [ ] All entity types and relationships supported in WildThing
+- [ ] All entity types and relationships supported
 - [ ] Fast graph queries (< 10ms for typical operations)
 - [ ] Reliable Inbetweenies sync between WildThing and FunkyGibbon
 - [ ] Comprehensive test coverage (> 90%) for both packages
@@ -2352,13 +1420,13 @@ if __name__ == "__main__":
 ### Usability
 - [ ] Simple integration of WildThing into existing iOS/macOS projects
 - [ ] Clear documentation for WildThing, FunkyGibbon, and Inbetweenies protocol
-- [ ] Intuitive WildThing CLI tool for development
+- [ ] Intuitive Oook (server) and Blowing-off (client) CLI tools for development
 - [ ] Helpful error messages and debugging across all components
 
 ### Performance
-- [ ] WildThing handles 10,000+ entities efficiently
-- [ ] Memory usage < 100MB for typical home graphs
-- [ ] Inbetweenies sync operations complete in < 5 seconds
+- [ ] The-Goodies handles 1000 entities, 10 user clients, and 2 houses efficiently
+- [ ] Memory usage < 10MB for typical home graphs, and < 500MB storage for photos
+- [ ] Inbetweenies sync operations complete in < 1 second over local networks
 - [ ] Works reliably on iOS devices with FunkyGibbon backend
 
 ## Technical Dependencies
@@ -2388,9 +1456,8 @@ redis>=5.0.0
 ## Risk Mitigation
 
 ### Technical Risks
-- **MCP Specification Changes**: Use official SDK, implement version compatibility
+- **MCP Specification Changes**: Use official Swift SDK as API model, implement version compatibility
 - **iOS Memory Constraints**: Implement intelligent caching, lazy loading
-- **Sync Performance**: Optimize with delta sync, compression
 - **Data Corruption**: Implement checksums, transaction logging
 
 ### Business Risks
@@ -2399,51 +1466,7 @@ redis>=5.0.0
 - **Privacy Concerns**: Local-first design, clear data policies
 - **Competition**: Rapid iteration, unique AI features
 
-## Future Roadmap
 
-### Short Term (3-6 months)
-- **Advanced AI Features**: Natural language procedure creation
-- **Integration Expansion**: Matter/Thread device support
-- **Analytics**: Usage patterns, optimization suggestions
-- **Sharing**: Household collaboration features
-
-### Medium Term (6-12 months)
-- **Platform Expansion**: macOS, watchOS companion apps
-- **Enterprise Features**: Multi-tenant support, admin controls
-- **Advanced Automation**: AI-driven automation suggestions
-- **Third-Party Integrations**: Philips Hue, Nest, Ring APIs
-
-### Long Term (1+ years)
-- **Voice Integration**: Siri Shortcuts, voice commands
-- **Computer Vision**: Automatic device recognition
-- **Predictive Intelligence**: Proactive suggestions
-- **Community Features**: Share procedures, device databases
 
 ---
 
-## Next Steps
-
-1. **Project Setup**: Initialize the-goodies repository with WildThing and FunkyGibbon directories
-2. **WildThing Foundation**: Begin with SQLite schema and basic entity storage
-3. **FunkyGibbon Basics**: Create Python package with matching data models
-4. **Inbetweenies Specification**: Document the sync protocol with JSON schemas
-5. **Testing Framework**: Set up comprehensive testing from the start
-
-**Repository Structure**:
-```
-the-goodies/
-├── WildThing/             # Swift Package
-│   ├── Sources/WildThing/ # Core MCP server library
-│   ├── Examples/          # iOS/macOS example apps
-│   └── Tests/
-├── FunkyGibbon/           # Python Package  
-│   ├── funkygibbon/       # Sync backend service
-│   ├── examples/          # Server deployment examples
-│   └── tests/
-├── Inbetweenies/          # Protocol Specification
-│   ├── protocol-spec.md   # Complete protocol documentation
-│   └── schemas/           # JSON schemas for validation
-└── Documentation/         # Shared docs and guides
-```
-
-This standalone library approach provides maximum reusability while maintaining clean separation of concerns. Other developers can easily integrate WildThing into their smart home projects, and you can test and develop it independently of your main iOS application. The creative naming scheme makes the project memorable and fun to work with, while the Inbetweenies protocol provides a solid foundation for distributed synchronization.
