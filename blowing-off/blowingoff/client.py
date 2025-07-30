@@ -2,70 +2,32 @@
 Blowing-Off Client - Main Client Implementation
 
 DEVELOPMENT CONTEXT:
-Created as part of The Goodies smart home ecosystem development in July 2025.
-This is the Python test client that implements the Inbetweenies protocol for
-synchronizing smart home data between the cloud and local databases. This client
-serves as the reference implementation that will guide the Swift/WildThing client
-development for Apple platforms. Updated to use HomeKit-compatible models from
-the shared Inbetweenies package.
+Updated to use the Entity model and graph operations exclusively.
+No longer maintains HomeKit-specific models - everything is an Entity.
 
 FUNCTIONALITY:
-- Manages local SQLite database for offline-first operation
-- Implements bidirectional sync with cloud server using Inbetweenies protocol
-- Provides async API for CRUD operations on homes, rooms, and accessories
-- Handles conflict resolution and sync failure recovery
-- Enables background sync with configurable intervals
-- Works with shared HomeKit models and ClientSyncTracking for local changes
+- Client-server connection management
+- Local SQLite database for offline operation
+- Sync engine integration with Entity model
+- MCP tool execution
+- Graph operations for entity management
+- Conflict resolution and retry logic
+- Progress callbacks and observer pattern
 
 PURPOSE:
-This client enables:
-- Offline-first smart home control (works without internet)
-- Seamless sync when connectivity is restored
-- Multiple client synchronization (mobile, web, etc.)
-- Testing and validation of the Inbetweenies protocol
-- Reference for Swift/WildThing implementation
-
-KNOWN ISSUES:
-- Single home assumption (multi-home support planned)
-- Basic conflict resolution (last-write-wins)
-- No encryption for local database yet
-- Background sync task needs better error recovery
-- No automatic cleanup of old sync tracking records
+Primary client interface for The Goodies smart home system. Provides
+a clean API for sync operations, entity management, and MCP tool execution.
 
 REVISION HISTORY:
-- 2025-07-28: Initial implementation (Python test client for Inbetweenies protocol)
-- 2025-07-28: Added background sync support
-- 2025-07-28: Implemented observer pattern for change notifications
-- 2025-07-29: Migrated to shared Inbetweenies models
-- 2025-07-29: Updated entity names (House→Home, Device→Accessory)
-- 2025-07-29: Implemented ClientSyncTracking for local change detection
-- 2025-07-29: Repository operations now automatically track sync status
-
-DEPENDENCIES:
-- SQLAlchemy with async support for database operations 
-- aiosqlite for async SQLite operations
-- Custom sync engine implementing Inbetweenies protocol
-- Repository pattern for data access abstraction
-- inbetweenies.models for shared HomeKit models
-- ClientSyncTracking model for local change detection
-
-USAGE:
-    client = BlowingOffClient("local.db")
-    await client.connect("https://api.thegoodies.app", auth_token)
-    await client.start_background_sync(interval=30)
-    
-    # Get accessories in a room
-    accessories = await client.get_accessories(room_id="living-room-1")
-    
-    # Update accessory state
-    await client.update_accessory_state(
-        accessory_id="light-1",
-        state={"on": True, "brightness": 80}
-    )
+- 2025-07-30: Updated to use Entity model exclusively
+- 2025-07-28: Added MCP functionality and graph operations
+- 2025-07-28: Improved database concurrency handling
 """
 
+import os
 import asyncio
-from typing import Optional, List, Dict, Any, Callable
+import gc
+from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -75,16 +37,9 @@ import json
 from .models import Base
 from .sync.engine import SyncEngine
 from .sync.state import SyncResult
-from ..mcp import LocalMCPClient
-from ..graph import LocalGraphStorage
-from .repositories import (
-    ClientHomeRepository,
-    ClientRoomRepository,
-    ClientAccessoryRepository,
-    ClientUserRepository,
-    # ClientEntityStateRepository,  # Removed for HomeKit focus
-    # ClientEventRepository         # Removed for HomeKit focus
-)
+from .mcp import LocalMCPClient
+from .graph import LocalGraphStorage, LocalGraphOperations
+from .repositories import SyncMetadataRepository
 
 
 class BlowingOffClient:
@@ -101,6 +56,7 @@ class BlowingOffClient:
         
         # Initialize MCP and graph functionality
         self.graph_storage = LocalGraphStorage()
+        self.graph_operations = LocalGraphOperations(self.graph_storage)
         self.mcp_client = LocalMCPClient(self.graph_storage)
         
     async def connect(self, server_url: str, auth_token: str, client_id: str = None):
@@ -139,6 +95,7 @@ class BlowingOffClient:
         # Initialize sync engine
         async with self.session_factory() as session:
             self.sync_engine = SyncEngine(session, server_url, auth_token, client_id)
+            self.sync_engine.set_graph_operations(self.graph_operations)
             
     async def disconnect(self):
         """Disconnect and cleanup resources."""
@@ -148,11 +105,9 @@ class BlowingOffClient:
                 await self._background_task
             except asyncio.CancelledError:
                 pass
-            
+                
         if self.engine:
             await self.engine.dispose()
-            # Force garbage collection to ensure all connections are closed
-            import gc
             gc.collect()
             
     async def sync(self) -> SyncResult:
@@ -183,341 +138,158 @@ class BlowingOffClient:
                     
         self._background_task = asyncio.create_task(sync_loop())
         
-    async def get_home(self, home_id: str = None) -> Optional[Dict[str, Any]]:
-        """Get home data by ID, or the first home if no ID specified."""
-        async with self.session_factory() as session:
-            repo = ClientHomeRepository(session)
-            
-            if home_id:
-                home = await repo.get(home_id)
-                if home:
-                    return {
-                        "id": home.id,
-                        "name": home.name,
-                        "is_primary": home.is_primary
-                    }
-            else:
-                homes = await repo.get_all()
-                if homes:
-                    home = homes[0]  # Assume single home
-                    return {
-                        "id": home.id,
-                        "name": home.name,
-                        "is_primary": home.is_primary
-                    }
-        return None
-    
-    async def get_homes(self) -> List[Dict[str, Any]]:
-        """Get all homes."""
-        async with self.session_factory() as session:
-            repo = ClientHomeRepository(session)
-            homes = await repo.get_all()
-            return [
-                {
-                    "id": home.id,
-                    "name": home.name,
-                    "is_primary": home.is_primary
-                }
-                for home in homes
-            ]
-        
-    async def get_rooms(self, home_id: str = None) -> List[Dict[str, Any]]:
-        """Get all rooms."""
-        async with self.session_factory() as session:
-            repo = ClientRoomRepository(session)
-            if home_id:
-                rooms = await repo.get_by_home(home_id)
-            else:
-                rooms = await repo.get_all()
-                
-            return [
-                {
-                    "id": room.id,
-                    "home_id": room.home_id,
-                    "name": room.name
-                }
-                for room in rooms
-            ]
-            
-    async def get_accessories(self, room_id: str = None) -> List[Dict[str, Any]]:
-        """Get accessories, optionally filtered by room."""
-        async with self.session_factory() as session:
-            repo = ClientAccessoryRepository(session)
-            if room_id:
-                accessories = await repo.get_by_room(room_id)
-            else:
-                accessories = await repo.get_all()
-                
-            return [
-                {
-                    "id": accessory.id,
-                    "home_id": accessory.home_id,
-                    "name": accessory.name,
-                    "manufacturer": accessory.manufacturer,
-                    "model": accessory.model,
-                    "serial_number": accessory.serial_number,
-                    "firmware_version": accessory.firmware_version,
-                    "is_reachable": accessory.is_reachable,
-                    "is_blocked": accessory.is_blocked,
-                    "is_bridge": accessory.is_bridge
-                }
-                for accessory in accessories
-            ]
-            
-    async def get_accessory_state(self, accessory_id: str) -> Optional[Dict[str, Any]]:
-        """Get current state of an accessory."""
-        # TODO: Implement with HomeKit characteristic tracking
-        return None
-        
-    async def update_accessory_state(self, accessory_id: str, state: Dict[str, Any], attributes: Dict[str, Any] = None):
-        """Update accessory state."""
-        # TODO: Implement with HomeKit characteristic updates
-        # For now, just notify observers
-        await self._notify_observers("state_change", {
-            "accessory_id": accessory_id,
-            "state": state,
-            "attributes": attributes
-        })
-        
-    async def create_home(self, name: str, **kwargs) -> str:
-        """Create a new home."""
-        async with self.session_factory() as session:
-            repo = ClientHomeRepository(session)
-            home = await repo.create(
-                id=f"home-{datetime.now().timestamp()}",
-                name=name,
-                is_primary=kwargs.get("is_primary", False)
-            )
-            await session.commit()
-            
-        # Notify observers
-        await self._notify_observers("home_created", {"home_id": home.id})
-        
-        return home.id
-        
-    async def create_room(self, home_id: str, name: str, **kwargs) -> str:
-        """Create a new room."""
-        async with self.session_factory() as session:
-            repo = ClientRoomRepository(session)
-            room = await repo.create(
-                id=f"room-{datetime.now().timestamp()}",
-                home_id=home_id,
-                name=name
-            )
-            await session.commit()
-            
-        # Notify observers
-        await self._notify_observers("room_created", {"room_id": room.id})
-        
-        return room.id
-        
-    async def create_accessory(self, room_id: str, name: str, accessory_type: str, **kwargs) -> str:
-        """Create a new accessory."""
-        async with self.session_factory() as session:
-            repo = ClientAccessoryRepository(session)
-            room_repo = ClientRoomRepository(session)
-            home_repo = ClientHomeRepository(session)
-            
-            # Get room to find home_id
-            room = await room_repo.get(room_id)
-            if not room:
-                raise ValueError(f"Room {room_id} not found")
-            
-            # Get home
-            home = await home_repo.get(room.home_id)
-            if not home:
-                raise ValueError(f"Home {room.home_id} not found")
-            
-            accessory = await repo.create(
-                id=f"accessory-{datetime.now().timestamp()}",
-                home_id=room.home_id,
-                name=name,
-                manufacturer=kwargs.get("manufacturer"),
-                model=kwargs.get("model"),
-                serial_number=kwargs.get("serial_number", f"SN-{datetime.now().timestamp()}"),
-                firmware_version=kwargs.get("firmware_version", "1.0.0"),
-                is_reachable=kwargs.get("is_reachable", True),
-                is_blocked=kwargs.get("is_blocked", False),
-                is_bridge=kwargs.get("is_bridge", False)
-            )
-            await session.commit()
-            
-        # Notify observers
-        await self._notify_observers("accessory_created", {"accessory_id": accessory.id})
-        
-        return accessory.id
-        
-    async def observe_changes(self, callback: Callable):
-        """Register observer for changes."""
+    def add_observer(self, callback: Callable):
+        """Add observer for sync events."""
         self._observers.append(callback)
         
-    async def _notify_observers(self, event_type: str, data: Any):
-        """Notify all observers of changes."""
+    def remove_observer(self, callback: Callable):
+        """Remove observer."""
+        if callback in self._observers:
+            self._observers.remove(callback)
+            
+    async def _notify_observers(self, event: str, data: Any):
+        """Notify all observers of an event."""
         for observer in self._observers:
             try:
-                await observer(event_type, data)
+                if asyncio.iscoroutinefunction(observer):
+                    await observer(event, data)
+                else:
+                    observer(event, data)
             except Exception as e:
                 print(f"Observer error: {e}")
                 
-    async def get_sync_status(self) -> Dict[str, Any]:
-        """Get current sync status."""
-        async with self.session_factory() as session:
-            from .repositories.sync_metadata import SyncMetadataRepository
-            repo = SyncMetadataRepository(session)
-            
-            metadata = await repo.get_by_client(self.sync_engine.client_id if self.sync_engine else "")
-            if metadata:
-                return {
-                    "last_sync": metadata.last_sync_time.isoformat() if metadata.last_sync_time else None,
-                    "last_success": metadata.last_sync_success.isoformat() if metadata.last_sync_success else None,
-                    "sync_failures": metadata.sync_failures,
-                    "total_syncs": metadata.total_syncs,
-                    "total_conflicts": metadata.total_conflicts,
-                    "sync_in_progress": bool(metadata.sync_in_progress),
-                    "last_error": metadata.last_sync_error
-                }
-                
-        return {
-            "last_sync": None,
-            "last_success": None,
-            "sync_failures": 0,
-            "total_syncs": 0,
-            "total_conflicts": 0,
-            "sync_in_progress": False,
-            "last_error": None
-        }
-    
     # MCP and Graph Operations
     
     async def execute_mcp_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:
-        """
-        Execute an MCP tool locally using graph data.
-        
-        Args:
-            tool_name: Name of the MCP tool to execute
-            **kwargs: Tool arguments
-            
-        Returns:
-            Tool execution result
-        """
+        """Execute an MCP tool by name."""
         return await self.mcp_client.execute_tool(tool_name, **kwargs)
     
     def get_available_mcp_tools(self) -> List[str]:
-        """Get list of available MCP tools"""
+        """Get list of available MCP tools."""
         return self.mcp_client.get_available_tools()
     
-    async def sync_graph_from_homekit(self):
-        """
-        Sync graph data from HomeKit data.
-        
-        This converts HomeKit entities (homes, rooms, accessories) to
-        graph entities and relationships for use with MCP tools.
-        """
+    def clear_graph_data(self):
+        """Clear all graph data from storage."""
+        if hasattr(self, 'graph_storage'):
+            self.graph_storage.clear()
+            
+    async def demo_mcp_functionality(self):
+        """Demonstrate MCP functionality with sample data."""
         from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
         
-        async with self.session_factory() as session:
-            # Get all homes
-            home_repo = ClientHomeRepository(session)
-            homes = await home_repo.get_all()
-            
-            entities = []
-            relationships = []
-            
-            for home in homes:
-                # Create home entity
-                home_entity = Entity(
-                    id=home.id,
-                    version=Entity.create_version("homekit-sync"),
-                    entity_type=EntityType.BUILDING,
-                    name=home.name,
-                    content={"homekit_id": home.id},
-                    source_type=SourceType.HOMEKIT,
-                    user_id="homekit-sync",
-                    parent_versions=[]
-                )
-                entities.append(home_entity)
-                
-                # Get rooms
-                room_repo = ClientRoomRepository(session)
-                rooms = await room_repo.get_by_home(home.id)
-                
-                for room in rooms:
-                    # Create room entity
-                    room_entity = Entity(
-                        id=room.id,
-                        version=Entity.create_version("homekit-sync"),
-                        entity_type=EntityType.ROOM,
-                        name=room.name,
-                        content={"homekit_id": room.id},
-                        source_type=SourceType.HOMEKIT,
-                        user_id="homekit-sync",
-                        parent_versions=[]
-                    )
-                    entities.append(room_entity)
-                    
-                    # Create relationship: room -> home
-                    rel = EntityRelationship(
-                        id=f"{room.id}-in-{home.id}",
-                        from_entity_id=room.id,
-                        from_entity_version=room_entity.version,
-                        to_entity_id=home.id,
-                        to_entity_version=home_entity.version,
-                        relationship_type=RelationshipType.LOCATED_IN,
-                        properties={},
-                        user_id="homekit-sync"
-                    )
-                    relationships.append(rel)
-                
-                # Get accessories
-                accessory_repo = ClientAccessoryRepository(session)
-                accessories = await accessory_repo.get_by_home(home.id)
-                
-                for accessory in accessories:
-                    # Create device entity
-                    device_entity = Entity(
-                        id=accessory.id,
-                        version=Entity.create_version("homekit-sync"),
-                        entity_type=EntityType.DEVICE,
-                        name=accessory.name,
-                        content={
-                            "homekit_id": accessory.id,
-                            "model": accessory.model,
-                            "manufacturer": accessory.manufacturer,
-                            "firmware_version": accessory.firmware_version,
-                            "capabilities": ["homekit"]
-                        },
-                        source_type=SourceType.HOMEKIT,
-                        user_id="homekit-sync",
-                        parent_versions=[]
-                    )
-                    entities.append(device_entity)
-                    
-                    # Create relationship: device -> room (if assigned)
-                    if accessory.room_id:
-                        rel = EntityRelationship(
-                            id=f"{accessory.id}-in-{accessory.room_id}",
-                            from_entity_id=accessory.id,
-                            from_entity_version=device_entity.version,
-                            to_entity_id=accessory.room_id,
-                            to_entity_version=Entity.create_version("homekit-sync"),
-                            relationship_type=RelationshipType.LOCATED_IN,
-                            properties={},
-                            user_id="homekit-sync"
-                        )
-                        relationships.append(rel)
+        # Create sample entities
+        print("\n📝 Creating sample entities...")
         
-        # Sync to local graph storage
-        await self.mcp_client.sync_with_server({
-            "entities": entities,
-            "relationships": relationships
-        })
+        # Create a home
+        home = Entity(
+            entity_type=EntityType.HOME,
+            name="Demo Smart Home",
+            content={
+                "address": "456 Demo Street",
+                "city": "Demo City"
+            },
+            source_type=SourceType.MANUAL
+        )
+        stored_home = await self.graph_operations.store_entity(home)
         
-        return len(entities), len(relationships)
-    
-    async def demo_mcp_functionality(self):
-        """Demonstrate MCP functionality with local data"""
-        await self.mcp_client.demo_local_functionality()
-    
-    def clear_graph_data(self):
-        """Clear all local graph data"""
-        self.mcp_client.clear_local_data()
+        # Create rooms
+        living_room = Entity(
+            entity_type=EntityType.ROOM,
+            name="Living Room",
+            content={"floor": "1st"},
+            source_type=SourceType.MANUAL
+        )
+        kitchen = Entity(
+            entity_type=EntityType.ROOM,
+            name="Kitchen",
+            content={"floor": "1st"},
+            source_type=SourceType.MANUAL
+        )
+        
+        stored_living = await self.graph_operations.store_entity(living_room)
+        stored_kitchen = await self.graph_operations.store_entity(kitchen)
+        
+        # Create devices
+        tv = Entity(
+            entity_type=EntityType.DEVICE,
+            name="Smart TV",
+            content={
+                "manufacturer": "Samsung",
+                "model": "Q90",
+                "capabilities": ["power", "volume", "input"]
+            },
+            source_type=SourceType.MANUAL
+        )
+        fridge = Entity(
+            entity_type=EntityType.DEVICE,
+            name="Smart Fridge",
+            content={
+                "manufacturer": "LG",
+                "model": "InstaView",
+                "capabilities": ["temperature", "door_status"]
+            },
+            source_type=SourceType.MANUAL
+        )
+        
+        stored_tv = await self.graph_operations.store_entity(tv)
+        stored_fridge = await self.graph_operations.store_entity(fridge)
+        
+        # Create relationships
+        # Rooms in home
+        await self.graph_operations.store_relationship(
+            EntityRelationship(
+                source_id=stored_living.id,
+                target_id=stored_home.id,
+                relationship_type=RelationshipType.LOCATED_IN,
+                source_type=SourceType.MANUAL
+            )
+        )
+        await self.graph_operations.store_relationship(
+            EntityRelationship(
+                source_id=stored_kitchen.id,
+                target_id=stored_home.id,
+                relationship_type=RelationshipType.LOCATED_IN,
+                source_type=SourceType.MANUAL
+            )
+        )
+        
+        # Devices in rooms
+        await self.graph_operations.store_relationship(
+            EntityRelationship(
+                source_id=stored_tv.id,
+                target_id=stored_living.id,
+                relationship_type=RelationshipType.LOCATED_IN,
+                source_type=SourceType.MANUAL
+            )
+        )
+        await self.graph_operations.store_relationship(
+            EntityRelationship(
+                source_id=stored_fridge.id,
+                target_id=stored_kitchen.id,
+                relationship_type=RelationshipType.LOCATED_IN,
+                source_type=SourceType.MANUAL
+            )
+        )
+        
+        print("✅ Created demo entities and relationships")
+        
+        # Test MCP tools
+        print("\n🔍 Testing MCP tools...")
+        
+        # Get devices in living room
+        result = await self.execute_mcp_tool(
+            "get_devices_in_room",
+            room_id=stored_living.id
+        )
+        print(f"\nDevices in Living Room: {result['result']['count']}")
+        
+        # Search for devices
+        result = await self.execute_mcp_tool(
+            "search_entities",
+            query="Smart",
+            entity_types=[EntityType.DEVICE.value],
+            limit=10
+        )
+        print(f"Found {result['result']['count']} smart devices")
+        
+        print("\n✅ MCP demo complete!")

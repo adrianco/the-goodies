@@ -359,7 +359,7 @@ async def find_path(
 async def get_connected_entities(
     entity_id: str,
     relationship_type: Optional[RelationshipType] = Query(None, description="Filter by relationship type"),
-    direction: str = Query("both", regex="^(incoming|outgoing|both)$", description="Direction of relationships"),
+    direction: str = Query("both", pattern="^(incoming|outgoing|both)$", description="Direction of relationships"),
     max_depth: int = Query(1, le=5, description="Maximum traversal depth"),
     graph: GraphIndex = Depends(get_graph_index)
 ):

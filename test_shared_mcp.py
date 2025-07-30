@@ -4,7 +4,7 @@ Test script to demonstrate shared MCP functionality between
 FunkyGibbon (server) and Blowing-Off (client).
 
 This shows how the same MCP tool implementations work both
-server-side and client-side.
+server-side and client-side using the Entity model.
 """
 
 import asyncio
@@ -28,99 +28,122 @@ async def test_local_mcp():
     # Clear any existing data
     client.clear_graph_data()
     
-    # Run the demo which creates sample data
-    await client.demo_mcp_functionality()
+    # Create test entities using graph operations
+    from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
     
+    print("\n📝 Creating test graph data...")
+    
+    # Create a home entity
+    home = Entity(
+        entity_type=EntityType.HOME,
+        name="Test Smart Home",
+        content={
+            "address": "123 Test Street",
+            "is_primary": True
+        },
+        source_type=SourceType.MANUAL
+    )
+    stored_home = await client.graph_operations.store_entity(home)
+    
+    # Create rooms
+    living_room = Entity(
+        entity_type=EntityType.ROOM,
+        name="Living Room",
+        content={
+            "floor": "1st",
+            "area_sqft": 300
+        },
+        source_type=SourceType.MANUAL
+    )
+    bedroom = Entity(
+        entity_type=EntityType.ROOM,
+        name="Master Bedroom",
+        content={
+            "floor": "2nd",
+            "area_sqft": 200
+        },
+        source_type=SourceType.MANUAL
+    )
+    stored_living = await client.graph_operations.store_entity(living_room)
+    stored_bedroom = await client.graph_operations.store_entity(bedroom)
+    
+    # Create devices
+    light = Entity(
+        entity_type=EntityType.DEVICE,
+        name="Smart Light",
+        content={
+            "manufacturer": "Philips",
+            "model": "Hue Go",
+            "capabilities": ["on_off", "brightness", "color"]
+        },
+        source_type=SourceType.MANUAL
+    )
+    thermostat = Entity(
+        entity_type=EntityType.DEVICE,
+        name="Smart Thermostat",
+        content={
+            "manufacturer": "Nest",
+            "model": "Learning Thermostat",
+            "capabilities": ["temperature", "humidity", "scheduling"]
+        },
+        source_type=SourceType.MANUAL
+    )
+    stored_light = await client.graph_operations.store_entity(light)
+    stored_thermostat = await client.graph_operations.store_entity(thermostat)
+    
+    # Create relationships
+    # Rooms in home
+    await client.graph_operations.store_relationship(
+        EntityRelationship(
+            source_id=stored_living.id,
+            target_id=stored_home.id,
+            relationship_type=RelationshipType.LOCATED_IN,
+            source_type=SourceType.MANUAL
+        )
+    )
+    await client.graph_operations.store_relationship(
+        EntityRelationship(
+            source_id=stored_bedroom.id,
+            target_id=stored_home.id,
+            relationship_type=RelationshipType.LOCATED_IN,
+            source_type=SourceType.MANUAL
+        )
+    )
+    
+    # Devices in rooms
+    await client.graph_operations.store_relationship(
+        EntityRelationship(
+            source_id=stored_light.id,
+            target_id=stored_living.id,
+            relationship_type=RelationshipType.LOCATED_IN,
+            source_type=SourceType.MANUAL
+        )
+    )
+    await client.graph_operations.store_relationship(
+        EntityRelationship(
+            source_id=stored_thermostat.id,
+            target_id=stored_living.id,
+            relationship_type=RelationshipType.LOCATED_IN,
+            source_type=SourceType.MANUAL
+        )
+    )
+    
+    print("✅ Created test entities and relationships")
+    
+    # Test MCP tools
     print("\n📋 Available MCP Tools:")
     tools = client.get_available_mcp_tools()
     for tool in tools:
         print(f"  - {tool}")
     
-    print("\n✅ Local MCP test complete!")
-
-
-async def test_homekit_to_graph_sync():
-    """Test converting HomeKit data to graph format"""
-    print("\n🏠 Testing HomeKit to Graph Conversion")
-    print("=" * 60)
-    
-    # Create client
-    client = BlowingOffClient("test_homekit_graph.db")
-    
-    # Connect to initialize database
-    # Note: In a real scenario, this would connect to a real server
-    # For testing, we just initialize the database
-    try:
-        await client.connect("http://localhost:8000", "test-token")
-    except Exception as e:
-        print(f"Note: Server connection failed (expected if server not running): {e}")
-        print("Continuing with local testing...")
-    
-    # Create some test HomeKit data
-    print("\n📝 Creating test HomeKit data...")
-    
-    # This would normally come from HomeKit sync, but for testing
-    # we'll create some data directly
-    async with client.session_factory() as session:
-        from inbetweenies.models import Home, Room, Accessory
-        
-        # Create a home
-        home = Home(
-            id="test-home-1",
-            name="Test Smart Home",
-            is_primary=True
-        )
-        session.add(home)
-        
-        # Create rooms
-        living_room = Room(
-            id="living-room-1",
-            home_id=home.id,
-            name="Living Room"
-        )
-        bedroom = Room(
-            id="bedroom-1", 
-            home_id=home.id,
-            name="Master Bedroom"
-        )
-        session.add(living_room)
-        session.add(bedroom)
-        
-        # Create accessories
-        light = Accessory(
-            id="light-1",
-            home_id=home.id,
-            room_id=living_room.id,
-            name="Smart Light",
-            model="Hue Go",
-            manufacturer="Philips"
-        )
-        thermostat = Accessory(
-            id="thermostat-1",
-            home_id=home.id,
-            room_id=living_room.id,
-            name="Smart Thermostat",
-            model="Learning Thermostat",
-            manufacturer="Nest"
-        )
-        session.add(light)
-        session.add(thermostat)
-        
-        await session.commit()
-    
-    # Convert to graph format
-    print("\n🔄 Converting HomeKit data to graph format...")
-    entities, relationships = await client.sync_graph_from_homekit()
-    print(f"✅ Created {entities} entities and {relationships} relationships")
-    
-    # Test MCP tools with the converted data
-    print("\n🔍 Testing MCP tools with HomeKit data...")
+    # Test search functionality
+    print("\n🔍 Testing MCP search tools...")
     
     # Search for rooms
     result = await client.execute_mcp_tool(
         "search_entities",
         query="room",
-        entity_types=["room"],
+        entity_types=[EntityType.ROOM.value],
         limit=10
     )
     if result.get("success"):
@@ -131,7 +154,7 @@ async def test_homekit_to_graph_sync():
     # Get devices in living room
     result = await client.execute_mcp_tool(
         "get_devices_in_room",
-        room_id="living-room-1"
+        room_id=stored_living.id
     )
     if result.get("success"):
         print(f"\nDevices in Living Room: {result['result']['count']}")
@@ -142,13 +165,118 @@ async def test_homekit_to_graph_sync():
     result = await client.execute_mcp_tool(
         "search_entities",
         query="smart",
-        entity_types=["device"],
+        entity_types=[EntityType.DEVICE.value],
         limit=5
     )
     if result.get("success"):
         print(f"\nFound {result['result']['count']} smart devices")
     
-    print("\n✅ HomeKit to Graph conversion test complete!")
+    print("\n✅ Local MCP test complete!")
+
+
+async def test_graph_operations():
+    """Test advanced graph operations"""
+    print("\n🎯 Testing Advanced Graph Operations")
+    print("=" * 60)
+    
+    # Create client
+    client = BlowingOffClient("test_graph_ops.db")
+    
+    # Clear any existing data
+    client.clear_graph_data()
+    
+    # Create a more complex graph
+    from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
+    
+    print("\n📝 Creating complex graph structure...")
+    
+    # Create multiple homes
+    home1 = await client.graph_operations.store_entity(
+        Entity(
+            entity_type=EntityType.HOME,
+            name="Main House",
+            content={"city": "San Francisco"},
+            source_type=SourceType.MANUAL
+        )
+    )
+    
+    home2 = await client.graph_operations.store_entity(
+        Entity(
+            entity_type=EntityType.HOME,
+            name="Vacation House",
+            content={"city": "Lake Tahoe"},
+            source_type=SourceType.MANUAL
+        )
+    )
+    
+    # Create users
+    john = await client.graph_operations.store_entity(
+        Entity(
+            entity_type=EntityType.USER,
+            name="John Doe",
+            content={"role": "owner"},
+            source_type=SourceType.MANUAL
+        )
+    )
+    
+    jane = await client.graph_operations.store_entity(
+        Entity(
+            entity_type=EntityType.USER,
+            name="Jane Doe",
+            content={"role": "admin"},
+            source_type=SourceType.MANUAL
+        )
+    )
+    
+    # Create ownership relationships
+    await client.graph_operations.store_relationship(
+        EntityRelationship(
+            source_id=john.id,
+            target_id=home1.id,
+            relationship_type=RelationshipType.MANAGES,
+            source_type=SourceType.MANUAL
+        )
+    )
+    
+    await client.graph_operations.store_relationship(
+        EntityRelationship(
+            source_id=jane.id,
+            target_id=home1.id,
+            relationship_type=RelationshipType.MANAGES,
+            source_type=SourceType.MANUAL
+        )
+    )
+    
+    print("✅ Created complex graph structure")
+    
+    # Test graph traversal
+    print("\n🗺️ Testing graph traversal...")
+    
+    # Find all homes managed by John
+    result = await client.execute_mcp_tool(
+        "get_related_entities",
+        entity_id=john.id,
+        relationship_type=RelationshipType.MANAGES.value,
+        direction="outgoing"
+    )
+    if result.get("success"):
+        print(f"\nHomes managed by John: {result['result']['count']}")
+        for home in result['result']['entities']:
+            print(f"  - {home['name']}")
+    
+    # Find all users managing the main house
+    result = await client.execute_mcp_tool(
+        "get_related_entities",
+        entity_id=home1.id,
+        relationship_type=RelationshipType.MANAGES.value,
+        direction="incoming"
+    )
+    if result.get("success"):
+        print(f"\nUsers managing Main House: {result['result']['count']}")
+        for user in result['result']['entities']:
+            print(f"  - {user['name']} ({user['content'].get('role', 'user')})")
+    
+    print("\n✅ Graph operations test complete!")
     
     # Cleanup
     await client.disconnect()
@@ -164,13 +292,13 @@ async def main():
     
     print("\n" + "-" * 60 + "\n")
     
-    # Test 2: HomeKit to Graph conversion
-    await test_homekit_to_graph_sync()
+    # Test 2: Advanced graph operations
+    await test_graph_operations()
     
     print("\n✨ All tests complete!")
     print("\nKey takeaways:")
     print("1. MCP tools work locally without server connection")
-    print("2. HomeKit data can be converted to graph format for MCP usage")
+    print("2. Graph operations provide powerful entity and relationship management")
     print("3. Same tool implementations work on both server and client")
     print("4. Client can operate fully offline with local graph storage")
 

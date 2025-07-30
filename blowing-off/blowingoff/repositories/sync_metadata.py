@@ -27,3 +27,13 @@ class SyncMetadataRepository(ClientBaseRepository[SyncMetadata]):
             self.session.add(metadata)
             await self.session.flush()
         return metadata
+    
+    async def get_metadata(self, client_id: str = "default") -> Optional[SyncMetadata]:
+        """Get sync metadata (alias for get_by_client)."""
+        return await self.get_by_client(client_id)
+    
+    async def update_sync_time(self, sync_time, client_id: str = "default"):
+        """Update the last sync time."""
+        metadata = await self.get_or_create(client_id)
+        metadata.last_sync = sync_time
+        await self.session.commit()

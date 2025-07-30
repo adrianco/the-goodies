@@ -5,7 +5,7 @@ This module provides the concrete implementation of the abstract
 graph operations using SQLAlchemy for database access.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload

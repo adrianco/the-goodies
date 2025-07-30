@@ -77,9 +77,9 @@ async def funkygibbon_server():
                 pytest.fail("FunkyGibbon server failed to start")
             await asyncio.sleep(0.5)
     
-    # Run populate_db.py to add test data
+    # Run populate_graph_db.py to add test data
     populate_result = subprocess.run(
-        [sys.executable, str(funkygibbon_path / "populate_db.py")],
+        [sys.executable, str(funkygibbon_path / "populate_graph_db.py")],
         cwd=str(parent_path),
         env=env,
         capture_output=True,
