@@ -97,7 +97,30 @@ Expected output:
 }
 ```
 
-### Step 6: Use Oook CLI for Testing
+### Step 6: Populate the Database with Test Data
+
+Before testing with Oook CLI, you can populate the database with comprehensive test data:
+
+```bash
+# Run the population script
+cd /workspaces/the-goodies
+python funkygibbon/populate_graph_db.py
+```
+
+This script creates:
+- 1 Home (The Martinez Smart Home)
+- 3 Zones (Ground Floor, Upper Floor, Outdoor Areas)
+- 6 Rooms (Living Room, Kitchen, Dining Room, Master Bedroom, Home Office, Garage)
+- 1 Door (Kitchen-Dining Door)
+- 6 Devices (TV, Thermostat, Refrigerator, Oven, Lights, Doorbell)
+- 2 Procedures (TV Setup, Thermostat Schedule)
+- 1 Manual (TV User Manual)
+- 2 Automations (Good Morning Routine, Movie Time Scene)
+- 1 Schedule (Vacation Mode)
+- 2 Notes (WiFi Configuration, HVAC Maintenance)
+- 30+ Relationships connecting all entities
+
+### Step 7: Use Oook CLI for Testing
 
 The Oook CLI is a powerful tool for testing the MCP server and graph operations.
 
@@ -108,32 +131,67 @@ oook tools
 
 This will show all 12 available MCP tools in a nice table format.
 
-#### Create Test Entities
+#### View Populated Data Statistics
 ```bash
-# Create a home
-oook create home "Smart Home Demo" -c '{"address": "123 Demo Street", "timezone": "America/Los_Angeles"}'
-
-# Create rooms
-oook create room "Living Room" -c '{"area": 35, "floor": 1}'
-oook create room "Kitchen" -c '{"area": 25, "floor": 1}'
-
-# Create devices
-oook create device "Smart TV" -c '{"manufacturer": "Samsung", "model": "QN90A", "capabilities": ["power", "volume", "input"]}'
-oook create device "Smart Light" -c '{"manufacturer": "Philips", "model": "Hue Go", "capabilities": ["power", "brightness", "color"]}'
+oook stats
 ```
 
-#### Search Entities
+After running the population script, you should see:
+```
+Total Entities: 25
+Total Relationships: 35
+Average Degree: 2.80
+Isolated Entities: 0
+
+Entity Types:
+  • home: 1
+  • room: 6
+  • device: 6
+  • zone: 3
+  • door: 1
+  • procedure: 2
+  • manual: 1
+  • note: 2
+  • schedule: 1
+  • automation: 2
+```
+
+#### Search for Entities
 ```bash
-# Search for all entities with "smart" in the name
+# Search for all "smart" devices
 oook search "smart"
 
-# Search only devices
-oook search "light" -t device
+# Search only in rooms
+oook search "room" -t room
+
+# Find specific entity
+oook search "Living Room" -t room
 ```
 
-#### Execute MCP Tools
+#### Test Graph Operations
 ```bash
-# First, get entity IDs from previous commands
+# Get devices in a specific room (use room ID from search)
+oook execute get_devices_in_room -a room_id="<room-id>"
+
+# Find path between entities
+oook execute find_path -a from_entity_id="<device-id>" -a to_entity_id="<home-id>"
+
+# Get entity details
+oook execute get_entity_details -a entity_id="<entity-id>"
+```
+
+#### Create Additional Entities
+```bash
+# Create a new room
+oook create room "Guest Bedroom" -c '{"area": 20, "floor": 2}'
+
+# Create a new device
+oook create device "Security Camera" -c '{"manufacturer": "Arlo", "model": "Pro 4", "capabilities": ["video", "motion", "night_vision"]}'
+```
+
+#### Create Relationships Between Entities
+```bash
+# First, get entity IDs from search results
 # Then create relationships
 
 # Example: Device located in room
@@ -142,22 +200,23 @@ oook execute create_relationship \
   -a to_entity_id="<room-id>" \
   -a relationship_type="located_in" \
   -a properties='{"position": "wall mounted"}'
+
+# Example: Room part of home  
+oook execute create_relationship \
+  -a from_entity_id="<room-id>" \
+  -a to_entity_id="<home-id>" \
+  -a relationship_type="part_of"
 ```
 
-#### View Graph Statistics
-```bash
-oook stats
-```
+### Step 8: Test with Example Script
 
-### Step 7: Test with Example Script
-
-Run the provided test script:
+Run the provided test script for additional testing:
 ```bash
 cd oook
 python examples/simple_test.py
 ```
 
-This will create entities, relationships, and verify all functionality works correctly.
+This will create additional entities, relationships, and verify all functionality works correctly.
 
 ## 🔧 MCP Tools Reference
 
@@ -218,6 +277,63 @@ In interactive mode, you can:
 - Tab completion for commands
 - Type 'help' for available commands
 - Type 'exit' to quit
+
+## 📋 Example Outputs
+
+### Search Results Example
+When you run `oook search "smart"`, you'll see output like:
+```
+Search Results for 'smart':
+
+╭────────────────────────── The Martinez Smart Home ───────────────────────────╮
+│ Name: The Martinez Smart Home                                                │
+│ Type: home                                                                   │
+│ ID: aeb2b8bb-dd32-4c99-ace6-08db0bf64d39                                     │
+│ Score: 4.50                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Highlights:
+  • Name: The Martinez Smart Home
+  • address: 456 Innovation Drive, Smart City, SC 90210...
+
+Found 5 results
+```
+
+### Device Query Example
+Running `oook execute get_devices_in_room -a room_id="cf6a0a08-2c10-4001-9d5b-76b8e34f6a0a"`:
+```json
+{
+  "success": true,
+  "result": {
+    "room_id": "cf6a0a08-2c10-4001-9d5b-76b8e34f6a0a",
+    "devices": [
+      {
+        "id": "f9fbbb53-8cda-4153-a5ce-b52ba2a48dd9",
+        "name": "65\" Smart TV",
+        "content": {
+          "manufacturer": "Samsung",
+          "model": "QN90A",
+          "capabilities": ["power", "volume", "input", "apps"]
+        }
+      }
+    ],
+    "count": 3
+  }
+}
+```
+
+### Path Finding Example
+Finding a path from a device to home shows the relationship chain:
+```json
+{
+  "path": [
+    {"id": "device-id", "name": "65\" Smart TV", "type": "device"},
+    {"id": "room-id", "name": "Living Room", "type": "room"},
+    {"id": "home-id", "name": "The Martinez Smart Home", "type": "home"}
+  ],
+  "length": 2,
+  "found": true
+}
+```
 
 ## 🧪 Advanced Testing Scenarios
 
@@ -314,6 +430,7 @@ oook tools  # Should list all MCP tools
 4. **Graph Operations**: Path finding, similarity search, subgraph extraction
 5. **Full-Text Search**: Search across entity names and content
 6. **Oook CLI**: Powerful testing tool for MCP operations
+7. **Population Script**: Comprehensive test data generator (populate_graph_db.py)
 
 ## 🔄 Cleaning Up
 
