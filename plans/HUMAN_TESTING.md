@@ -30,12 +30,20 @@ source venv/bin/activate  # On Linux/Mac
 venv\Scripts\activate     # On Windows
 
 # You should see (venv) in your terminal prompt
+
+# Set Python path to include project root (IMPORTANT!)
+export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
 ```
 
 ### Step 3: Install Dependencies
 ```bash
 cd funkygibbon
 pip install -r requirements.txt
+cd ..
+
+# Also install blowing-off dependencies if testing the client
+cd blowing-off
+pip install -e .
 cd ..
 ```
 
@@ -129,8 +137,10 @@ Visit http://localhost:8000/docs in your browser for interactive API documentati
 ## ⚠️ Important Notes
 
 1. **Working Directory**: Always run commands from `/workspaces/the-goodies` (project root)
-2. **Trailing Slashes**: Collection endpoints require trailing slashes (`/houses/` not `/houses`)
-3. **Database Location**: The SQLite database file `funkygibbon.db` is created in the project root
+2. **Python Path**: You MUST set `export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH` before running any commands
+3. **Trailing Slashes**: Collection endpoints require trailing slashes (`/houses/` not `/houses`)
+4. **Database Location**: The SQLite database file `funkygibbon.db` is created in the project root
+5. **Room IDs**: Note that pre-populated rooms have IDs like `room-home-{home_id}-{index}` while newly created rooms have IDs like `room-{timestamp}`
 
 ## 🧪 Test Data Overview
 
@@ -245,16 +255,20 @@ The Blowing-Off client provides a command-line interface for testing synchroniza
 
 ### Typical Workflow
 
-1. **Connect** to an existing FunkyGibbon server
-2. **Sync** to download existing data from the server
-3. **Work** with the synced data (view, create, update)
-4. **Sync** again to push any local changes back to the server
+1. **Set Python Path**: `export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH`
+2. **Connect** to an existing FunkyGibbon server
+3. **Sync** to download existing data from the server
+4. **Work** with the synced data (view, create, update)
+5. **Sync** again to push any local changes back to the server
 
 ### Installation
 
 ```bash
 # Make sure virtual environment is activated
 # If not: source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# IMPORTANT: Set Python path first!
+export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
 
 # From project root
 cd blowing-off
@@ -396,12 +410,17 @@ blowing-off connect --server-url http://localhost:8000 --auth-token test-token
 ```
 
 #### Database Location
-The client database is stored at: `~/.blowing-off/client.db`
+The client database is stored at: `blowingoff.db` (in the current directory)
 
 ```bash
-# To reset the client database
-rm -rf ~/.blowing-off
-# Then recreate a house and reconnect
+# To reset the client database and start fresh
+rm -f blowingoff.db*
+
+# Then reconnect to the server
+blowing-off connect --server-url http://localhost:8000 --auth-token test-token
+
+# Sync to download existing data from the server
+blowing-off sync
 ```
 
 #### Sync Conflicts
@@ -459,7 +478,8 @@ rm -rf venv
 
 # Optional: Clean up databases
 rm -f funkygibbon.db*
-rm -rf ~/.blowing-off
+rm -f blowingoff.db*
+rm -f .blowingoff.json
 ```
 
 Happy testing! 🎉
