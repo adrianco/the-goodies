@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oook"
+version = "0.1.0"
+description = "CLI tool for testing FunkyGibbon MCP server"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "The Goodies Team"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "click>=8.0",
+    "httpx>=0.24.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+oook = "oook.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/thegoodies/oook"
+Repository = "https://github.com/thegoodies/oook"
+Issues = "https://github.com/thegoodies/oook/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["oook*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+python_classes = ["Test*"]

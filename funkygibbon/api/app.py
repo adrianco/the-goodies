@@ -62,7 +62,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..database import init_db
-from .routers import homes, rooms, accessories, services, characteristics, users, sync, sync_metadata
+from .routers import homes, rooms, accessories, services, characteristics, users, sync, sync_metadata, graph, mcp
 
 
 @asynccontextmanager
@@ -103,6 +103,9 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix=f"{settings.api_prefix}/users", tags=["users"])
     app.include_router(sync.router, prefix=f"{settings.api_prefix}/sync", tags=["sync"])
     app.include_router(sync_metadata.router, prefix=f"{settings.api_prefix}/sync-metadata", tags=["sync-metadata"])
+    # Include new graph routers
+    app.include_router(graph.router, prefix=f"{settings.api_prefix}", tags=["graph"])
+    app.include_router(mcp.router, prefix=f"{settings.api_prefix}", tags=["mcp"])
     
     @app.get("/")
     async def root():

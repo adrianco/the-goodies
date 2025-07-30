@@ -1,5 +1,5 @@
 """
-FunkyGibbon Models - Using Inbetweenies HomeKit-compatible models
+FunkyGibbon Models - Using Inbetweenies HomeKit-compatible models + Graph models
 """
 
 # Import all shared models from inbetweenies
@@ -15,6 +15,10 @@ from inbetweenies.models import (
     SyncMetadata
 )
 
+# Import new graph models
+from .entity import Entity, EntityType, SourceType
+from .relationship import EntityRelationship, RelationshipType
+
 __all__ = [
     'Base',
     'Home',
@@ -24,5 +28,11 @@ __all__ = [
     'Characteristic',
     'User',
     'accessory_rooms',
-    'SyncMetadata'
+    'SyncMetadata',
+    # Graph models
+    'Entity',
+    'EntityType',
+    'SourceType',
+    'EntityRelationship',
+    'RelationshipType'
 ]

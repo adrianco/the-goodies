@@ -19,6 +19,8 @@ from .service import Service
 from .characteristic import Characteristic
 from .user import User
 from .sync_metadata import SyncMetadata
+from .entity import Entity, EntityType, SourceType
+from .relationship import EntityRelationship, RelationshipType
 
 __all__ = [
     'Base',
@@ -30,5 +32,10 @@ __all__ = [
     'Service',
     'Characteristic',
     'User',
-    'SyncMetadata'
+    'SyncMetadata',
+    'Entity',
+    'EntityType',
+    'SourceType',
+    'EntityRelationship',
+    'RelationshipType'
 ]
