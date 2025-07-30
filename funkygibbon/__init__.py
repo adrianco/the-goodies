@@ -2,7 +2,7 @@
 FunkyGibbon - Smart Home Knowledge Graph Backend
 
 DEVELOPMENT CONTEXT:
-Created in January 2024 as the Python backend for "The Goodies" smart home
+Created in July 2025 as the Python backend for "The Goodies" smart home
 system. FunkyGibbon is a simplified, single-house smart home server designed
 to replace complex multi-tenant systems with a focused solution for individual
 families. Named after the British comedy series "The Goodies" along with its
@@ -31,11 +31,11 @@ KNOWN ISSUES:
 - No built-in backup/restore functionality
 
 REVISION HISTORY:
-- 2024-01-15: Initial package structure and core models
-- 2024-01-16: Added repository pattern and sync protocol
-- 2024-01-17: Implemented FastAPI application and routers
-- 2024-01-18: Added Inbetweenies protocol support
-- 2024-01-19: Performance optimizations and denormalization
+- 2025-07-28: Initial package structure and core models
+- 2025-07-28: Added repository pattern and sync protocol
+- 2025-07-28: Implemented FastAPI application and routers
+- 2025-07-28: Added Inbetweenies protocol support
+- 2025-07-28: Performance optimizations and denormalization
 
 DEPENDENCIES:
 - Python 3.11+ for modern async support

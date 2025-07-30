@@ -3,7 +3,7 @@
 from typing import Optional
 from sqlalchemy import select
 from .base import ClientBaseRepository
-from ..models.sync_metadata import SyncMetadata
+from ..models import SyncMetadata
 
 
 class SyncMetadataRepository(ClientBaseRepository[SyncMetadata]):

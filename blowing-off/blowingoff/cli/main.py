@@ -2,7 +2,7 @@
 Blowing-Off Client - Command Line Interface
 
 DEVELOPMENT CONTEXT:
-Created as the interactive testing interface in January 2024. This CLI provides
+Created as the interactive testing interface in July 2025. This CLI provides
 a comprehensive way to test all aspects of the Inbetweenies protocol and the
 Blowing-Off client implementation. It serves as both a development tool and a
 reference for how the client API should be used. The Swift/WildThing client
@@ -11,8 +11,8 @@ should provide similar functionality through its UI.
 FUNCTIONALITY:
 - Connect to FunkyGibbon server with authentication
 - Perform manual and automated synchronization
-- Browse and manage houses, rooms, and devices
-- View and update device states in real-time
+- Browse and manage homes, rooms, and accessories
+- View and update accessory states in real-time
 - Monitor sync status and conflict resolution
 - Run background sync daemon for continuous operation
 - Store connection credentials securely
@@ -35,11 +35,11 @@ KNOWN ISSUES:
 - Basic credential storage (plain text)
 
 REVISION HISTORY:
-- 2024-01-15: Initial CLI implementation
-- 2024-01-18: Added sync daemon mode
-- 2024-01-20: Enhanced device management commands
-- 2024-01-22: Added formatted output with tabulate
-- 2024-01-25: Improved error handling and status display
+- 2025-07-28: Initial CLI implementation
+- 2025-07-28: Added sync daemon mode
+- 2025-07-28: Enhanced accessory management commands
+- 2025-07-28: Added formatted output with tabulate
+- 2025-07-28: Improved error handling and status display
 
 DEPENDENCIES:
 - click for command-line interface
@@ -57,10 +57,10 @@ USAGE:
     # Run background sync
     blowingoff sync-daemon --interval 30
     
-    # List devices in a room
+    # List accessories in a room
     blowingoff device list --room-id living-room-1
     
-    # Update device state
+    # Update accessory state
     blowingoff device set-state light-1 '{"on": true, "brightness": 80}'
 """
 
@@ -190,42 +190,40 @@ def status():
 
 
 @cli.group()
-def house():
-    """House management commands."""
+def home():
+    """Home management commands."""
     pass
 
 
-@house.command("show")
-def house_show():
-    """Show house information."""
+@home.command("show")
+def home_show():
+    """Show home information."""
     async def _show():
         client = await load_client()
-        house = await client.get_house()
+        home = await client.get_home()
         
-        if house:
-            click.echo(f"\n🏠 House: {house['name']}")
-            click.echo(f"   ID: {house['id']}")
-            click.echo(f"   Address: {house['address'] or 'Not set'}")
-            click.echo(f"   Timezone: {house['timezone']}")
+        if home:
+            click.echo(f"\n🏠 Home: {home['name']}")
+            click.echo(f"   ID: {home['id']}")
+            click.echo(f"   Primary: {'Yes' if home['is_primary'] else 'No'}")
             
-            rooms = await client.get_rooms(house['id'])
+            rooms = await client.get_rooms(home['id'])
             click.echo(f"   Rooms: {len(rooms)}")
         else:
-            click.echo("❌ No house found")
+            click.echo("❌ No home found")
             
     asyncio.run(_show())
 
 
-@house.command("create")
-@click.option("--name", required=True, help="House name")
-@click.option("--address", help="House address")
-@click.option("--timezone", default="UTC", help="Timezone (default: UTC)")
-def house_create(name, address, timezone):
-    """Create a new house."""
+@home.command("create")
+@click.option("--name", required=True, help="Home name")
+@click.option("--primary", is_flag=True, help="Set as primary home")
+def home_create(name, primary):
+    """Create a new home."""
     async def _create():
         client = await load_client()
-        house_id = await client.create_house(name, address=address, timezone=timezone)
-        click.echo(f"✅ Created house: {house_id}")
+        home_id = await client.create_home(name, is_primary=primary)
+        click.echo(f"✅ Created home: {home_id}")
         
     asyncio.run(_create())
 
@@ -244,9 +242,9 @@ def room_list():
         rooms = await client.get_rooms()
         
         if rooms:
-            headers = ["ID", "Name", "Floor", "Type"]
+            headers = ["ID", "Name", "Home ID"]
             rows = [
-                [r["id"], r["name"], r["floor"], r["room_type"] or "-"]
+                [r["id"][:12] + "...", r["name"], r["home_id"][:12] + "..."]
                 for r in rooms
             ]
             click.echo("\n📋 Rooms")
@@ -258,17 +256,13 @@ def room_list():
 
 
 @room.command("create")
-@click.option("--house-id", required=True, help="House ID")
+@click.option("--home-id", required=True, help="Home ID")
 @click.option("--name", required=True, help="Room name")
-@click.option("--floor", default=0, help="Floor number")
-@click.option("--type", help="Room type")
-def room_create(house_id, name, floor, type):
+def room_create(home_id, name):
     """Create a new room."""
     async def _create():
         client = await load_client()
-        room_id = await client.create_room(
-            house_id, name, floor=floor, room_type=type
-        )
+        room_id = await client.create_room(home_id, name)
         click.echo(f"✅ Created room: {room_id}")
         
     asyncio.run(_create())
@@ -276,70 +270,70 @@ def room_create(house_id, name, floor, type):
 
 @cli.group()
 def device():
-    """Device management commands."""
+    """Accessory management commands (kept as 'device' for user familiarity)."""
     pass
 
 
 @device.command("list")
 @click.option("--room-id", help="Filter by room")
 def device_list(room_id):
-    """List devices."""
+    """List accessories."""
     async def _list():
         client = await load_client()
-        devices = await client.get_devices(room_id)
+        devices = await client.get_accessories(room_id)
         
         if devices:
-            headers = ["ID", "Name", "Type", "Room", "Manufacturer"]
+            headers = ["ID", "Name", "Manufacturer", "Model", "Home ID"]
             rows = [
                 [
                     d["id"][:12] + "...",
                     d["name"],
-                    d["device_type"],
-                    d["room_id"][:12] + "...",
-                    d["manufacturer"] or "-"
+                    d["manufacturer"] or "-",
+                    d["model"] or "-",
+                    d["home_id"][:12] + "..."
                 ]
                 for d in devices
             ]
-            click.echo("\n📱 Devices")
+            click.echo("\n📱 Accessories")
             click.echo(tabulate(rows, headers=headers, tablefmt="simple"))
         else:
-            click.echo("❌ No devices found")
+            click.echo("❌ No accessories found")
             
     asyncio.run(_list())
 
 
 @device.command("create")
 @click.option("--room-id", required=True, help="Room ID")
-@click.option("--name", required=True, help="Device name")
+@click.option("--name", required=True, help="Accessory name")
 @click.option("--type", required=True, type=click.Choice([
     "light", "switch", "sensor", "thermostat", "lock", "camera", "speaker", "other"
-]), help="Device type")
+]), help="Accessory type")
 @click.option("--manufacturer", help="Manufacturer")
 @click.option("--model", help="Model")
 def device_create(room_id, name, type, manufacturer, model):
-    """Create a new device."""
+    """Create a new accessory."""
     async def _create():
         client = await load_client()
-        device_id = await client.create_device(
+        accessory_id = await client.create_accessory(
             room_id, name, type,
             manufacturer=manufacturer,
             model=model
         )
-        click.echo(f"✅ Created device: {device_id}")
+        click.echo(f"✅ Created accessory: {accessory_id}")
         
     asyncio.run(_create())
 
 
 @device.command("state")
-@click.argument("device_id")
-def device_state(device_id):
-    """Show device state."""
+@click.argument("accessory_id")
+def device_state(accessory_id):
+    """Show accessory state."""
     async def _state():
         client = await load_client()
-        state = await client.get_device_state(device_id)
+        state = await client.get_accessory_state(accessory_id)
         
         if state:
-            click.echo(f"\n💡 Device State: {device_id}")
+            click.echo(f"\n💡 Accessory State: {accessory_id}")
             click.echo(f"   State: {json.dumps(state['state'], indent=2)}")
             click.echo(f"   Attributes: {json.dumps(state['attributes'], indent=2)}")
             click.echo(f"   Updated: {state['updated_at']}")
@@ -350,10 +344,10 @@ def device_state(device_id):
 
 
 @device.command("set-state")
-@click.argument("device_id")
+@click.argument("accessory_id")
 @click.argument("state_json")
-def device_set_state(device_id, state_json):
-    """Update device state."""
+def device_set_state(accessory_id, state_json):
+    """Update accessory state."""
     async def _set_state():
         client = await load_client()
         
@@ -363,8 +357,8 @@ def device_set_state(device_id, state_json):
             click.echo("❌ Invalid JSON")
             return
             
-        await client.update_device_state(device_id, state)
-        click.echo(f"✅ Updated device state")
+        await client.update_accessory_state(accessory_id, state)
+        click.echo(f"✅ Updated accessory state")
         
     asyncio.run(_set_state())
 

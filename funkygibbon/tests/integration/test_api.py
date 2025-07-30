@@ -15,56 +15,54 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from funkygibbon.api.app import create_app
-from funkygibbon.repositories import HouseRepository, RoomRepository, DeviceRepository
+from funkygibbon.repositories import HomeRepository, RoomRepository, AccessoryRepository
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-class TestHouseAPI:
-    """Test house API endpoints."""
+class TestHomeAPI:
+    """Test home API endpoints."""
     
-    async def test_create_house(self, async_client: AsyncClient):
-        """Test creating a house via API."""
+    async def test_create_home(self, async_client: AsyncClient):
+        """Test creating a home via API."""
         response = await async_client.post(
-            "/api/v1/houses/",
+            "/api/v1/homes/",
             params={
-                "name": "API Test House",
-                "address": "123 API St",
-                "timezone": "UTC"
+                "name": "API Test Home",
+                "is_primary": True
             }
         )
         
         assert response.status_code == 200
         data = response.json()
-        assert data["name"] == "API Test House"
-        assert data["address"] == "123 API St"
-        assert data["timezone"] == "UTC"
+        assert data["name"] == "API Test Home"
+        assert data["is_primary"] == True
         assert "id" in data
         assert "sync_id" in data
     
-    async def test_get_house(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test getting a house via API."""
-        # Create house directly
-        repo = HouseRepository()
-        house = await repo.create(test_session, name="Get Test House")
+    async def test_get_home(self, async_client: AsyncClient, test_session: AsyncSession):
+        """Test getting a home via API."""
+        # Create home directly
+        repo = HomeRepository()
+        home = await repo.create(test_session, name="Get Test Home")
         
         # Get via API
-        response = await async_client.get(f"/api/v1/houses/{house.id}")
+        response = await async_client.get(f"/api/v1/homes/{home.id}")
         
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == house.id
-        assert data["name"] == "Get Test House"
+        assert data["id"] == home.id
+        assert data["name"] == "Get Test Home"
     
-    async def test_list_houses(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test listing houses via API."""
-        # Create houses
-        repo = HouseRepository()
+    async def test_list_homes(self, async_client: AsyncClient, test_session: AsyncSession):
+        """Test listing homes via API."""
+        # Create homes
+        repo = HomeRepository()
         await repo.create(test_session, name="House A")
         await repo.create(test_session, name="House B")
         
         # List via API
-        response = await async_client.get("/api/v1/houses/")
+        response = await async_client.get("/api/v1/homes/")
         
         assert response.status_code == 200
         data = response.json()
@@ -73,40 +71,39 @@ class TestHouseAPI:
         assert "House A" in names
         assert "House B" in names
     
-    async def test_update_house(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test updating a house via API."""
-        # Create house
-        repo = HouseRepository()
-        house = await repo.create(test_session, name="Old Name")
+    async def test_update_home(self, async_client: AsyncClient, test_session: AsyncSession):
+        """Test updating a home via API."""
+        # Create home
+        repo = HomeRepository()
+        home = await repo.create(test_session, name="Old Name")
         
         # Update via API
         response = await async_client.put(
-            f"/api/v1/houses/{house.id}",
-            params={"name": "New Name", "address": "456 New St"}
+            f"/api/v1/homes/{home.id}",
+            params={"name": "New Name", "is_primary": False}
         )
         
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "New Name"
-        assert data["address"] == "456 New St"
-        assert data["version"] == "2"
+        assert data["is_primary"] == False
     
-    async def test_delete_house(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test deleting a house via API."""
-        # Create house
-        repo = HouseRepository()
-        house = await repo.create(test_session, name="To Delete")
+    async def test_delete_home(self, async_client: AsyncClient, test_session: AsyncSession):
+        """Test deleting a home via API."""
+        # Create home
+        repo = HomeRepository()
+        home = await repo.create(test_session, name="To Delete")
         
         # Delete via API
-        response = await async_client.delete(f"/api/v1/houses/{house.id}")
+        response = await async_client.delete(f"/api/v1/homes/{home.id}")
         
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "deleted"
-        assert data["id"] == house.id
+        assert data["id"] == home.id
         
         # Verify it's gone
-        response = await async_client.get(f"/api/v1/houses/{house.id}")
+        response = await async_client.get(f"/api/v1/homes/{home.id}")
         assert response.status_code == 404
 
 
@@ -117,47 +114,42 @@ class TestRoomAPI:
     
     async def test_create_room(self, async_client: AsyncClient, test_session: AsyncSession):
         """Test creating a room via API."""
-        # Create house
-        house_repo = HouseRepository()
-        house = await house_repo.create(test_session, name="Test House")
+        # Create home
+        home_repo = HomeRepository()
+        home = await home_repo.create(test_session, name="Test House")
         
         # Create room via API
         response = await async_client.post(
             "/api/v1/rooms/",
             params={
-                "house_id": house.id,
-                "name": "API Room",
-                "room_type": "bedroom",
-                "floor": 2
+                "home_id": home.id,
+                "name": "API Room"
             }
         )
         
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "API Room"
-        assert data["room_type"] == "bedroom"
-        assert data["floor"] == 2
-        assert data["house_id"] == house.id
-        assert data["house_name"] == "Test House"
+        assert data["home_id"] == home.id
     
-    async def test_list_rooms_by_house(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test listing rooms by house."""
-        # Create house and rooms
-        house_repo = HouseRepository()
+    async def test_list_rooms_by_home(self, async_client: AsyncClient, test_session: AsyncSession):
+        """Test listing rooms by home."""
+        # Create home and rooms
+        home_repo = HomeRepository()
         room_repo = RoomRepository()
         
-        house = await house_repo.create(test_session, name="Test House")
-        await room_repo.create_with_house_name(
-            test_session, house.id, house.name, name="Room 1"
+        home = await home_repo.create(test_session, name="Test House")
+        await room_repo.create_with_home_name(
+            test_session, home.id, home.name, name="Room 1"
         )
-        await room_repo.create_with_house_name(
-            test_session, house.id, house.name, name="Room 2"
+        await room_repo.create_with_home_name(
+            test_session, home.id, home.name, name="Room 2"
         )
         
         # List via API
         response = await async_client.get(
             "/api/v1/rooms/",
-            params={"house_id": house.id}
+            params={"home_id": home.id}
         )
         
         assert response.status_code == 200
@@ -170,78 +162,39 @@ class TestRoomAPI:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-class TestDeviceAPI:
-    """Test device API endpoints."""
+class TestAccessoryAPI:
+    """Test accessory API endpoints."""
     
-    async def test_create_device(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test creating a device via API."""
-        # Create house and room
-        house_repo = HouseRepository()
+    async def test_create_accessory(self, async_client: AsyncClient, test_session: AsyncSession):
+        """Test creating a accessory via API."""
+        # Create home and room
+        home_repo = HomeRepository()
         room_repo = RoomRepository()
         
-        house = await house_repo.create(test_session, name="Test House")
-        room = await room_repo.create_with_house_name(
-            test_session, house.id, house.name, name="Test Room"
+        home = await home_repo.create(test_session, name="Test House")
+        room = await room_repo.create_with_home_name(
+            test_session, home.id, home.name, name="Test Room"
         )
         
-        # Create device via API
+        # Create accessory via API
         response = await async_client.post(
-            "/api/v1/devices/",
+            "/api/v1/accessories/",
             params={
-                "room_id": room.id,
-                "name": "API Device",
-                "device_type": "sensor",
+                "home_id": home.id,
+                "name": "API Accessory",
                 "manufacturer": "Test Corp",
-                "model": "T-1000"
+                "model": "T-1000",
+                "room_ids": [room.id]
             }
         )
         
         assert response.status_code == 200
         data = response.json()
-        assert data["name"] == "API Device"
-        assert data["device_type"] == "sensor"
+        assert data["name"] == "API Accessory"
         assert data["manufacturer"] == "Test Corp"
         assert data["model"] == "T-1000"
-        assert data["room_name"] == "Test Room"
-        assert data["house_name"] == "Test House"
+        assert data["home_id"] == home.id
     
-    async def test_update_device_state(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test updating device state via API."""
-        # Create device
-        house_repo = HouseRepository()
-        room_repo = RoomRepository()
-        device_repo = DeviceRepository()
-        
-        house = await house_repo.create(test_session, name="Test House")
-        room = await room_repo.create_with_house_name(
-            test_session, house.id, house.name, name="Test Room"
-        )
-        device = await device_repo.create_with_names(
-            test_session,
-            room_id=room.id,
-            room_name=room.name,
-            house_id=house.id,
-            house_name=house.name,
-            name="Test Device",
-            device_type="light"
-        )
-        
-        # Update state via API
-        response = await async_client.put(
-            f"/api/v1/devices/{device.id}/state",
-            params={
-                "state_type": "on_off",
-                "state_value": "on"
-            },
-            json={"brightness": 75, "color": "warm"}
-        )
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["device_id"] == device.id
-        assert data["state_type"] == "on_off"
-        assert data["state_value"] == "on"
-        assert "state_json" in data
 
 
 @pytest.mark.integration
@@ -252,23 +205,17 @@ class TestSyncAPI:
     async def test_sync_entities(self, async_client: AsyncClient):
         """Test syncing entities."""
         sync_request = {
-            "houses": [
+            "homes": [
                 {
-                    "sync_id": "remote-house-1",
+                    "sync_id": "remote-home-1",
                     "name": "Remote House",
-                    "address": "123 Remote St",
-                    "timezone": "UTC",
-                    "room_count": 0,
-                    "device_count": 0,
-                    "user_count": 0,
+                    "is_primary": True,
                     "created_at": datetime.now(UTC).isoformat(),
-                    "updated_at": datetime.now(UTC).isoformat(),
-                    "version": "1",
-                    "is_deleted": False
+                    "updated_at": datetime.now(UTC).isoformat()
                 }
             ],
             "rooms": [],
-            "devices": [],
+            "accessories": [],
             "users": []
         }
         
@@ -279,24 +226,24 @@ class TestSyncAPI:
         
         assert response.status_code == 200
         data = response.json()
-        assert data["synced"]["houses"] == 1
+        assert data["synced"]["homes"] == 1
         assert len(data["conflicts"]) == 0
         assert "timestamp" in data
     
     async def test_get_changes_since(self, async_client: AsyncClient, test_session: AsyncSession):
         """Test getting changes since timestamp."""
         # Create some entities
-        house_repo = HouseRepository()
+        home_repo = HomeRepository()
         
-        # Create houses at different times
-        await house_repo.create(test_session, name="Old House")
+        # Create homes at different times
+        await home_repo.create(test_session, name="Old House")
         await asyncio.sleep(0.1)
         
         checkpoint = datetime.now(UTC) - timedelta(seconds=1)
         await asyncio.sleep(0.1)
         
-        await house_repo.create(test_session, name="New House 1")
-        await house_repo.create(test_session, name="New House 2")
+        await home_repo.create(test_session, name="New House 1")
+        await home_repo.create(test_session, name="New House 2")
         
         # Get changes
         response = await async_client.get(
@@ -306,8 +253,8 @@ class TestSyncAPI:
         
         assert response.status_code == 200
         data = response.json()
-        assert len(data["changes"]["houses"]) >= 2
+        assert len(data["changes"]["homes"]) >= 2
         
-        house_names = [h["name"] for h in data["changes"]["houses"]]
-        assert "New House 1" in house_names
-        assert "New House 2" in house_names
+        home_names = [h["name"] for h in data["changes"]["homes"]]
+        assert "New House 1" in home_names
+        assert "New House 2" in home_names

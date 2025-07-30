@@ -2,7 +2,7 @@
 FunkyGibbon - Configuration Management
 
 DEVELOPMENT CONTEXT:
-Created in January 2024 as the central configuration module for FunkyGibbon.
+Created in July 2025 as the central configuration module for FunkyGibbon.
 Designed to support both development and production environments through
 environment variables, with sensible defaults for single-house deployments.
 
@@ -25,10 +25,10 @@ KNOWN ISSUES:
 - Database echo can impact performance if accidentally left on in production
 
 REVISION HISTORY:
-- 2024-01-15: Initial implementation with basic settings
-- 2024-01-16: Added sync configuration for conflict resolution
-- 2024-01-17: Added performance limits for single-house scale
-- 2024-01-18: Switched to Pydantic Settings v2 syntax
+- 2025-07-28: Initial implementation with basic settings
+- 2025-07-28: Added sync configuration for conflict resolution
+- 2025-07-28: Added performance limits for single-house scale
+- 2025-07-28: Switched to Pydantic Settings v2 syntax
 
 DEPENDENCIES:
 - pydantic_settings: For environment variable loading and validation
@@ -44,46 +44,47 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
 class Settings(BaseSettings):
     """Application settings."""
     
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8"
+    )
+    
     # Database
     database_url: str = Field(
         default="sqlite+aiosqlite:///./funkygibbon.db",
-        env="DATABASE_URL"
+        validation_alias="DATABASE_URL"
     )
-    database_echo: bool = Field(default=False, env="DATABASE_ECHO")
+    database_echo: bool = Field(default=False, validation_alias="DATABASE_ECHO")
     
     # API
-    api_host: str = Field(default="0.0.0.0", env="API_HOST")
-    api_port: int = Field(default=8000, env="API_PORT")
-    api_prefix: str = Field(default="/api/v1", env="API_PREFIX")
+    api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")
+    api_port: int = Field(default=8000, validation_alias="API_PORT")
+    api_prefix: str = Field(default="/api/v1", validation_alias="API_PREFIX")
     
     # Security
     secret_key: str = Field(
         default="dev-secret-key-change-in-production",
-        env="SECRET_KEY"
+        validation_alias="SECRET_KEY"
     )
-    api_key: Optional[str] = Field(default=None, env="API_KEY")
+    api_key: Optional[str] = Field(default=None, validation_alias="API_KEY")
     
     # Sync
-    sync_batch_size: int = Field(default=50, env="SYNC_BATCH_SIZE")
-    sync_conflict_strategy: str = Field(default="last_write_wins", env="SYNC_CONFLICT_STRATEGY")
+    sync_batch_size: int = Field(default=50, validation_alias="SYNC_BATCH_SIZE")
+    sync_conflict_strategy: str = Field(default="last_write_wins", validation_alias="SYNC_CONFLICT_STRATEGY")
     
     # Performance
-    max_entities_per_house: int = Field(default=300, env="MAX_ENTITIES_PER_HOUSE")
-    max_users_per_house: int = Field(default=10, env="MAX_USERS_PER_HOUSE")
+    max_entities_per_house: int = Field(default=300, validation_alias="MAX_ENTITIES_PER_HOUSE")
+    max_users_per_house: int = Field(default=10, validation_alias="MAX_USERS_PER_HOUSE")
     
     # Logging
-    log_level: str = Field(default="INFO", env="LOG_LEVEL")
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
 
 # Global settings instance

@@ -7,60 +7,45 @@ from datetime import datetime, UTC
 
 import pytest
 
-from funkygibbon.models import House, Room, Device, User, EntityState, Event
-from funkygibbon.models.base import ConflictResolution
+from inbetweenies.models import Home, Room, Accessory, User
+from inbetweenies.sync.conflict import ConflictResolution
 
 
 @pytest.mark.unit
-class TestHouseModel:
-    """Test House model functionality."""
+class TestHomeModel:
+    """Test Home model functionality."""
     
-    def test_house_creation(self):
-        """Test creating a house instance."""
-        house = House(
-            name="Test House",
-            address="123 Test St",
-            latitude=40.7128,
-            longitude=-74.0060,
-            timezone="America/New_York",
-            room_count=0,
-            device_count=0,
-            user_count=0
+    def test_home_creation(self):
+        """Test creating a home instance."""
+        home = Home(
+            id="test-home-id",
+            name="Test Home",
+            is_primary=True
         )
         
-        assert house.name == "Test House"
-        assert house.address == "123 Test St"
-        assert house.latitude == 40.7128
-        assert house.longitude == -74.0060
-        assert house.timezone == "America/New_York"
-        assert house.room_count == 0
-        assert house.device_count == 0
-        assert house.user_count == 0
+        assert home.id == "test-home-id"
+        assert home.name == "Test Home"
+        assert home.is_primary == True
     
-    def test_house_to_dict(self):
-        """Test converting house to dictionary."""
-        house = House(
+    def test_home_to_dict(self):
+        """Test converting home to dictionary."""
+        home = Home(
             id="test-id",
-            sync_id="sync-id",
-            name="Test House",
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-            room_count=0,
-            device_count=0,
-            user_count=0,
-            version="1",
-            is_deleted=False
+            name="Test Home",
+            is_primary=False,
+            sync_id="sync-id"
         )
+        home.created_at = datetime.now(UTC)
+        home.updated_at = datetime.now(UTC)
         
-        result = house.to_dict()
+        result = home.to_dict()
         
         assert result["id"] == "test-id"
         assert result["sync_id"] == "sync-id"
-        assert result["name"] == "Test House"
+        assert result["name"] == "Test Home"
+        assert result["is_primary"] == False
         assert "created_at" in result
         assert "updated_at" in result
-        assert result["version"] == "1"
-        assert result["is_deleted"] is False
 
 
 @pytest.mark.unit
@@ -70,88 +55,87 @@ class TestRoomModel:
     def test_room_creation(self):
         """Test creating a room instance."""
         room = Room(
-            house_id="house-123",
-            house_name="Test House",
-            name="Living Room",
-            room_type="living_room",
-            floor=1,
-            temperature=22.5,
-            humidity=45.0,
-            device_count=0
+            id="room-123",
+            home_id="home-123",
+            name="Living Room"
         )
         
-        assert room.house_id == "house-123"
-        assert room.house_name == "Test House"
+        assert room.id == "room-123"
+        assert room.home_id == "home-123"
         assert room.name == "Living Room"
-        assert room.room_type == "living_room"
-        assert room.floor == 1
-        assert room.temperature == 22.5
-        assert room.humidity == 45.0
-        assert room.device_count == 0
     
-    def test_room_sensor_data(self):
-        """Test room sensor data fields."""
+    def test_room_to_dict(self):
+        """Test room to dictionary conversion."""
         room = Room(
-            house_id="house-123",
-            house_name="Test House",
+            id="room-123",
+            home_id="home-123",
             name="Bedroom",
-            last_motion_at="2024-01-01T12:00:00Z"
+            sync_id="sync-room-123"
         )
+        room.created_at = datetime.now(UTC)
+        room.updated_at = datetime.now(UTC)
         
-        assert room.last_motion_at == "2024-01-01T12:00:00Z"
-        assert room.temperature is None
-        assert room.humidity is None
+        result = room.to_dict()
+        
+        assert result["id"] == "room-123"
+        assert result["home_id"] == "home-123"
+        assert result["name"] == "Bedroom"
+        assert result["sync_id"] == "sync-room-123"
+        assert "created_at" in result
+        assert "updated_at" in result
 
 
 @pytest.mark.unit
-class TestDeviceModel:
-    """Test Device model functionality."""
+class TestAccessoryModel:
+    """Test Accessory model functionality."""
     
-    def test_device_creation(self):
-        """Test creating a device instance."""
-        device = Device(
-            room_id="room-123",
-            house_id="house-123",
-            room_name="Living Room",
-            house_name="Test House",
+    def test_accessory_creation(self):
+        """Test creating an accessory instance."""
+        accessory = Accessory(
+            id="accessory-123",
+            home_id="home-123",
             name="Smart Light",
-            device_type="light",
             manufacturer="Philips",
-            model="Hue Go"
+            model="Hue Go",
+            serial_number="123456789",
+            firmware_version="1.0.0",
+            is_reachable=True,
+            is_blocked=False,
+            is_bridge=False
         )
         
-        assert device.room_id == "room-123"
-        assert device.house_id == "house-123"
-        assert device.room_name == "Living Room"
-        assert device.house_name == "Test House"
-        assert device.name == "Smart Light"
-        assert device.device_type == "light"
-        assert device.manufacturer == "Philips"
-        assert device.model == "Hue Go"
+        assert accessory.id == "accessory-123"
+        assert accessory.home_id == "home-123"
+        assert accessory.name == "Smart Light"
+        assert accessory.manufacturer == "Philips"
+        assert accessory.model == "Hue Go"
+        assert accessory.serial_number == "123456789"
+        assert accessory.firmware_version == "1.0.0"
+        assert accessory.is_reachable == True
+        assert accessory.is_blocked == False
+        assert accessory.is_bridge == False
     
-    def test_device_json_fields(self):
-        """Test device JSON storage fields."""
-        state_data = {"on": True, "brightness": 80, "color": "warm"}
-        capabilities = ["on_off", "dimming", "color"]
-        
-        device = Device(
-            room_id="room-123",
-            house_id="house-123",
-            room_name="Living Room",
-            house_name="Test House",
+    def test_accessory_to_dict(self):
+        """Test accessory to dictionary conversion."""
+        accessory = Accessory(
+            id="accessory-123",
+            home_id="home-123",
             name="Smart Light",
-            device_type="light",
-            state_json=json.dumps(state_data),
-            capabilities_json=json.dumps(capabilities)
+            manufacturer="Philips",
+            model="Hue Go",
+            sync_id="sync-acc-123"
         )
+        accessory.created_at = datetime.now(UTC)
+        accessory.updated_at = datetime.now(UTC)
         
-        assert device.state_json == json.dumps(state_data)
-        assert device.capabilities_json == json.dumps(capabilities)
+        result = accessory.to_dict()
         
-        # Test parsing JSON
-        parsed_state = json.loads(device.state_json)
-        assert parsed_state["on"] is True
-        assert parsed_state["brightness"] == 80
+        assert result["id"] == "accessory-123"
+        assert result["home_id"] == "home-123"
+        assert result["name"] == "Smart Light"
+        assert result["manufacturer"] == "Philips"
+        assert result["model"] == "Hue Go"
+        assert result["sync_id"] == "sync-acc-123"
 
 
 @pytest.mark.unit
@@ -161,106 +145,44 @@ class TestUserModel:
     def test_user_creation(self):
         """Test creating a user instance."""
         user = User(
-            house_id="house-123",
+            id="user-123",
+            home_id="home-123",
             name="John Doe",
-            email="john@example.com",
-            role="admin"
+            is_administrator=True,
+            is_owner=False,
+            remote_access_allowed=True
         )
         
-        assert user.house_id == "house-123"
+        assert user.id == "user-123"
+        assert user.home_id == "home-123"
         assert user.name == "John Doe"
-        assert user.email == "john@example.com"
-        assert user.role == "admin"
+        assert user.is_administrator == True
+        assert user.is_owner == False
+        assert user.remote_access_allowed == True
     
-    def test_user_device_tracking(self):
-        """Test user device ID tracking."""
-        device_ids = ["device-1", "device-2", "device-3"]
+    def test_user_to_dict(self):
+        """Test user to dictionary conversion."""
         user = User(
-            house_id="house-123",
+            id="user-123",
+            home_id="home-123",
             name="Jane Doe",
-            device_ids_json=json.dumps(device_ids)
+            is_administrator=False,
+            is_owner=True,
+            remote_access_allowed=True,
+            sync_id="sync-user-123"
         )
+        user.created_at = datetime.now(UTC)
+        user.updated_at = datetime.now(UTC)
         
-        parsed_devices = json.loads(user.device_ids_json)
-        assert len(parsed_devices) == 3
-        assert "device-1" in parsed_devices
-
-
-@pytest.mark.unit
-class TestEntityStateModel:
-    """Test EntityState model functionality."""
-    
-    def test_entity_state_creation(self):
-        """Test creating an entity state instance."""
-        state = EntityState(
-            device_id="device-123",
-            state_type="temperature",
-            state_value="22.5",
-            source="sensor",
-            user_id=None
-        )
+        result = user.to_dict()
         
-        assert state.device_id == "device-123"
-        assert state.state_type == "temperature"
-        assert state.state_value == "22.5"
-        assert state.source == "sensor"
-        assert state.user_id is None
-    
-    def test_entity_state_with_json(self):
-        """Test entity state with JSON data."""
-        extra_data = {"unit": "celsius", "precision": 0.1}
-        state = EntityState(
-            device_id="device-123",
-            state_type="temperature",
-            state_value="22.5",
-            state_json=json.dumps(extra_data)
-        )
-        
-        parsed_data = json.loads(state.state_json)
-        assert parsed_data["unit"] == "celsius"
-        assert parsed_data["precision"] == 0.1
-
-
-@pytest.mark.unit
-class TestEventModel:
-    """Test Event model functionality."""
-    
-    def test_event_creation(self):
-        """Test creating an event instance."""
-        event = Event(
-            event_type="device_added",
-            entity_type="device",
-            entity_id="device-123",
-            description="Smart Light added to Living Room",
-            source="user",
-            user_id="user-456"
-        )
-        
-        assert event.event_type == "device_added"
-        assert event.entity_type == "device"
-        assert event.entity_id == "device-123"
-        assert event.description == "Smart Light added to Living Room"
-        assert event.source == "user"
-        assert event.user_id == "user-456"
-    
-    def test_event_with_data(self):
-        """Test event with JSON data."""
-        event_data = {
-            "old_name": "Light 1",
-            "new_name": "Living Room Light",
-            "changed_by": "user-456"
-        }
-        
-        event = Event(
-            event_type="device_renamed",
-            entity_type="device",
-            entity_id="device-123",
-            data_json=json.dumps(event_data)
-        )
-        
-        parsed_data = json.loads(event.data_json)
-        assert parsed_data["old_name"] == "Light 1"
-        assert parsed_data["new_name"] == "Living Room Light"
+        assert result["id"] == "user-123"
+        assert result["home_id"] == "home-123"
+        assert result["name"] == "Jane Doe"
+        assert result["is_administrator"] == False
+        assert result["is_owner"] == True
+        assert result["remote_access_allowed"] == True
+        assert result["sync_id"] == "sync-user-123"
 
 
 @pytest.mark.unit
@@ -269,8 +191,8 @@ class TestConflictResolution:
     
     def test_conflict_resolution_creation(self):
         """Test creating a conflict resolution instance."""
-        winner = {"id": "123", "name": "Winner", "updated_at": "2024-01-01T12:00:10Z"}
-        loser = {"id": "123", "name": "Loser", "updated_at": "2024-01-01T12:00:00Z"}
+        winner = {"id": "123", "name": "Winner", "updated_at": "2025-07-28T12:00:10Z"}
+        loser = {"id": "123", "name": "Loser", "updated_at": "2025-07-28T12:00:00Z"}
         
         resolution = ConflictResolution(
             winner=winner,

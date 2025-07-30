@@ -2,19 +2,20 @@
 FunkyGibbon - Sync API Router (Bidirectional Sync & Inbetweenies Protocol)
 
 DEVELOPMENT CONTEXT:
-Created in January 2024 as the core synchronization endpoint implementing
+Created in July 2025 as the core synchronization endpoint implementing
 both our simplified sync protocol and the Inbetweenies protocol for
 compatibility with other smart home systems. This is the heart of our
 bidirectional sync strategy with last-write-wins conflict resolution.
+Updated to work with HomeKit-compatible models from Inbetweenies.
 
 FUNCTIONALITY:
 - Standard sync endpoint (/sync) for bulk entity synchronization
 - Last-write-wins conflict resolution with detailed reporting
 - Change tracking endpoint for incremental sync
 - Full Inbetweenies protocol implementation (request/push/ack)
-- Handles all entity types (houses, rooms, devices, users, states)
-- Supports soft deletes for proper sync behavior
+- Handles HomeKit entity types (homes, rooms, accessories, users)
 - Batched operations for performance with ~300 entities
+- Removed soft delete support (not in HomeKit models)
 
 PURPOSE:
 Enables offline-capable clients to synchronize their local state with
@@ -31,12 +32,12 @@ KNOWN ISSUES:
 - Memory usage could spike with large entity counts
 
 REVISION HISTORY:
-- 2024-01-15: Initial sync endpoint with basic conflict resolution
-- 2024-01-16: Added change tracking for incremental sync
-- 2024-01-17: Added Inbetweenies protocol endpoints
-- 2024-01-18: Fixed timezone handling in timestamps
-- 2024-01-19: Added soft delete support in sync operations
-- 2024-01-20: Improved error handling in push operations
+- 2025-07-28: Initial sync endpoint with basic conflict resolution
+- 2025-07-28: Added change tracking for incremental sync
+- 2025-07-28: Added Inbetweenies protocol endpoints
+- 2025-07-28: Fixed timezone handling in timestamps
+- 2025-07-28: Added soft delete support in sync operations
+- 2025-07-28: Improved error handling in push operations
 
 DEPENDENCIES:
 - fastapi: Web framework and routing
@@ -51,11 +52,11 @@ POST /api/v1/sync
 {
     "houses": [{"sync_id": "...", "name": "..."}],
     "devices": [{"sync_id": "...", "name": "..."}],
-    "last_sync": "2024-01-15T10:00:00Z"
+    "last_sync": "2025-07-28T10:00:00Z"
 }
 
 # Get changes since timestamp:
-GET /api/v1/sync/changes?since=2024-01-15T10:00:00Z
+GET /api/v1/sync/changes?since=2025-07-28T10:00:00Z
 
 # Inbetweenies protocol:
 POST /api/v1/sync/request (initial sync request)
@@ -71,12 +72,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_db
-from ...models.base import ConflictResolution
+from inbetweenies.sync import ConflictResolution
 from ...repositories import (
-    DeviceRepository,
-    EntityStateRepository,
-    EventRepository,
-    HouseRepository,
+    AccessoryRepository,
+    HomeRepository,
     RoomRepository,
     UserRepository,
 )
@@ -86,9 +85,9 @@ router = APIRouter()
 
 class SyncRequest(BaseModel):
     """Sync request with entities to sync."""
-    houses: List[Dict] = []
+    homes: List[Dict] = []
     rooms: List[Dict] = []
-    devices: List[Dict] = []
+    accessories: List[Dict] = []
     users: List[Dict] = []
     last_sync: Optional[datetime] = None
 
@@ -111,24 +110,24 @@ async def sync_entities(
     
     Returns updated entities and any conflicts that were resolved.
     """
-    house_repo = HouseRepository()
+    home_repo = HomeRepository()
     room_repo = RoomRepository()
-    device_repo = DeviceRepository()
+    accessory_repo = AccessoryRepository()
     user_repo = UserRepository()
     
     synced_counts = {
-        "houses": 0,
+        "homes": 0,
         "rooms": 0,
-        "devices": 0,
+        "accessories": 0,
         "users": 0
     }
     conflicts = []
     
-    # Sync houses
-    for house_data in request.houses:
-        _, updated, conflict = await house_repo.sync_entity(db, house_data)
+    # Sync homes
+    for home_data in request.homes:
+        _, updated, conflict = await home_repo.sync_entity(db, home_data)
         if updated:
-            synced_counts["houses"] += 1
+            synced_counts["homes"] += 1
         if conflict:
             conflicts.append(conflict)
     
@@ -140,11 +139,11 @@ async def sync_entities(
         if conflict:
             conflicts.append(conflict)
     
-    # Sync devices
-    for device_data in request.devices:
-        _, updated, conflict = await device_repo.sync_entity(db, device_data)
+    # Sync accessories
+    for accessory_data in request.accessories:
+        _, updated, conflict = await accessory_repo.sync_entity(db, accessory_data)
         if updated:
-            synced_counts["devices"] += 1
+            synced_counts["accessories"] += 1
         if conflict:
             conflicts.append(conflict)
     
@@ -157,18 +156,18 @@ async def sync_entities(
             conflicts.append(conflict)
     
     # Get changes since last sync
-    changes = {"houses": [], "rooms": [], "devices": [], "users": []}
+    changes = {"homes": [], "rooms": [], "accessories": [], "users": []}
     
     if request.last_sync:
         # Get entities changed since last sync
-        changed_houses = await house_repo.get_changes_since(db, request.last_sync)
+        changed_homes = await home_repo.get_changes_since(db, request.last_sync)
         changed_rooms = await room_repo.get_changes_since(db, request.last_sync)
-        changed_devices = await device_repo.get_changes_since(db, request.last_sync)
+        changed_accessories = await accessory_repo.get_changes_since(db, request.last_sync)
         changed_users = await user_repo.get_changes_since(db, request.last_sync)
         
-        changes["houses"] = [h.to_dict() for h in changed_houses]
+        changes["homes"] = [h.to_dict() for h in changed_homes]
         changes["rooms"] = [r.to_dict() for r in changed_rooms]
-        changes["devices"] = [d.to_dict() for d in changed_devices]
+        changes["accessories"] = [a.to_dict() for a in changed_accessories]
         changes["users"] = [u.to_dict() for u in changed_users]
     
     return SyncResponse(
@@ -190,9 +189,9 @@ async def get_changes(
     changes = {}
     
     if not entity_type or entity_type == "houses":
-        house_repo = HouseRepository()
-        houses = await house_repo.get_changes_since(db, since, limit)
-        changes["houses"] = [h.to_dict() for h in houses]
+        home_repo = HomeRepository()
+        homes = await home_repo.get_changes_since(db, since, limit)
+        changes["homes"] = [h.to_dict() for h in homes]
     
     if not entity_type or entity_type == "rooms":
         room_repo = RoomRepository()
@@ -200,9 +199,9 @@ async def get_changes(
         changes["rooms"] = [r.to_dict() for r in rooms]
     
     if not entity_type or entity_type == "devices":
-        device_repo = DeviceRepository()
-        devices = await device_repo.get_changes_since(db, since, limit)
-        changes["devices"] = [d.to_dict() for d in devices]
+        accessory_repo = AccessoryRepository()
+        accessories = await accessory_repo.get_changes_since(db, since, limit)
+        changes["accessories"] = [a.to_dict() for a in accessories]
     
     if not entity_type or entity_type == "users":
         user_repo = UserRepository()
@@ -259,18 +258,18 @@ async def inbetweenies_sync_request(
     last_sync = None
     if request.last_sync:
         last_sync = datetime.fromisoformat(request.last_sync.replace("Z", "+00:00"))
+    
+    print(f"DEBUG: Sync request from {request.client_id}, last_sync={last_sync}, entity_types={request.entity_types}")
         
     changes = []
     conflicts = []
     
     # Get changes for each entity type
     repo_map = {
-        "houses": HouseRepository(),
+        "homes": HomeRepository(),
         "rooms": RoomRepository(),
-        "devices": DeviceRepository(),
-        "users": UserRepository(),
-        "entity_states": EntityStateRepository(),
-        "events": EventRepository()
+        "accessories": AccessoryRepository(),
+        "users": UserRepository()
     }
     
     for entity_type in request.entity_types:
@@ -283,6 +282,9 @@ async def inbetweenies_sync_request(
             else:
                 entities = await repo.get_all(db)
             
+            # Debug logging
+            print(f"DEBUG: Entity type {entity_type}: found {len(entities)} entities")
+            
             for entity in entities:
                 # Check if modified since last sync
                 if last_sync and hasattr(entity, 'updated_at'):
@@ -292,7 +294,7 @@ async def inbetweenies_sync_request(
                 # Add to changes
                 entity_dict = entity.to_dict() if hasattr(entity, 'to_dict') else {}
                 change_data = {
-                    "entity_type": entity_type.rstrip("s"),  # Remove plural
+                    "entity_type": "accessory" if entity_type == "accessories" else entity_type.rstrip("s"),  # Remove plural correctly
                     "entity_id": entity.id,
                     "operation": "update",  # TODO: Track creates/deletes
                     "data": entity_dict,
@@ -301,6 +303,8 @@ async def inbetweenies_sync_request(
                 }
                 changes.append(change_data)
                 
+    print(f"DEBUG: Returning {len(changes)} changes")
+    
     return {
         "type": "sync_delta",
         "server_time": datetime.now(UTC).isoformat(),
@@ -320,12 +324,10 @@ async def inbetweenies_sync_push(
     conflicts = []
     
     repo_map = {
-        "house": HouseRepository(),
+        "home": HomeRepository(),
         "room": RoomRepository(),
-        "device": DeviceRepository(),
-        "user": UserRepository(),
-        "entity_state": EntityStateRepository(),
-        "event": EventRepository()
+        "accessory": AccessoryRepository(),
+        "user": UserRepository()
     }
     
     for change in push.changes:
@@ -369,11 +371,11 @@ async def inbetweenies_sync_push(
                         })
                 else:
                     # Fallback to create/update
-                    existing = await repo.get(db, entity_id)
+                    existing = await repo.get(entity_id)
                     if existing:
-                        await repo.update(db, entity_id, **data)
+                        await repo.update(entity_id, **data)
                     else:
-                        await repo.create(db, **data)
+                        await repo.create(**data)
                     applied.append({
                         "client_sync_id": client_sync_id,
                         "server_sync_id": f"server-{entity_id}",

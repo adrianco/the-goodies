@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_db
-from ...models.house import House
+from inbetweenies.models import Home as House
 from ...repositories.house import HouseRepository
 
 router = APIRouter()

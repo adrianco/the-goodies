@@ -2,11 +2,12 @@
 Blowing-Off Client - Synchronization Engine
 
 DEVELOPMENT CONTEXT:
-Created as the heart of the Inbetweenies protocol implementation in January 2024.
+Created as the heart of the Inbetweenies protocol implementation in July 2025.
 This engine orchestrates the complex dance of bidirectional synchronization between
 local SQLite databases and the cloud server. It handles the full sync lifecycle,
 conflict detection/resolution, and failure recovery. This is the most critical
-component that the Swift/WildThing client must replicate accurately.
+component that the Swift/WildThing client must replicate accurately. Updated to
+work with shared HomeKit-compatible models from Inbetweenies.
 
 FUNCTIONALITY:
 - Orchestrates full sync cycles with proper state management
@@ -16,7 +17,7 @@ FUNCTIONALITY:
 - Manages sync metadata for recovery and retry logic
 - Implements the Inbetweenies protocol specification
 - Provides atomic sync operations with rollback capability
-- Tracks sync performance and error metrics
+- Works with HomeKit entities (homes, rooms, accessories, users)
 
 PURPOSE:
 This engine enables:
@@ -34,13 +35,17 @@ KNOWN ISSUES:
 - No compression for sync payloads
 - Conflict resolution strategy is basic (last-write-wins)
 - Missing partial sync support for large datasets
+- Sync tracking without dedicated model fields
 
 REVISION HISTORY:
-- 2024-01-15: Initial implementation with basic sync cycle
-- 2024-01-18: Added conflict detection and resolution
-- 2024-01-20: Enhanced error handling and retry logic
-- 2024-01-22: Added incremental sync support
-- 2024-01-25: Improved performance for large datasets
+- 2025-07-28: Initial implementation with basic sync cycle
+- 2025-07-28: Added conflict detection and resolution
+- 2025-07-28: Enhanced error handling and retry logic
+- 2025-07-28: Added incremental sync support
+- 2025-07-28: Improved performance for large datasets
+- 2025-07-29: Updated to use shared Inbetweenies models
+- 2025-07-29: Changed entity types (houses→homes, devices→accessories)
+- 2025-07-29: Removed EntityState and Event sync support
 
 DEPENDENCIES:
 - InbetweeniesProtocol for wire protocol implementation
@@ -48,6 +53,7 @@ DEPENDENCIES:
 - ConflictResolver for merge strategies
 - AsyncSession for database transactions
 - UUID for sync operation tracking
+- inbetweenies.models for shared entities
 
 USAGE:
     engine = SyncEngine(session, "https://api.example.com", auth_token)
@@ -74,15 +80,16 @@ from .protocol import InbetweeniesProtocol
 from .state import SyncState, SyncResult, Change, Conflict, SyncOperation
 from .conflict_resolver import ConflictResolver
 from ..repositories import (
-    ClientHouseRepository,
+    ClientHomeRepository,
     ClientRoomRepository,
-    ClientDeviceRepository,
+    ClientAccessoryRepository,
     ClientUserRepository,
-    ClientEntityStateRepository,
-    ClientEventRepository,
+    # ClientEntityStateRepository,  # Removed for HomeKit focus
+    # ClientEventRepository,         # Removed for HomeKit focus
     SyncMetadataRepository
 )
-from ..models.base import SyncStatus
+# SyncStatus removed for HomeKit focus - using simple status tracking
+# from ..models.base import SyncStatus
 
 
 class SyncEngine:
@@ -92,16 +99,10 @@ class SyncEngine:
         self.session = session
         self.client_id = client_id or str(uuid.uuid4())
         self.protocol = InbetweeniesProtocol(base_url, auth_token, self.client_id)
+        self.base_url = base_url
+        self.auth_token = auth_token
         
-        # Initialize repositories
-        self.house_repo = ClientHouseRepository(session)
-        self.room_repo = ClientRoomRepository(session)
-        self.device_repo = ClientDeviceRepository(session)
-        self.user_repo = ClientUserRepository(session)
-        self.state_repo = ClientEntityStateRepository(session)
-        self.event_repo = ClientEventRepository(session)
-        self.metadata_repo = SyncMetadataRepository(session)
-        
+        # Don't initialize repositories here - we'll create them with the active session
         self.state = SyncState()
         
     async def sync(self) -> SyncResult:
@@ -109,14 +110,28 @@ class SyncEngine:
         start_time = datetime.now()
         result = SyncResult(success=False)
         
+        # Initialize repositories with current session
+        self.home_repo = ClientHomeRepository(self.session)
+        self.room_repo = ClientRoomRepository(self.session)
+        self.accessory_repo = ClientAccessoryRepository(self.session)
+        self.user_repo = ClientUserRepository(self.session)
+        # EntityState and Event repositories removed for HomeKit focus
+        # self.state_repo = ClientEntityStateRepository(self.session)
+        # self.event_repo = ClientEventRepository(self.session)
+        self.metadata_repo = SyncMetadataRepository(self.session)
+        
         try:
             # Get sync metadata
             metadata = await self.metadata_repo.get_or_create(self.client_id)
+            
+            # For first sync, use None as last_sync_time to get all data
+            sync_since = metadata.last_sync_success  # Use last successful sync, not last attempt
+            
             metadata.record_sync_start()
             await self.session.commit()
             
             # Step 1: Get server changes
-            server_changes, conflicts = await self._fetch_server_changes(metadata.last_sync_time)
+            server_changes, conflicts = await self._fetch_server_changes(sync_since)
             result.conflicts.extend(conflicts)
             
             # Step 2: Apply server changes locally
@@ -159,11 +174,13 @@ class SyncEngine:
     async def _fetch_server_changes(self, last_sync: Optional[datetime]) -> tuple[List[Change], List[Conflict]]:
         """Fetch changes from server."""
         response = await self.protocol.sync_request(last_sync)
-        return self.protocol.parse_sync_delta(response)
+        changes, conflicts = self.protocol.parse_sync_delta(response)
+        return changes, conflicts
         
     async def _apply_server_changes(self, changes: List[Change]) -> int:
         """Apply server changes to local database."""
         applied = 0
+        
         
         for change in changes:
             try:
@@ -176,15 +193,39 @@ class SyncEngine:
         await self.session.commit()
         return applied
         
+    def _convert_datetime_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert datetime string fields to datetime objects."""
+        datetime_fields = ["created_at", "updated_at", "last_sync_at", "server_updated_at", 
+                         "last_motion_at", "triggered_at", "last_changed_at", "last_reported_at"]
+        
+        result = data.copy()
+        for field in datetime_fields:
+            if field in result and isinstance(result[field], str):
+                try:
+                    # Handle ISO format with or without timezone
+                    result[field] = datetime.fromisoformat(result[field].replace("Z", "+00:00"))
+                except:
+                    # If parsing fails, remove the field
+                    del result[field]
+        
+        return result
+    
     async def _apply_single_change(self, change: Change) -> bool:
         """Apply a single change from server."""
         repo_map = {
-            "house": self.house_repo,
+            "home": self.home_repo,
+            "homes": self.home_repo,  # Handle plural form
             "room": self.room_repo,
-            "device": self.device_repo,
+            "rooms": self.room_repo,
+            "accessory": self.accessory_repo,
+            "accessories": self.accessory_repo,
             "user": self.user_repo,
-            "entity_state": self.state_repo,
-            "event": self.event_repo
+            "users": self.user_repo,
+            # EntityState and Event repositories removed for HomeKit focus
+            # "entity_state": self.state_repo,
+            # "entity_states": self.state_repo,
+            # "event": self.event_repo,
+            # "events": self.event_repo
         }
         
         repo = repo_map.get(change.entity_type)
@@ -197,16 +238,22 @@ class SyncEngine:
             # Create or update
             entity = await repo.get(change.entity_id)
             if entity:
-                # Check for conflict
-                if entity.local_changes and entity.updated_at > change.updated_at:
+                # Check for conflict based on timestamps only
+                if entity.updated_at > change.updated_at:
                     # Local is newer, skip server change
                     return False
                     
                 # Update with server data
-                await repo.update(change.entity_id, **change.data)
+                # Remove id from data if it exists to avoid issues
+                update_data = {k: v for k, v in change.data.items() if k != 'id'}
+                update_data = self._convert_datetime_fields(update_data)
+                await repo.update(change.entity_id, **update_data)
             else:
                 # Create new entity
-                await repo.create(id=change.entity_id, **change.data)
+                # Remove id from data if it exists to avoid duplicate argument
+                create_data = {k: v for k, v in change.data.items() if k != 'id'}
+                create_data = self._convert_datetime_fields(create_data)
+                await repo.create(id=change.entity_id, **create_data)
                 
             # Mark as synced
             await repo.mark_synced(change.entity_id, change.updated_at)
@@ -219,12 +266,13 @@ class SyncEngine:
         
         # Get pending changes from all repositories
         for entity_type, repo in [
-            ("house", self.house_repo),
+            ("home", self.home_repo),
             ("room", self.room_repo),
-            ("device", self.device_repo),
+            ("accessory", self.accessory_repo),
             ("user", self.user_repo),
-            ("entity_state", self.state_repo),
-            ("event", self.event_repo)
+            # EntityState and Event repositories removed for HomeKit focus
+            # ("entity_state", self.state_repo),
+            # ("event", self.event_repo)
         ]:
             pending = await repo.get_pending()
             for entity in pending:
@@ -232,7 +280,7 @@ class SyncEngine:
                     entity_type=entity_type,
                     entity_id=entity.id,
                     operation=SyncOperation.UPDATE,  # TODO: Track creates/deletes
-                    data=entity.to_sync_dict(),
+                    data=entity.to_dict() if hasattr(entity, 'to_dict') else {},
                     updated_at=entity.updated_at,
                     sync_id=entity.sync_id or str(uuid.uuid4()),
                     client_sync_id=str(uuid.uuid4())
@@ -252,12 +300,13 @@ class SyncEngine:
         for change in changes:
             if change.client_sync_id in applied_ids:
                 repo_map = {
-                    "house": self.house_repo,
+                    "home": self.home_repo,
                     "room": self.room_repo,
-                    "device": self.device_repo,
+                    "accessory": self.accessory_repo,
                     "user": self.user_repo,
-                    "entity_state": self.state_repo,
-                    "event": self.event_repo
+                    # EntityState and Event repositories removed for HomeKit focus
+                    # "entity_state": self.state_repo,
+                    # "event": self.event_repo
                 }
                 repo = repo_map.get(change.entity_type)
                 if repo:

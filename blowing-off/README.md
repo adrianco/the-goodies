@@ -4,12 +4,12 @@ Blowing-Off is a Python test client for The Goodies smart home system. It implem
 
 ## Features
 
-- **Local SQLite Storage**: Mirror of server-side schema with sync metadata
+- **Local SQLite Storage**: Uses shared Inbetweenies models
 - **Inbetweenies Protocol**: Full bidirectional sync implementation
 - **Offline Support**: Queue changes and sync when reconnected
 - **Conflict Resolution**: Last-write-wins with timestamp comparison
 - **CLI Interface**: Command-line tools for testing and management
-- **Observable Pattern**: Register callbacks for state changes
+- **HomeKit Compatible**: Works with simplified HomeKit-style models
 
 ## Installation
 
@@ -44,13 +44,13 @@ blowing-off sync-daemon --interval 30
 ### 3. View Data
 
 ```bash
-# Show house info
-blowing-off house show
+# Show home info
+blowing-off home show
 
 # List rooms
 blowing-off room list
 
-# List devices
+# List devices (accessories)
 blowing-off device list
 
 # Show device state
@@ -60,20 +60,17 @@ blowing-off device state device-123
 ### 4. Create Entities
 
 ```bash
-# Create house
-blowing-off house create \
+# Create home
+blowing-off home create \
   --name "My Home" \
-  --address "123 Main St" \
-  --timezone "America/New_York"
+  --primary
 
 # Create room
 blowing-off room create \
-  --house-id house-1 \
-  --name "Living Room" \
-  --floor 0 \
-  --type living_room
+  --home-id home-1 \
+  --name "Living Room"
 
-# Create device  
+# Create device (accessory)
 blowing-off device create \
   --room-id room-123 \
   --name "Ceiling Light" \
@@ -91,7 +88,7 @@ blowing-off device set-state device-123 '{"power": "on", "brightness": 80}'
 ## Python API
 
 ```python
-from blowing_off import BlowingOffClient
+from blowingoff.client import BlowingOffClient
 
 # Initialize client
 client = BlowingOffClient("my-home.db")
@@ -102,7 +99,7 @@ result = await client.sync()
 print(f"Synced {result.synced_entities} entities")
 
 # Get data
-house = await client.get_house()
+home = await client.get_home()
 rooms = await client.get_rooms()
 devices = await client.get_devices()
 
@@ -112,12 +109,6 @@ await client.update_device_state(
     {"power": "on", "brightness": 80}
 )
 
-# Register observer
-async def on_change(event_type, data):
-    print(f"Change: {event_type} - {data}")
-    
-await client.observe_changes(on_change)
-
 # Start background sync
 await client.start_background_sync(interval=30)
 ```
@@ -126,10 +117,10 @@ await client.start_background_sync(interval=30)
 
 ### Local Database Schema
 
-The client maintains a local SQLite database with:
-- All entity tables (houses, rooms, devices, users, states, events)
-- Sync metadata tracking (timestamps, status, conflicts)
-- Local change tracking for offline support
+The client uses the shared Inbetweenies models:
+- Home, Room, Accessory, Service, Characteristic, User models
+- HomeKit-compatible structure
+- Sync metadata fields (sync_id, updated_at)
 
 ### Sync Process
 

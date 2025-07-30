@@ -1,15 +1,14 @@
 """
-Room repository with device management.
+Room repository with accessory management.
 """
 
 from typing import List, Optional
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models.device import Device
-from ..models.room import Room
+from inbetweenies.models import Room
 from .base import BaseRepository
 
 
@@ -19,56 +18,39 @@ class RoomRepository(BaseRepository[Room]):
     def __init__(self):
         super().__init__(Room)
     
-    async def get_by_house(self, db: AsyncSession, house_id: str) -> List[Room]:
-        """Get all rooms in a house."""
+    async def get_by_home(self, db: AsyncSession, home_id: str) -> List[Room]:
+        """Get all rooms in a home."""
         stmt = select(Room).where(
             and_(
-                Room.house_id == house_id,
-                Room.is_deleted == False
+                Room.home_id == home_id,
+                True  # Models don't have is_deleted
             )
-        ).order_by(Room.floor, Room.name)
+        ).order_by(Room.name)
         
         result = await db.execute(stmt)
         return list(result.scalars().all())
     
-    async def get_with_devices(self, db: AsyncSession, id: str) -> Optional[Room]:
-        """Get room with all devices loaded."""
+    async def get_with_accessories(self, db: AsyncSession, id: str) -> Optional[Room]:
+        """Get room with all accessories loaded."""
         stmt = select(Room).where(
             and_(
                 Room.id == id,
-                Room.is_deleted == False
+                True  # Models don't have is_deleted
             )
-        ).options(selectinload(Room.devices))
+        ).options(selectinload(Room.accessories))
         
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
     
-    async def update_device_count(self, db: AsyncSession, room_id: str) -> None:
-        """Update device count for a room."""
-        room = await self.get_by_id(db, room_id)
-        if not room:
-            return
-        
-        # Count devices
-        count_stmt = select(func.count()).select_from(Device).where(
-            and_(
-                Device.room_id == room_id,
-                Device.is_deleted == False
-            )
-        )
-        result = await db.execute(count_stmt)
-        room.device_count = result.scalar() or 0
-        
-        await db.commit()
-    
-    async def create_with_house_name(
+    async def create_with_home_name(
         self, 
         db: AsyncSession, 
-        house_id: str,
-        house_name: str,
+        home_id: str,
+        home_name: str,
         **kwargs
     ) -> Room:
-        """Create room with denormalized house name."""
-        kwargs["house_id"] = house_id
-        kwargs["house_name"] = house_name
+        """Create room with denormalized home name."""
+        kwargs["home_id"] = home_id
+        # Note: home_name is not stored in the simplified Room model
+        kwargs.pop("home_name", None)  # Remove if passed
         return await self.create(db, **kwargs)

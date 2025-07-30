@@ -2,7 +2,7 @@
 Unit tests for last-write-wins conflict resolution
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 
@@ -14,7 +14,7 @@ class TestLastWriteWinsResolution:
     def test_simple_conflict_resolution(self):
         """Test basic conflict resolution with two updates"""
         # Create two conflicting updates
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         
         update1 = {
             'id': 'entity-1',
@@ -41,7 +41,7 @@ class TestLastWriteWinsResolution:
     @pytest.mark.conflict
     def test_multiple_concurrent_updates(self):
         """Test resolution with multiple concurrent updates"""
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         
         # Simulate 10 concurrent updates with microsecond differences
         updates = []
@@ -63,7 +63,7 @@ class TestLastWriteWinsResolution:
     @pytest.mark.conflict
     def test_clock_skew_handling(self):
         """Test handling of clock skew between devices"""
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         
         # Device 1 has accurate time
         device1_update = {
@@ -100,7 +100,7 @@ class TestLastWriteWinsResolution:
     @pytest.mark.conflict
     def test_identical_timestamps(self):
         """Test resolution when timestamps are identical"""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
         update1 = {
             'id': 'entity-1',
@@ -129,7 +129,7 @@ class TestLastWriteWinsResolution:
     @pytest.mark.conflict
     def test_partial_updates_merge(self):
         """Test merging partial updates with last-write-wins per field"""
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         
         # Initial state
         entity = {
@@ -181,7 +181,7 @@ class TestLastWriteWinsResolution:
     ])
     def test_high_volume_conflicts(self, num_updates, time_spread):
         """Test conflict resolution with high volume of updates"""
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         
         updates = []
         for i in range(num_updates):
@@ -204,7 +204,7 @@ class TestLastWriteWinsResolution:
     @pytest.mark.conflict
     def test_conflict_detection_window(self):
         """Test conflict detection within time windows"""
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         conflict_window = timedelta(seconds=5)  # 5 second conflict window
         
         updates = [
@@ -259,7 +259,7 @@ class TestLastWriteWinsResolution:
     @pytest.mark.conflict
     def test_resolution_with_metadata(self):
         """Test conflict resolution preserving metadata"""
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         
         update1 = {
             'id': 'entity-1',

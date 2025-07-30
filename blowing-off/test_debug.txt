@@ -1,0 +1,108 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.1, pytest-8.4.1, pluggy-1.6.0
+rootdir: /workspaces/the-goodies/blowing-off
+plugins: anyio-4.9.0, asyncio-1.1.0, cov-6.2.1
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests/integration/test_simple_integration.py DEBUG: Test database path: /tmp/tmp6_80zlh1.db
+DEBUG: Setting DATABASE_URL=sqlite+aiosqlite:////tmp/tmp6_80zlh1.db
+
+✅ FunkyGibbon server started successfully
+✅ Test database populated
+DEBUG: Fetched 17 changes and 0 conflicts from server
+DEBUG: Applying 17 server changes
+Error applying change house-1753816935.802083: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change living-room-1753816935.803094: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change kitchen-1753816935.803968: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change master-bedroom-1753816935.804483: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change home-office-1753816935.804904: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change device-65"-smart-tv-1753816935.805309: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change device-smart-thermostat-1753816935.80597: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change device-smart-refrigerator-1753816935.806411: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change device-under-cabinet-lights-1753816935.806811: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change device-bedside-lamps-1753816935.807238: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change device-desk-lamp-1753816935.807634: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change user-carlos-1753816935.808058: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change user-maria-1753816935.808656: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change user-sofia-1753816935.809124: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change 1: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change 2: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+Error applying change 3: blowingoff.repositories.base.ClientBaseRepository.create() got multiple values for keyword argument 'id'
+DEBUG: Applied 0 changes successfully
+Sync result: success=True, synced_entities=0, errors=[]
+House data: None
+F
+📋 Server stdout:
+DEBUG: Starting server with DATABASE_URL=sqlite+aiosqlite:////tmp/tmp6_80zlh1.db
+Database initialized
+INFO:     127.0.0.1:39170 - "GET /health HTTP/1.1" 200 OK
+DEBUG: Sync request from test-simple-client, last_sync=None, entity_types=['houses', 'rooms', 'devices', 'users', 'entity_states']
+DEBUG: Entity type houses: found 1 entities
+DEBUG: Entity type rooms: found 4 entities
+DEBUG: Entity type devices: found 6 entities
+DEBUG: Entity type users: found 3 entities
+DEBUG: Entity type entity_states: found 3 entities
+DEBUG: Returning 17 changes
+INFO:     127.0.0.1:39180 - "POST /api/v1/sync/request HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39192 - "POST /api/v1/sync/ack HTTP/1.1" 200 OK
+
+
+📋 Server stderr:
+INFO:     Started server process [224797]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [224797]
+
+
+✅ FunkyGibbon server stopped
+
+
+=================================== FAILURES ===================================
+__________________ TestSimpleIntegration.test_basic_sync_flow __________________
+
+self = <tests.integration.test_simple_integration.TestSimpleIntegration object at 0x7525470462d0>
+server_url = 'http://localhost:8000', auth_token = 'test-token-12345'
+
+    @pytest.mark.asyncio
+    async def test_basic_sync_flow(self, server_url, auth_token):
+        """Test basic sync flow without complex scenarios."""
+        # Create a temporary database
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+    
+        try:
+            # Create client and connect
+            client = BlowingOffClient(db_path)
+            await client.connect(server_url, auth_token, "test-simple-client")
+    
+            # Perform initial sync
+            result = await client.sync()
+    
+            # Basic assertions
+            assert result is not None
+            print(f"Sync result: success={result.success}, synced_entities={result.synced_entities}, errors={result.errors}")
+    
+            if result.success:
+                # If sync succeeded, we should have some data
+                house = await client.get_house()
+                print(f"House data: {house}")
+>               assert house is not None
+E               assert None is not None
+
+tests/integration/test_simple_integration.py:50: AssertionError
+=============================== warnings summary ===============================
+tests/integration/test_simple_integration.py:14
+  /workspaces/the-goodies/blowing-off/tests/integration/test_simple_integration.py:14: PytestUnknownMarkWarning: Unknown pytest.mark.integration - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.integration
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_simple_integration.py::TestSimpleIntegration::test_basic_sync_flow
+========================= 1 failed, 1 warning in 2.29s =========================
+The garbage collector is trying to clean up non-checked-in connection <AdaptedConnection <Connection(Thread-1, stopped daemon 128802847979200)>>, which will be dropped, as it cannot be safely terminated.  Please ensure that SQLAlchemy pooled connections are returned to the pool explicitly, either by calling ``close()`` or by using appropriate context managers to manage their lifecycle.
+sys:1: SAWarning: The garbage collector is trying to clean up non-checked-in connection <AdaptedConnection <Connection(Thread-1, stopped daemon 128802847979200)>>, which will be dropped, as it cannot be safely terminated.  Please ensure that SQLAlchemy pooled connections are returned to the pool explicitly, either by calling ``close()`` or by using appropriate context managers to manage their lifecycle.

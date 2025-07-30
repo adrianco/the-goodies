@@ -5,20 +5,18 @@ SQLite repositories with last-write-wins conflict resolution.
 """
 
 from .base import BaseRepository, ConflictResolver
-from .house import HouseRepository
+from .home import HomeRepository
 from .room import RoomRepository
-from .device import DeviceRepository
+from .accessory import AccessoryRepository
 from .user import UserRepository
-from .entity_state import EntityStateRepository
-from .event import EventRepository
+# EntityState and Event models removed - focusing on HomeKit sync only
 
 __all__ = [
     "BaseRepository",
     "ConflictResolver",
-    "HouseRepository",
+    "HomeRepository",
     "RoomRepository",
-    "DeviceRepository",
+    "AccessoryRepository",
     "UserRepository",
-    "EntityStateRepository",
-    "EventRepository",
+    # EntityState and Event repositories removed for HomeKit focus
 ]

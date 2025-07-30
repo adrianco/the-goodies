@@ -89,63 +89,31 @@ FunkyGibbon/
 
 ## Core Components
 
-### 1. Models Layer (SQLAlchemy + Pydantic)
+### 1. Models Layer (Using Inbetweenies Shared Models)
 
 ```python
-# models/entity.py
-from sqlalchemy import Column, String, JSON, DateTime, Enum
-from sqlalchemy.ext.declarative import declarative_base
-from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional, List
-from datetime import datetime
-from enum import Enum as PyEnum
+# Note: Models are now in the shared inbetweenies package
+# with HomeKit-compatible naming (Home, Accessory, Service, etc.)
 
-Base = declarative_base()
+from inbetweenies.models import (
+    Home,           # Previously House
+    Room,
+    Accessory,      # Previously Device
+    Service,
+    Characteristic,
+    User,
+    InbetweeniesTimestampMixin
+)
 
-class EntityType(str, PyEnum):
-    HOME = "home"
-    ROOM = "room"
-    DEVICE = "device"
-    ACCESSORY = "accessory"
-    SERVICE = "service"
-    ZONE = "zone"
-    DOOR = "door"
-    WINDOW = "window"
-    PROCEDURE = "procedure"
-    MANUAL = "manual"
-    NOTE = "note"
-    SCHEDULE = "schedule"
-    AUTOMATION = "automation"
+# Example of using the shared models:
+# funkygibbon/repositories/home.py
+from inbetweenies.models import Home
+from .base import BaseRepository
 
-class HomeEntity(Base):
-    __tablename__ = "entities"
-    
-    id = Column(String, primary_key=True)
-    version = Column(String, primary_key=True)
-    entity_type = Column(Enum(EntityType), nullable=False)
-    parent_versions = Column(JSON, default=list)
-    content = Column(JSON, nullable=False)
-    user_id = Column(String, nullable=False)
-    source_type = Column(String, default="manual")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_modified = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    deleted_at = Column(DateTime, nullable=True)
-
-# Pydantic schema
-class HomeEntitySchema(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    version: str = Field(default_factory=generate_version)
-    entity_type: EntityType
-    parent_versions: List[str] = Field(default_factory=list)
-    content: Dict[str, Any]
-    user_id: str
-    source_type: str = "manual"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_modified: datetime = Field(default_factory=datetime.utcnow)
-    deleted_at: Optional[datetime] = None
-    
-    class Config:
-        from_attributes = True
+class HomeRepository(BaseRepository):
+    """Repository for Home entities (HomeKit-compatible)"""
+    def __init__(self, session):
+        super().__init__(session, Home)
 ```
 
 ### 2. Repository Layer (Data Access)

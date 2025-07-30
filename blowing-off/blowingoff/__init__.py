@@ -2,7 +2,7 @@
 Blowing-Off Client - Package Root Module
 
 DEVELOPMENT CONTEXT:
-Created as the package entry point in January 2024. This module exports the
+Created as the package entry point in July 2025. This module exports the
 public API of the Blowing-Off client, providing clean access to the main
 components needed by applications. It follows Python best practices for
 package organization and serves as the reference API that the Swift/WildThing
@@ -29,9 +29,9 @@ KNOWN ISSUES:
 - Missing API stability markers
 
 REVISION HISTORY:
-- 2024-01-15: Initial package structure
-- 2024-01-18: Added sync state exports
-- 2024-01-20: Refined public API surface
+- 2025-07-28: Initial package structure
+- 2025-07-28: Added sync state exports
+- 2025-07-28: Refined public API surface
 
 DEPENDENCIES:
 - Internal modules only
@@ -50,6 +50,7 @@ __version__ = "0.1.0"
 
 from .client import BlowingOffClient
 from .sync.state import SyncState, SyncResult
-from .models.base import SyncStatus
+# SyncStatus removed for HomeKit focus
+# from .models.base import SyncStatus
 
-__all__ = ["BlowingOffClient", "SyncState", "SyncResult", "SyncStatus"]
+__all__ = ["BlowingOffClient", "SyncState", "SyncResult"]  # SyncStatus removed

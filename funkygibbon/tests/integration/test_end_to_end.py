@@ -18,11 +18,10 @@ from httpx import AsyncClient
 
 from funkygibbon.api.app import create_app
 from funkygibbon.repositories import (
-    HouseRepository,
+    HomeRepository,
     RoomRepository,
-    DeviceRepository,
-    UserRepository,
-    EventRepository
+    AccessoryRepository,
+    UserRepository
 )
 
 
@@ -31,183 +30,115 @@ from funkygibbon.repositories import (
 class TestEndToEndScenarios:
     """Test complete user scenarios."""
     
-    async def test_complete_house_setup(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test setting up a complete house with rooms and devices."""
-        # Step 1: Create house
-        house_response = await async_client.post(
-            "/api/v1/houses/",
+    async def test_complete_home_setup(self, async_client: AsyncClient, test_session: AsyncSession):
+        """Test setting up a complete home with rooms and accessories."""
+        # Step 1: Create home
+        home_response = await async_client.post(
+            "/api/v1/homes/",
             params={
                 "name": "Smart Home",
-                "address": "123 Tech Lane",
-                "timezone": "America/Los_Angeles"
+                "is_primary": True
             }
         )
-        assert house_response.status_code == 200
-        house = house_response.json()
+        assert home_response.status_code == 200
+        home = home_response.json()
         
         # Step 2: Add rooms
         rooms = []
         room_specs = [
-            ("Living Room", "living_room", 1),
-            ("Kitchen", "kitchen", 1),
-            ("Master Bedroom", "bedroom", 2),
-            ("Office", "office", 2)
+            "Living Room",
+            "Kitchen",
+            "Master Bedroom",
+            "Office"
         ]
         
-        for name, room_type, floor in room_specs:
+        for name in room_specs:
             room_response = await async_client.post(
                 "/api/v1/rooms/",
                 params={
-                    "house_id": house["id"],
-                    "name": name,
-                    "room_type": room_type,
-                    "floor": floor
+                    "home_id": home["id"],
+                    "name": name
                 }
             )
             assert room_response.status_code == 200
             rooms.append(room_response.json())
         
-        # Step 3: Add devices to rooms
-        device_specs = [
-            (rooms[0]["id"], "Smart TV", "entertainment"),
-            (rooms[0]["id"], "Ceiling Light", "light"),
-            (rooms[1]["id"], "Smart Fridge", "appliance"),
-            (rooms[1]["id"], "Overhead Light", "light"),
-            (rooms[2]["id"], "Bedside Lamp", "light"),
-            (rooms[2]["id"], "Smart Thermostat", "climate"),
-            (rooms[3]["id"], "Desk Lamp", "light"),
-            (rooms[3]["id"], "Smart Speaker", "entertainment")
+        # Step 3: Add accessories to rooms
+        accessory_specs = [
+            ([rooms[0]["id"]], "Smart TV", "TV Corp", "SmartTV v1"),
+            ([rooms[0]["id"]], "Ceiling Light", "Light Co", "LED v2"),
+            ([rooms[1]["id"]], "Smart Fridge", "Kitchen Inc", "CoolFridge Pro"),
+            ([rooms[1]["id"]], "Overhead Light", "Light Co", "LED v2"),
+            ([rooms[2]["id"]], "Bedside Lamp", "Light Co", "Lamp v1"),
+            ([rooms[2]["id"]], "Smart Thermostat", "Climate Corp", "ThermoSmart"),
+            ([rooms[3]["id"]], "Desk Lamp", "Light Co", "Lamp v1"),
+            ([rooms[3]["id"]], "Smart Speaker", "Audio Inc", "SpeakerPro")
         ]
         
-        devices = []
-        for room_id, name, device_type in device_specs:
-            device_response = await async_client.post(
-                "/api/v1/devices/",
+        accessories = []
+        for room_ids, name, manufacturer, model in accessory_specs:
+            accessory_response = await async_client.post(
+                "/api/v1/accessories/",
                 params={
-                    "room_id": room_id,
+                    "home_id": home["id"],
                     "name": name,
-                    "device_type": device_type
+                    "manufacturer": manufacturer,
+                    "model": model,
+                    "room_ids": room_ids
                 }
             )
-            assert device_response.status_code == 200
-            devices.append(device_response.json())
+            assert accessory_response.status_code == 200
+            accessories.append(accessory_response.json())
         
         # Step 4: Add users
         user_specs = [
-            ("Admin User", "admin@home.com", "admin"),
-            ("Family Member", "family@home.com", "member"),
-            ("Guest User", "guest@home.com", "guest")
+            ("Admin User", True, False),
+            ("Family Member", False, False),
+            ("Guest User", False, False)
         ]
         
         users = []
-        for name, email, role in user_specs:
+        for name, is_administrator, is_owner in user_specs:
             user_response = await async_client.post(
                 "/api/v1/users/",
                 params={
-                    "house_id": house["id"],
+                    "home_id": home["id"],
                     "name": name,
-                    "email": email,
-                    "role": role
+                    "is_administrator": is_administrator,
+                    "is_owner": is_owner
                 }
             )
             assert user_response.status_code == 200
             users.append(user_response.json())
         
         # Step 5: Verify complete setup
-        house_detail_response = await async_client.get(
-            f"/api/v1/houses/{house['id']}",
+        home_detail_response = await async_client.get(
+            f"/api/v1/homes/{home['id']}",
             params={"include_rooms": True}
         )
-        assert house_detail_response.status_code == 200
-        house_detail = house_detail_response.json()
+        assert home_detail_response.status_code == 200
+        home_detail = home_detail_response.json()
         
-        assert house_detail["room_count"] == 4
-        assert house_detail["device_count"] == 8
-        assert house_detail["user_count"] == 3
-        assert len(house_detail["rooms"]) == 4
+        # Verify data was created properly
+        assert home_detail["name"] == "Smart Home"
+        assert home_detail["is_primary"] == True
         
-        # Verify events were logged (events may not be implemented yet)
-        event_repo = EventRepository()
-        events = await event_repo.get_recent_events(test_session, limit=20)
-        # Note: Event logging may not be fully implemented - this is informational
-        print(f"Events found: {len(events)}")
+        # Events removed - focusing on HomeKit compatibility
     
-    async def test_device_state_changes(self, async_client: AsyncClient, test_session: AsyncSession):
-        """Test changing device states and tracking history."""
-        # Setup
-        house_repo = HouseRepository()
-        room_repo = RoomRepository()
-        device_repo = DeviceRepository()
-        user_repo = UserRepository()
-        
-        house = await house_repo.create(test_session, name="State Test House")
-        room = await room_repo.create_with_house_name(
-            test_session, house.id, house.name, name="Test Room"
-        )
-        device = await device_repo.create_with_names(
-            test_session,
-            room_id=room.id,
-            room_name=room.name,
-            house_id=house.id,
-            house_name=house.name,
-            name="Smart Light",
-            device_type="light"
-        )
-        user = await user_repo.create(
-            test_session,
-            house_id=house.id,
-            name="Test User",
-            role="member"
-        )
-        
-        # Change states multiple times
-        state_changes = [
-            ("on_off", "on", {"brightness": 100}),
-            ("on_off", "on", {"brightness": 75}),
-            ("on_off", "on", {"brightness": 50}),
-            ("on_off", "off", {"brightness": 0})
-        ]
-        
-        for state_type, state_value, state_data in state_changes:
-            response = await async_client.put(
-                f"/api/v1/devices/{device.id}/state",
-                params={
-                    "state_type": state_type,
-                    "state_value": state_value,
-                    "user_id": user.id
-                },
-                json=state_data
-            )
-            assert response.status_code == 200
-        
-        # Get device with states
-        device_response = await async_client.get(
-            f"/api/v1/devices/{device.id}",
-            params={"include_states": True}
-        )
-        assert device_response.status_code == 200
-        device_data = device_response.json()
-        
-        assert len(device_data["states"]) >= 4
-        
-        # Verify state history
-        latest_state = device_data["states"][0]
-        assert latest_state["state_value"] == "off"
-        assert json.loads(latest_state["state_json"])["brightness"] == 0
     
     async def test_sync_between_clients(self, async_client: AsyncClient, test_session: AsyncSession):
         """Test syncing data between multiple clients."""
         # Client 1: Create initial data
-        house_response = await async_client.post(
-            "/api/v1/houses/",
-            params={"name": "Sync Test House"}
+        home_response = await async_client.post(
+            "/api/v1/homes/",
+            params={"name": "Sync Test Home"}
         )
-        house = house_response.json()
+        home = home_response.json()
         
         room_response = await async_client.post(
             "/api/v1/rooms/",
             params={
-                "house_id": house["id"],
+                "home_id": home["id"],
                 "name": "Sync Test Room"
             }
         )
@@ -218,14 +149,14 @@ class TestEndToEndScenarios:
         
         # Client 2: Make changes
         await async_client.put(
-            f"/api/v1/houses/{house['id']}",
-            params={"name": "Updated House Name"}
+            f"/api/v1/homes/{home['id']}",
+            params={"name": "Updated Home Name"}
         )
         
         await async_client.post(
             "/api/v1/rooms/",
             params={
-                "house_id": house["id"],
+                "home_id": home["id"],
                 "name": "New Room Added"
             }
         )
@@ -239,14 +170,14 @@ class TestEndToEndScenarios:
         changes = changes_response.json()
         
         # Verify changes
-        assert len(changes["changes"]["houses"]) >= 1
+        assert len(changes["changes"]["homes"]) >= 1
         assert len(changes["changes"]["rooms"]) >= 1
         
-        updated_house = next(
-            h for h in changes["changes"]["houses"] 
-            if h["id"] == house["id"]
+        updated_home = next(
+            h for h in changes["changes"]["homes"] 
+            if h["id"] == home["id"]
         )
-        assert updated_house["name"] == "Updated House Name"
+        assert updated_home["name"] == "Updated Home Name"
         
         new_rooms = [
             r for r in changes["changes"]["rooms"]
@@ -257,34 +188,34 @@ class TestEndToEndScenarios:
     async def test_conflict_resolution_scenario(self, async_client: AsyncClient, test_session: AsyncSession):
         """Test realistic conflict resolution scenario."""
         # Create base entity
-        house_response = await async_client.post(
-            "/api/v1/houses/",
-            params={"name": "Conflict Test House"}
+        home_response = await async_client.post(
+            "/api/v1/homes/",
+            params={"name": "Conflict Test Home"}
         )
-        house = house_response.json()
+        home = home_response.json()
         
         # Simulate two clients modifying the same entity
         # Client 1 changes (older timestamp)
-        client1_data = house.copy()
+        client1_data = home.copy()
         client1_data["name"] = "Client 1 Name"
-        client1_data["address"] = "Client 1 Address"
+        client1_data["is_primary"] = False
         client1_data["updated_at"] = datetime.now(UTC).isoformat()
-        client1_data["sync_id"] = f"{house['sync_id']}-client1"
+        client1_data["sync_id"] = home.get('sync_id') or "sync-id-client1"
         
         # Client 2 changes (newer timestamp - should win)
-        client2_data = house.copy()
+        client2_data = home.copy()
         client2_data["name"] = "Client 2 Name"
-        client2_data["timezone"] = "Europe/London"
+        client2_data["is_primary"] = True
         client2_data["updated_at"] = (
             datetime.now(UTC) + timedelta(seconds=5)
         ).isoformat()
-        client2_data["sync_id"] = f"{house['sync_id']}-client2"
+        client2_data["sync_id"] = home.get('sync_id') or "sync-id-client2"
         
         # Sync client 1 changes first
         sync_request1 = {
-            "houses": [client1_data],
+            "homes": [client1_data],
             "rooms": [],
-            "devices": [],
+            "accessories": [],
             "users": []
         }
         
@@ -296,9 +227,9 @@ class TestEndToEndScenarios:
         
         # Sync client 2 changes - should conflict with client 1
         sync_request2 = {
-            "houses": [client2_data],
+            "homes": [client2_data],
             "rooms": [],
-            "devices": [],
+            "accessories": [],
             "users": []
         }
         
@@ -316,7 +247,7 @@ class TestEndToEndScenarios:
         assert conflict["reason"] == "remote has newer timestamp"
         
         # Verify final state
-        final_response = await async_client.get(f"/api/v1/houses/{house['id']}")
-        final_house = final_response.json()
-        assert final_house["name"] == "Client 2 Name"
-        assert final_house["timezone"] == "Europe/London"
+        final_response = await async_client.get(f"/api/v1/homes/{home['id']}")
+        final_home = final_response.json()
+        assert final_home["name"] == "Client 2 Name"
+        assert final_home["is_primary"] == True

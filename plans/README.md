@@ -4,9 +4,11 @@ This directory contains planning and development documentation for The Goodies s
 
 ## Recent Updates
 
-- **2025-07-29**: Fixed human testing issues
+- **2025-07-29**: Major HomeKit model migration and fixes
+  - `homekit-migration-2025-07-29.md` - Complete migration to HomeKit-compatible models
   - `human-testing-fixes.md` - Detailed fixes based on user feedback
   - `fixes-summary-2025-07-29.md` - Summary of all implemented fixes
+  - `HUMAN_TESTING.md` - Comprehensive step-by-step testing guide for both FunkyGibbon and Blowing-Off
 
 ## Current Plans
 
@@ -47,8 +49,9 @@ The [archive](archive/) directory contains obsolete planning documents from when
 
 ## Current Status
 
-- ✅ **FunkyGibbon (Python)**: Functional with API, models, repositories, and tests
-- 🚧 **Blowing-Off (Python Client)**: In development - test client implementation
-- 🚧 **Inbetweenies Protocol**: Specified - synchronization protocol
+- ✅ **FunkyGibbon (Python)**: Complete - API server with HomeKit-compatible models
+- ✅ **Inbetweenies (Shared Models)**: Complete - HomeKit models shared between server and client
+- ✅ **Blowing-Off (Python Client)**: Complete - Test client with full sync implementation
+- ✅ **Inbetweenies Protocol**: Implemented - Bidirectional synchronization working
 - 📋 **WildThing (Swift)**: Planned, interface designed
 - 📋 **iOS Integration**: Ready to begin once WildThing is implemented

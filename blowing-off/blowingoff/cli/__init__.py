@@ -2,7 +2,7 @@
 Blowing-Off Client - CLI Package
 
 DEVELOPMENT CONTEXT:
-Created as the command-line interface package in January 2024. This package
+Created as the command-line interface package in July 2025. This package
 provides an interactive way to test and use the Blowing-Off client. It serves
 as both a development tool and a reference implementation for how the client
 API should be used in applications.
@@ -27,9 +27,9 @@ KNOWN ISSUES:
 - Missing batch operation commands
 
 REVISION HISTORY:
-- 2024-01-15: Initial CLI structure
-- 2024-01-18: Added main command groups
-- 2024-01-20: Exported cli entry point
+- 2025-07-28: Initial CLI structure
+- 2025-07-28: Added main command groups
+- 2025-07-28: Exported cli entry point
 
 DEPENDENCIES:
 - click for CLI framework

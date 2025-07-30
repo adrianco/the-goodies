@@ -11,7 +11,7 @@ FUNCTIONALITY:
 - Proper cleanup and isolation between tests
 
 REVISION HISTORY:
-- 2024-01-15: Created async version of test fixtures
+- 2025-07-28: Created async version of test fixtures
 
 DEPENDENCIES:
 - pytest-asyncio: Async test support
@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from datetime import datetime, UTC
 
 from funkygibbon.database import Base
-from funkygibbon.models import House, Room, Device, User
+from funkygibbon.models import Home, Room, Accessory, Service, Characteristic, User
 
 # Use SQLite in-memory database for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -68,68 +68,80 @@ async def async_session(async_engine):
 
 
 @pytest_asyncio.fixture
-async def test_house(async_session):
-    """Create a test house."""
-    from funkygibbon.repositories import HouseRepository
+async def test_home(async_session):
+    """Create a test home."""
+    import uuid
     
-    repo = HouseRepository()
-    house = await repo.create(
-        async_session,
-        name="Test House",
-        address="123 Test St",
-        timezone="UTC"
+    home = Home(
+        id=str(uuid.uuid4()),
+        name="Test Home",
+        is_primary=True
     )
+    async_session.add(home)
     await async_session.commit()
-    return house
+    return home
 
 
 @pytest_asyncio.fixture
-async def test_room(async_session, test_house):
+async def test_room(async_session, test_home):
     """Create a test room."""
-    from funkygibbon.repositories import RoomRepository
+    import uuid
     
-    repo = RoomRepository()
-    room = await repo.create(
-        async_session,
-        house_id=test_house.id,
-        name="Living Room",
-        floor=1,
-        room_type="living_room"
+    room = Room(
+        id=str(uuid.uuid4()),
+        home_id=test_home.id,
+        name="Living Room"
     )
+    async_session.add(room)
     await async_session.commit()
     return room
 
 
 @pytest_asyncio.fixture
-async def test_device(async_session, test_room):
-    """Create a test device."""
-    from funkygibbon.repositories import DeviceRepository
+async def test_accessory(async_session, test_home, test_room):
+    """Create a test accessory."""
+    import uuid
     
-    repo = DeviceRepository()
-    device = await repo.create(
-        async_session,
-        room_id=test_room.id,
+    accessory = Accessory(
+        id=str(uuid.uuid4()),
+        home_id=test_home.id,
         name="Test Light",
-        device_type="light",
         manufacturer="Test Corp",
-        model="TL-100"
+        model="TL-100",
+        serial_number="SN-12345",
+        firmware_version="1.0.0",
+        is_reachable=True,
+        is_blocked=False,
+        is_bridge=False
     )
+    async_session.add(accessory)
+    
+    # Link to room
+    from funkygibbon.models import accessory_rooms
+    await async_session.execute(
+        accessory_rooms.insert().values(
+            accessory_id=accessory.id,
+            room_id=test_room.id
+        )
+    )
+    
     await async_session.commit()
-    return device
+    return accessory
 
 
 @pytest_asyncio.fixture
-async def test_user(async_session, test_house):
+async def test_user(async_session, test_home):
     """Create a test user."""
-    from funkygibbon.repositories import UserRepository
+    import uuid
     
-    repo = UserRepository()
-    user = await repo.create(
-        async_session,
-        house_id=test_house.id,
+    user = User(
+        id=str(uuid.uuid4()),
+        home_id=test_home.id,
         name="Test User",
-        email="test@example.com",
-        role="admin"
+        is_administrator=True,
+        is_owner=True,
+        remote_access_allowed=True
     )
+    async_session.add(user)
     await async_session.commit()
     return user

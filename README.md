@@ -32,10 +32,26 @@ A simplified smart home system designed for single-house deployments with SQLite
 #### 1. Start the Backend Server
 
 ```bash
-# Install and run the Python backend
+# Navigate to project root
+cd /workspaces/the-goodies
+
+# Create and activate a virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 cd funkygibbon
 pip install -r requirements.txt
-python -m funkygibbon.main
+cd ..
+
+# Add inbetweenies to Python path
+export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
+
+# Populate the database with test data
+python funkygibbon/populate_db.py
+
+# Start the server (from project root)
+python -m funkygibbon
 
 # API will be available at http://localhost:8000
 # API docs at http://localhost:8000/docs
@@ -44,20 +60,26 @@ python -m funkygibbon.main
 #### 2. Install and Use the Client
 
 ```bash
+# Make sure virtual environment is activated
+# If not: source venv/bin/activate  # On Windows: venv\Scripts\activate
+
 # Install the Python test client
 cd blowing-off
 pip install -e .
+cd ..
 
 # Connect to server
 blowing-off connect --server-url http://localhost:8000 --auth-token test-token
 
-# Sync data
+# Sync to get existing data from server
 blowing-off sync
 
 # View synchronized data
-blowing-off house show
+blowing-off home show
 blowing-off device list
 ```
+
+For detailed testing instructions, see [Human Testing Guide](plans/HUMAN_TESTING.md).
 
 ### 📋 Features
 
@@ -72,11 +94,12 @@ blowing-off device list
 
 ### 🏗️ Architecture
 
-The system consists of three main components:
+The system consists of four main components:
 
 1. **FunkyGibbon** (Python Backend) - REST API server with SQLite storage
-2. **Blowing-Off** (Python Client) - Test client with Inbetweenies sync protocol
-3. **WildThing** (Swift Package) - iOS/macOS client library (in development)
+2. **Inbetweenies** (Shared Models) - HomeKit-compatible data models shared between server and client
+3. **Blowing-Off** (Python Client) - Test client with Inbetweenies sync protocol
+4. **WildThing** (Swift Package) - iOS/macOS client library (in development)
 
 ### 📚 Documentation
 
@@ -97,6 +120,7 @@ The system consists of three main components:
 - **[Plans Directory](plans/README.md)** - Development plans and milestones
 - **[Simplified Requirements](plans/simplified-requirements.md)** - Current scope and constraints
 - **[Deployment Guide](plans/deployment-plan.md)** - Installation and deployment
+- **[Human Testing Guide](plans/HUMAN_TESTING.md)** - Step-by-step testing instructions
 
 ### 🧪 Testing
 

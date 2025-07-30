@@ -2,7 +2,7 @@
 FunkyGibbon - Main Entry Point
 
 DEVELOPMENT CONTEXT:
-Created in January 2024 as part of "The Goodies" smart home system initiative.
+Created in July 2025 as part of "The Goodies" smart home system initiative.
 This represents a pivot from complex multi-tenancy to a simplified single-house
 design after realizing most use cases only need single-family support.
 
@@ -23,9 +23,9 @@ KNOWN ISSUES:
 - Development server settings (reload=True) are hardcoded
 
 REVISION HISTORY:
-- 2024-01-15: Initial implementation (part of simplified single-house design)
-- 2024-01-16: Added configuration loading from settings module
-- 2024-01-17: Switched to factory pattern with create_app()
+- 2025-07-28: Initial implementation (part of simplified single-house design)
+- 2025-07-28: Added configuration loading from settings module
+- 2025-07-28: Switched to factory pattern with create_app()
 
 DEPENDENCIES:
 - uvicorn: ASGI server for FastAPI

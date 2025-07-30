@@ -1,24 +1,28 @@
 """
-FunkyGibbon Data Models
-
-SQLite-backed models with last-write-wins conflict resolution.
+FunkyGibbon Models - Using Inbetweenies HomeKit-compatible models
 """
 
-from .base import Base, TimestampMixin
-from .house import House
-from .room import Room
-from .device import Device
-from .user import User
-from .entity_state import EntityState
-from .event import Event
+# Import all shared models from inbetweenies
+from inbetweenies.models import (
+    Base,
+    Home,
+    Room,
+    Accessory,
+    Service,
+    Characteristic,
+    User,
+    accessory_rooms,
+    SyncMetadata
+)
 
 __all__ = [
-    "Base",
-    "TimestampMixin",
-    "House",
-    "Room",
-    "Device",
-    "User",
-    "EntityState",
-    "Event",
+    'Base',
+    'Home',
+    'Room',
+    'Accessory',
+    'Service',
+    'Characteristic',
+    'User',
+    'accessory_rooms',
+    'SyncMetadata'
 ]

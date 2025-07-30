@@ -3,7 +3,7 @@ Unit tests for SQLite storage operations
 """
 import pytest
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 
@@ -121,7 +121,7 @@ class TestSQLiteStorage:
         
         # Insert initial entity
         entity_id = "test-entity-1"
-        old_timestamp = datetime.utcnow() - timedelta(minutes=5)
+        old_timestamp = datetime.now(timezone.utc) - timedelta(minutes=5)
         
         in_memory_db.execute(
             """
@@ -132,7 +132,7 @@ class TestSQLiteStorage:
         )
         
         # Update entity
-        new_timestamp = datetime.utcnow()
+        new_timestamp = datetime.now(timezone.utc)
         in_memory_db.execute(
             """
             UPDATE entities 
@@ -262,7 +262,7 @@ class TestSQLiteStorage:
             INSERT INTO entities (id, type, content, version_timestamp, last_modified_by)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (entity_id, "device", "{}", datetime.utcnow().timestamp(), "user")
+            (entity_id, "device", "{}", datetime.now(timezone.utc).timestamp(), "user")
         )
         in_memory_db.commit()
         
@@ -313,7 +313,7 @@ class TestSQLiteStorage:
                 INSERT INTO entities (id, type, content, version_timestamp, last_modified_by)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (entity_id, entity_type, content, datetime.utcnow().timestamp(), "user")
+                (entity_id, entity_type, content, datetime.now(timezone.utc).timestamp(), "user")
             )
         
         # Create relationship
@@ -361,7 +361,7 @@ class TestSQLiteStorage:
                 INSERT INTO entities (id, type, content, version_timestamp, last_modified_by)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                ("test-1", "device", "{}", datetime.utcnow().timestamp(), "user")
+                ("test-1", "device", "{}", datetime.now(timezone.utc).timestamp(), "user")
             )
             
             # Simulate error - duplicate primary key
@@ -370,7 +370,7 @@ class TestSQLiteStorage:
                 INSERT INTO entities (id, type, content, version_timestamp, last_modified_by)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                ("test-1", "device", "{}", datetime.utcnow().timestamp(), "user")
+                ("test-1", "device", "{}", datetime.now(timezone.utc).timestamp(), "user")
             )
             
             in_memory_db.execute("COMMIT")

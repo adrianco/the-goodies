@@ -91,6 +91,30 @@ blowingoff house create --name "Test House" --address "123 Test St"
 2. Update code documentation headers as requested
 3. Continue monitoring for additional usability improvements
 
+## Database Location Issue
+
+The database file (`funkygibbon.db`) is created in the current working directory:
+- Running `populate_db.py` from `funkygibbon/` creates the DB there
+- Running the server from project root looks for the DB in project root
+
+**Solution**: Run everything from project root:
+```bash
+cd /workspaces/the-goodies
+python funkygibbon/populate_db.py
+python -m funkygibbon
+```
+
+## API Endpoint Issues
+
+1. **307 Redirects**: The API requires trailing slashes on collection endpoints
+   - Wrong: `curl http://localhost:8000/api/v1/houses`
+   - Correct: `curl http://localhost:8000/api/v1/houses/`
+
+2. **500 Internal Server Error**: FIXED - The issue was database schema mismatch
+   - The populate_db.py script was creating tables with missing columns
+   - SQLAlchemy models expected columns like room_count, device_count, version, is_deleted
+   - Fixed by updating populate_db.py to create all required columns
+
 ## Lessons Learned
 
 1. **Clear documentation is critical** - Explicit directory paths prevent confusion

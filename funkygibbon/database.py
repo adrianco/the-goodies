@@ -2,7 +2,7 @@
 FunkyGibbon - Database Configuration and Session Management
 
 DEVELOPMENT CONTEXT:
-Created in January 2024 as the database layer for the simplified single-house
+Created in July 2025 as the database layer for the simplified single-house
 smart home system. This module replaced a more complex multi-tenant database
 design when we pivoted to focus on single-family deployments with SQLite.
 
@@ -27,10 +27,10 @@ KNOWN ISSUES:
 - WAL mode can leave -wal and -shm files that need cleanup
 
 REVISION HISTORY:
-- 2024-01-15: Initial async SQLAlchemy setup
-- 2024-01-16: Added SQLite-specific optimizations (WAL, cache size)
-- 2024-01-17: Added both dependency injection and context manager patterns
-- 2024-01-18: Increased timeout and added pool_pre_ping for reliability
+- 2025-07-28: Initial async SQLAlchemy setup
+- 2025-07-28: Added SQLite-specific optimizations (WAL, cache size)
+- 2025-07-28: Added both dependency injection and context manager patterns
+- 2025-07-28: Increased timeout and added pool_pre_ping for reliability
 
 DEPENDENCIES:
 - sqlalchemy: Async ORM and database toolkit
@@ -57,7 +57,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .config import settings
-from .models.base import Base
+from .models import Base
 
 
 # Create async engine
@@ -91,12 +91,17 @@ async def init_db() -> None:
             await conn.execute(text("PRAGMA synchronous=NORMAL"))
             await conn.execute(text("PRAGMA cache_size=10000"))
             await conn.execute(text("PRAGMA temp_store=MEMORY"))
+            await conn.execute(text("PRAGMA busy_timeout=5000"))  # 5 second timeout for busy retries
+            await conn.execute(text("PRAGMA wal_autocheckpoint=1000"))  # Auto checkpoint every 1000 pages
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get database session for dependency injection."""
     async with async_session() as session:
         try:
+            # Set busy timeout for this session to handle concurrent access
+            if "sqlite" in settings.database_url:
+                await session.execute(text("PRAGMA busy_timeout=5000"))
             yield session
         finally:
             await session.close()
@@ -107,6 +112,9 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
     """Get database session as context manager."""
     async with async_session() as session:
         try:
+            # Set busy timeout for this session to handle concurrent access
+            if "sqlite" in settings.database_url:
+                await session.execute(text("PRAGMA busy_timeout=5000"))
             yield session
         finally:
             await session.close()

@@ -30,7 +30,7 @@ class TestServerStartup:
             assert response.json() == {"status": "healthy"}
             
             # Test API endpoint
-            response = await client.get("/api/v1/houses/")
+            response = await client.get("/api/v1/homes/")
             assert response.status_code == 200
             assert isinstance(response.json(), list)
     

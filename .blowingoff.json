@@ -1,0 +1,6 @@
+{
+  "server_url": "http://localhost:8000",
+  "auth_token": "test-token",
+  "client_id": "e228c399-65cc-46dd-b425-93b28abc294d",
+  "db_path": "blowingoff.db"
+}

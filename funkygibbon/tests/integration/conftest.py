@@ -5,7 +5,7 @@ DEVELOPMENT CONTEXT:
 Fixtures for integration tests that test the full API stack.
 
 REVISION HISTORY:
-- 2024-01-15: Created async fixtures for API testing
+- 2025-07-28: Created async fixtures for API testing
 """
 
 import pytest

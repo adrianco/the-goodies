@@ -32,17 +32,28 @@ def event_loop():
 @pytest_asyncio.fixture(scope="session")
 async def funkygibbon_server():
     """Start FunkyGibbon server for testing."""
-    # Start the server process using the module approach
+    import tempfile
     import os
+    
+    # Create a temporary database for testing
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        test_db_path = f.name
+    
+    print(f"DEBUG: Test database path: {test_db_path}")
+    
+    # Start the server process using the module approach
     env = os.environ.copy()
     parent_path = funkygibbon_path.parent
     env["PYTHONPATH"] = f"{parent_path}:{env.get('PYTHONPATH', '')}"
+    env["DATABASE_URL"] = f"sqlite+aiosqlite:///{test_db_path}"
+    
+    print(f"DEBUG: Setting DATABASE_URL={env['DATABASE_URL']}")
     
     process = subprocess.Popen(
         [sys.executable, "-m", "funkygibbon"],
         cwd=str(parent_path),  # Run from parent directory
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.PIPE,  # Keep separate to see errors
         text=True,
         env=env
     )
@@ -66,16 +77,47 @@ async def funkygibbon_server():
                 pytest.fail("FunkyGibbon server failed to start")
             await asyncio.sleep(0.5)
     
+    # Run populate_db.py to add test data
+    populate_result = subprocess.run(
+        [sys.executable, str(funkygibbon_path / "populate_db.py")],
+        cwd=str(parent_path),
+        env=env,
+        capture_output=True,
+        text=True
+    )
+    if populate_result.returncode == 0:
+        print("✅ Test database populated")
+    else:
+        print(f"⚠️ Failed to populate database: {populate_result.stderr}")
+    
     yield "http://localhost:8000"
     
-    # Stop the server
+    # Stop the server and capture output
     process.terminate()
     try:
-        process.wait(timeout=5)
+        stdout, stderr = process.communicate(timeout=5)
+        # Always print server output for debugging
+        print("\n📋 Server stdout:")
+        if stdout:
+            print(stdout[-2000:])  # Last 2000 chars
+        print("\n📋 Server stderr:")
+        if stderr:
+            print(stderr[-2000:])  # Last 2000 chars
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
     print("\n✅ FunkyGibbon server stopped")
+    
+    # Cleanup test database
+    try:
+        os.unlink(test_db_path)
+        # Also remove WAL and SHM files if they exist
+        for suffix in ["-wal", "-shm"]:
+            wal_path = test_db_path + suffix
+            if os.path.exists(wal_path):
+                os.unlink(wal_path)
+    except Exception as e:
+        print(f"Warning: Could not cleanup test database: {e}")
 
 
 @pytest.fixture(scope="session")

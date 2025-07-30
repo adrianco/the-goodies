@@ -2,6 +2,15 @@
 
 Based on the human testing feedback in `error-logs.txt`, the following issues have been identified and fixed:
 
+## 🚨 Major Update: Model Migration to HomeKit Compatibility
+
+All models have been migrated to use HomeKit-compatible naming:
+- `House` → `Home` (HMHome)
+- `Device` → `Accessory` (HMAccessory)
+- Removed `EntityState` and `Event` models
+- All models now use shared Inbetweenies package
+- No backward compatibility - clean migration
+
 ## 🔧 Issues Fixed
 
 ### 1. **Documentation - Working Directory Clarity** ✅
@@ -22,17 +31,16 @@ cd blowing-off
 pip install -e .
 ```
 
-### 3. **Missing CLI Feature - House Creation** ✅
-**Issue**: There appears to be no way to create a house from the blowing-off command line
+### 3. **Missing CLI Feature - Home Creation** ✅
+**Issue**: There appears to be no way to create a home from the blowing-off command line
 **Fix**: 
-- Added `create_house()` method to `blowing-off/blowingoff/client.py`
-- Added `house create` command to `blowing-off/blowingoff/cli/main.py`
+- Added `create_home()` method to `blowing-off/blowingoff/client.py`
+- Added `home create` command to `blowing-off/blowingoff/cli/main.py`
 - Updated documentation with usage example:
 ```bash
-blowing-off house create \
+blowing-off home create \
   --name "My Home" \
-  --address "123 Main St" \
-  --timezone "America/New_York"
+  --primary
 ```
 
 ### 4. **Test Database Population** ✅
@@ -40,23 +48,22 @@ blowing-off house create \
 **Fix**: 
 - Created new simplified `funkygibbon/populate_db.py` script that uses direct SQL
 - Script creates realistic test data including:
-  - 1 House (The Martinez Smart Home)
+  - 1 Home (The Martinez Smart Home)
   - 4 Rooms (Living Room, Kitchen, Master Bedroom, Home Office)
-  - 6 Devices (TV, Thermostat, Fridge, various lights)
+  - 6 Accessories (TV, Thermostat, Fridge, various lights) with Services and Characteristics
   - 3 Users (Carlos, Maria, Sofia)
-  - Device states for testing
 
 **Usage**: `python populate_db.py` from the funkygibbon directory
 
-### 5. **API Error Handling - Duplicate Device/Room** ✅
-**Issue**: Creating a duplicate device/room combination and syncing broke the server, it returned 500s
+### 5. **API Error Handling - Duplicate Accessory/Room** ✅
+**Issue**: Creating a duplicate accessory/room combination and syncing broke the server, it returned 500s
 **Fix**: 
-- Enhanced `funkygibbon/api/routers/device.py` with:
+- Enhanced `funkygibbon/api/routers/accessories.py` with:
   - Duplicate name checking before creation
   - Proper 409 Conflict status code for duplicates
   - Transaction rollback on errors
   - Descriptive error messages
-- Enhanced `funkygibbon/api/routers/room.py` with same improvements
+- Enhanced `funkygibbon/api/routers/rooms.py` with same improvements
 
 ## 📋 Files Modified
 
@@ -93,8 +100,8 @@ python -m funkygibbon
 cd ../blowing-off
 pip install -e .
 
-# 4. Create a house
-blowingoff house create --name "Test House" --address "123 Test St"
+# 4. Create a home
+blowingoff home create --name "Test Home" --primary
 
 # 5. Test duplicate handling (should get 409 error)
 # Via API: Try creating a room/device with same name

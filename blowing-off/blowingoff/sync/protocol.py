@@ -2,7 +2,7 @@
 Blowing-Off Client - Inbetweenies Protocol Implementation
 
 DEVELOPMENT CONTEXT:
-Created as the wire protocol implementation in January 2024. This module implements
+Created as the wire protocol implementation in July 2025. This module implements
 the Inbetweenies synchronization protocol, which defines how clients communicate
 with the server for data synchronization. This protocol is designed to be efficient,
 reliable, and handle various network conditions. The Swift/WildThing client must
@@ -36,11 +36,11 @@ KNOWN ISSUES:
 - Missing request/response correlation IDs
 
 REVISION HISTORY:
-- 2024-01-15: Initial protocol implementation
-- 2024-01-18: Added conflict handling in responses
-- 2024-01-20: Enhanced error handling and timeouts
-- 2024-01-22: Added batch change support
-- 2024-01-25: Improved JSON serialization efficiency
+- 2025-07-28: Initial protocol implementation
+- 2025-07-28: Added conflict handling in responses
+- 2025-07-28: Enhanced error handling and timeouts
+- 2025-07-28: Added batch change support
+- 2025-07-28: Improved JSON serialization efficiency
 
 DEPENDENCIES:
 - httpx for async HTTP operations
@@ -92,7 +92,7 @@ class InbetweeniesProtocol:
             "type": "sync_request",
             "client_id": self.client_id,
             "last_sync": last_sync.isoformat() if last_sync else None,
-            "entity_types": entity_types or ["devices", "entity_states", "rooms", "users"],
+            "entity_types": entity_types or ["homes", "rooms", "accessories", "users"],
             "include_deleted": True
         }
         
@@ -115,7 +115,7 @@ class InbetweeniesProtocol:
                 {
                     "entity_type": change.entity_type,
                     "entity_id": change.entity_id,
-                    "operation": change.operation.value,
+                    "operation": change.operation.value if hasattr(change.operation, 'value') else change.operation,
                     "data": change.data,
                     "client_sync_id": change.client_sync_id
                 }

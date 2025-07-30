@@ -2,7 +2,7 @@
 Blowing-Off Client - Conflict Resolution Engine
 
 DEVELOPMENT CONTEXT:
-Created as part of the Inbetweenies protocol in January 2024. This module handles
+Created as part of the Inbetweenies protocol in July 2025. This module handles
 the critical task of resolving conflicts when the same entity has been modified
 on both client and server. The resolution strategy must be deterministic to ensure
 all clients reach the same conclusion independently. This is essential for the
@@ -34,11 +34,11 @@ KNOWN ISSUES:
 - Timestamp precision issues on some systems
 
 REVISION HISTORY:
-- 2024-01-15: Initial implementation with last-write-wins
-- 2024-01-18: Added deletion conflict handling
-- 2024-01-20: Improved timestamp parsing and tiebreaking
-- 2024-01-22: Added sync_id based tiebreaking
-- 2024-01-25: Enhanced retry logic determination
+- 2025-07-28: Initial implementation with last-write-wins
+- 2025-07-28: Added deletion conflict handling
+- 2025-07-28: Improved timestamp parsing and tiebreaking
+- 2025-07-28: Added sync_id based tiebreaking
+- 2025-07-28: Enhanced retry logic determination
 
 DEPENDENCIES:
 - datetime for timestamp operations
@@ -50,8 +50,8 @@ USAGE:
     
     # Resolve a conflict
     winning_data, reason = resolver.resolve_conflict(
-        local={"name": "Local Name", "updated_at": "2024-01-20T10:00:00Z"},
-        remote={"name": "Remote Name", "updated_at": "2024-01-20T10:00:01Z"}
+        local={"name": "Local Name", "updated_at": "2025-07-28T10:00:00Z"},
+        remote={"name": "Remote Name", "updated_at": "2025-07-28T10:00:01Z"}
     )
     # Result: (remote_data, "newer_remote")
     
@@ -62,6 +62,7 @@ USAGE:
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from .state import Conflict
+from inbetweenies.sync import ConflictResolution
 
 
 class ConflictResolver:

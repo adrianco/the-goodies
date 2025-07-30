@@ -21,16 +21,19 @@ pip install -r requirements.txt
 poetry install
 ```
 
-2. Run the server:
+2. Populate the database and run the server:
 ```bash
-# From the funkygibbon directory
-cd funkygibbon
-python -m funkygibbon.main
-# or
-uvicorn funkygibbon.main:app --reload
+# Option A: Run everything from project root (recommended)
+cd ..  # go to project root
+python funkygibbon/populate_db.py  # Creates DB in project root
+python -m funkygibbon              # Uses DB in project root
 
-# Alternative: from project root
-python -m funkygibbon.main
+# Option B: Move database after population
+cd funkygibbon
+python populate_db.py              # Creates DB in funkygibbon/
+mv funkygibbon.db ..               # Move to project root
+cd ..
+python -m funkygibbon              # Uses DB in project root
 ```
 
 3. Access the API:
@@ -40,38 +43,48 @@ python -m funkygibbon.main
 
 ## API Endpoints
 
-### Houses
-- `POST /api/v1/houses` - Create house
-- `GET /api/v1/houses/{id}` - Get house
-- `GET /api/v1/houses` - List houses
-- `PUT /api/v1/houses/{id}` - Update house
-- `DELETE /api/v1/houses/{id}` - Delete house
+### Homes (HomeKit HMHome)
+- `POST /api/v1/homes/` - Create home
+- `GET /api/v1/homes/{id}` - Get home
+- `GET /api/v1/homes/` - List homes
+- `PUT /api/v1/homes/{id}` - Update home
+- `DELETE /api/v1/homes/{id}` - Delete home
 
-### Rooms
-- `POST /api/v1/rooms` - Create room
+### Rooms (HomeKit HMRoom)
+- `POST /api/v1/rooms/` - Create room
 - `GET /api/v1/rooms/{id}` - Get room
-- `GET /api/v1/rooms?house_id={id}` - List rooms
+- `GET /api/v1/rooms/?home_id={id}` - List rooms
 - `PUT /api/v1/rooms/{id}` - Update room
 - `DELETE /api/v1/rooms/{id}` - Delete room
 
-### Devices
-- `POST /api/v1/devices` - Create device
-- `GET /api/v1/devices/{id}` - Get device
-- `GET /api/v1/devices?room_id={id}` - List devices
-- `PUT /api/v1/devices/{id}` - Update device
-- `PUT /api/v1/devices/{id}/state` - Update device state
-- `DELETE /api/v1/devices/{id}` - Delete device
+### Accessories (HomeKit HMAccessory)
+- `POST /api/v1/accessories/` - Create accessory
+- `GET /api/v1/accessories/{id}` - Get accessory
+- `GET /api/v1/accessories/?home_id={id}` - List accessories
+- `PUT /api/v1/accessories/{id}` - Update accessory
+- `DELETE /api/v1/accessories/{id}` - Delete accessory
 
-### Users
-- `POST /api/v1/users` - Create user
+### Services (HomeKit HMService)
+- `POST /api/v1/services/` - Create service
+- `GET /api/v1/services/{id}` - Get service
+- `GET /api/v1/services/?accessory_id={id}` - List services
+- `DELETE /api/v1/services/{id}` - Delete service
+
+### Characteristics (HomeKit HMCharacteristic)
+- `GET /api/v1/characteristics/{id}` - Get characteristic
+- `PUT /api/v1/characteristics/{id}/value` - Update value
+
+### Users (HomeKit HMUser)
+- `POST /api/v1/users/` - Create user
 - `GET /api/v1/users/{id}` - Get user
-- `GET /api/v1/users?house_id={id}` - List users
+- `GET /api/v1/users/?home_id={id}` - List users
 - `PUT /api/v1/users/{id}` - Update user
 - `DELETE /api/v1/users/{id}` - Delete user
 
-### Sync
-- `POST /api/v1/sync` - Sync entities with conflict resolution
-- `GET /api/v1/sync/changes?since={timestamp}` - Get changes
+### Sync (Inbetweenies Protocol)
+- `POST /api/v1/sync/request` - Request sync delta from server
+- `POST /api/v1/sync/push` - Push changes to server
+- `POST /api/v1/sync/ack` - Acknowledge sync completion
 
 ## Configuration
 
@@ -95,12 +108,17 @@ python -m funkygibbon.tests.test_basic
 
 ```
 funkygibbon/
-├── models/          # SQLAlchemy models
-├── repositories/    # Data access layer
 ├── api/            # FastAPI endpoints
-├── services/       # Business logic (future)
-├── cli/            # CLI interface (future)
-└── tests/          # Test suite
+│   └── routers/    # API route handlers
+├── repositories/   # Data access layer
+├── sync/           # Sync protocol implementation
+├── tests/          # Test suite
+└── __main__.py     # Server entry point
+
+inbetweenies/       # Shared models package
+├── models/         # HomeKit-compatible SQLAlchemy models
+├── sync/           # Sync protocol utilities
+└── __init__.py
 ```
 
 ## Conflict Resolution

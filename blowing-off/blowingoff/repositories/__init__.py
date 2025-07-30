@@ -2,7 +2,7 @@
 Blowing-Off Client - Repository Package
 
 DEVELOPMENT CONTEXT:
-Created as the data access layer in January 2024. This package implements the
+Created as the data access layer in July 2025. This package implements the
 repository pattern for all client-side database operations. Each repository
 provides type-safe, sync-aware access to specific entity types. The repository
 pattern ensures clean separation between business logic and data persistence,
@@ -32,10 +32,10 @@ KNOWN ISSUES:
 - Limited indexing strategies
 
 REVISION HISTORY:
-- 2024-01-15: Initial repository pattern implementation
-- 2024-01-18: Added sync metadata repository
-- 2024-01-20: Enhanced with specialized queries
-- 2024-01-22: Added entity state repository
+- 2025-07-28: Initial repository pattern implementation
+- 2025-07-28: Added sync metadata repository
+- 2025-07-28: Enhanced with specialized queries
+- 2025-07-28: Added entity state repository
 
 DEPENDENCIES:
 - Base repository for common functionality
@@ -43,32 +43,33 @@ DEPENDENCIES:
 - SQLAlchemy for database operations
 
 USAGE:
-    from blowingoff.repositories import ClientDeviceRepository
+    from blowingoff.repositories import ClientAccessoryRepository
     
     async with session_factory() as session:
-        device_repo = ClientDeviceRepository(session)
-        devices = await device_repo.get_by_room(room_id)
+        accessory_repo = ClientAccessoryRepository(session)
+        accessories = await accessory_repo.get_by_room(room_id)
         
         # All mutations automatically track sync status
-        await device_repo.update(device_id, name="New Name")
+        await accessory_repo.update(accessory_id, name="New Name")
 """
 
 from .base import ClientBaseRepository
-from .house import ClientHouseRepository
+from .home import ClientHomeRepository
 from .room import ClientRoomRepository
-from .device import ClientDeviceRepository
+from .accessory import ClientAccessoryRepository
 from .user import ClientUserRepository
-from .entity_state import ClientEntityStateRepository
-from .event import ClientEventRepository
+# EntityState and Event repositories removed for HomeKit focus
+# from .entity_state import ClientEntityStateRepository  
+# from .event import ClientEventRepository
 from .sync_metadata import SyncMetadataRepository
 
 __all__ = [
     "ClientBaseRepository",
-    "ClientHouseRepository",
+    "ClientHomeRepository",
     "ClientRoomRepository",
-    "ClientDeviceRepository",
+    "ClientAccessoryRepository",
     "ClientUserRepository",
-    "ClientEntityStateRepository",
-    "ClientEventRepository",
+    # "ClientEntityStateRepository",  # Removed for HomeKit focus
+    # "ClientEventRepository",         # Removed for HomeKit focus
     "SyncMetadataRepository",
 ]

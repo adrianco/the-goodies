@@ -2,7 +2,7 @@
 
 ## Overview
 
-FunkyGibbon is a Python-based backend service that provides centralized synchronization and advanced processing capabilities for the WildThing ecosystem. It implements the server side of the Inbetweenies protocol and offers additional cloud-based features like multi-device sync, analytics, and third-party integrations.
+FunkyGibbon is a Python-based backend service that provides centralized synchronization for The Goodies smart home system. It uses HomeKit-compatible models from the shared Inbetweenies package and implements a simple last-write-wins synchronization protocol. The current implementation uses SQLite for simplicity and focuses on single-home deployments.
 
 ## Service Architecture
 
@@ -18,27 +18,24 @@ funkygibbon/
 │   ├── __init__.py
 │   ├── __main__.py                   # Entry point
 │   ├── config.py                     # Configuration management
-│   ├── core/
+│   ├── models/                       # Uses Inbetweenies shared models
 │   │   ├── __init__.py
-│   │   ├── models.py                 # Pydantic models
-│   │   ├── entities.py               # Entity business logic
-│   │   ├── relationships.py          # Relationship management
-│   │   ├── exceptions.py             # Custom exceptions
-│   │   └── validators.py             # Data validation
+│   │   └── base.py                   # Any server-specific extensions
+│   ├── repositories/                 # Data access layer
+│   │   ├── __init__.py
+│   │   ├── base.py                   # Base repository
+│   │   ├── home.py                   # Home repository
+│   │   ├── room.py                   # Room repository
+│   │   ├── accessory.py              # Accessory repository
+│   │   └── user.py                   # User repository
 │   ├── storage/
 │   │   ├── __init__.py
 │   │   ├── base.py                   # Abstract storage interface
-│   │   ├── postgresql.py             # PostgreSQL implementation
-│   │   ├── redis_cache.py            # Redis caching layer
-│   │   ├── migrations/               # Alembic migrations
-│   │   └── queries.py                # Optimized queries
-│   ├── inbetweenies/
+│   │   └── sqlite.py                 # SQLite implementation (current)
+│   ├── sync/
 │   │   ├── __init__.py
-│   │   ├── sync_service.py           # Sync protocol handler
-│   │   ├── vector_clock.py           # Vector clock implementation
-│   │   ├── conflict_resolution.py    # Conflict handling
-│   │   ├── change_detection.py       # Change tracking
-│   │   └── compression.py            # Data compression
+│   │   ├── engine.py                 # Simple last-write-wins sync
+│   │   └── protocol.py               # Sync protocol handlers
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── app.py                    # FastAPI application

@@ -4,12 +4,9 @@ Get up and running with The Goodies smart home knowledge graph system in under 3
 
 ## Prerequisites Checklist
 
-- [ ] macOS 13+ with Xcode 15+ (for Swift development)
 - [ ] Python 3.11+ installed
-- [ ] PostgreSQL 14+ installed and running
-- [ ] Redis 7+ installed and running
-- [ ] Node.js 18+ (for MCP tools)
 - [ ] Git configured
+- [ ] (Optional) macOS 13+ with Xcode 15+ for Swift WildThing development
 
 ## 🚀 5-Minute Setup
 
@@ -28,33 +25,32 @@ source venv/bin/activate
 npm install -g @modelcontextprotocol/cli
 ```
 
-### 2. Database Quick Setup (2 minutes)
+### 2. Environment Setup (1 minute)
 
 ```bash
-# Start PostgreSQL and Redis
-brew services start postgresql@14
-brew services start redis
+# Set PYTHONPATH for shared Inbetweenies models
+export PYTHONPATH=$PYTHONPATH:$(pwd)
 
-# Create databases
-createdb funkygibbon_dev
-createdb funkygibbon_test
-
-# Quick test
-psql funkygibbon_dev -c "SELECT 1;"
-redis-cli ping
+# FunkyGibbon uses SQLite by default - no database setup needed!
+# Database files will be created automatically:
+# - funkygibbon.db (server)
+# - blowingoff.db (client)
 ```
 
 ### 3. Install Dependencies (1 minute)
 
 ```bash
-# Python dependencies
-cd FunkyGibbon
-pip install poetry
-poetry install
+# Install Python dependencies for FunkyGibbon server
+cd funkygibbon
+pip install -r requirements.txt
 
-# Swift dependencies
-cd ../WildThing
-swift package resolve
+# Install Python dependencies for Blowing-Off client
+cd ../blowing-off
+pip install -r requirements.txt
+
+# Swift dependencies (only if developing WildThing)
+# cd ../WildThing
+# swift package resolve
 ```
 
 ## 🏗️ Quick Development Start
@@ -64,19 +60,18 @@ swift package resolve
 #### 1. Start FunkyGibbon Backend
 
 ```bash
-cd FunkyGibbon
+# From project root (important!)
+cd /workspaces/the-goodies
 
-# Run with Docker Compose (recommended)
-docker-compose up
+# Populate database with test data
+python funkygibbon/populate_db.py
 
-# OR run locally
-poetry shell
-alembic upgrade head
-uvicorn funkygibbon.api.main:app --reload
+# Start server (must be from project root)
+python -m funkygibbon
+
+# Server will be available at: http://localhost:8000
+# API docs at: http://localhost:8000/docs
 ```
-
-Backend will be available at: http://localhost:8000
-API docs at: http://localhost:8000/docs
 
 #### 2. Build WildThing Swift Package
 
@@ -99,34 +94,43 @@ xcodebuild -scheme WildThing -sdk iphoneos
 # Test API health
 curl http://localhost:8000/health
 
-# Create a test entity
-curl -X POST http://localhost:8000/api/entities/ \
+# Get all homes (HomeKit-compatible endpoints)
+curl http://localhost:8000/api/v1/homes/
+
+# Get all accessories
+curl http://localhost:8000/api/v1/accessories/
+
+# Test sync endpoint
+curl -X POST http://localhost:8000/api/v1/sync/request \
   -H "Content-Type: application/json" \
   -d '{
-    "entity_type": "home",
-    "version": "v1",
-    "content": {"name": "My Test Home"},
-    "user_id": "test-user",
-    "source_type": "manual"
+    "client_id": "test-client",
+    "last_sync": "2024-01-01T00:00:00Z",
+    "entity_types": ["homes", "accessories"]
   }'
 ```
 
-### Option B: Backend Only (10 minutes)
+### Option B: Test with Blowing-Off Client (10 minutes)
 
 ```bash
-cd FunkyGibbon
+# Terminal 1: Start FunkyGibbon server
+cd /workspaces/the-goodies
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+python funkygibbon/populate_db.py
+python -m funkygibbon
 
-# Quick setup script
-cat > quickstart.sh << 'EOF'
-#!/bin/bash
-poetry install
-poetry run alembic upgrade head
-poetry run python -m funkygibbon.scripts.seed_data
-poetry run uvicorn funkygibbon.api.main:app --reload
-EOF
+# Terminal 2: Use Blowing-Off client
+cd /workspaces/the-goodies/blowing-off
+export PYTHONPATH=$PYTHONPATH:$(pwd)/..
 
-chmod +x quickstart.sh
-./quickstart.sh
+# List homes
+blowing-off home list
+
+# Sync with server
+blowing-off sync
+
+# Create a new accessory
+blowing-off device create --name "Smart Light" --type "Light"
 ```
 
 ### Option C: iOS/Swift Only (10 minutes)
@@ -185,23 +189,22 @@ try await storage.save(home)
 ### Python Backend Usage
 
 ```python
-# Quick entity creation
-from funkygibbon.core.entities import HomeEntity
-from funkygibbon.core.models import SourceType
+# Using shared Inbetweenies models
+from inbetweenies.models import Home, Accessory
+from funkygibbon.repositories import HomeRepository
 
-# Create entity
-home = HomeEntity(
-    version="v1",
-    content={"name": "My Home"},
-    user_id="user-123",
-    source_type=SourceType.MANUAL
+# Create a home
+home = Home(
+    name="My Smart Home",
+    is_primary=True
 )
 
 # Use with FastAPI
 @app.post("/quick-create")
-async def quick_create():
-    # Your logic here
-    pass
+async def quick_create(db: AsyncSession = Depends(get_db)):
+    repo = HomeRepository(db)
+    new_home = await repo.create(name="Quick Home", is_primary=True)
+    return new_home
 ```
 
 ### Sync Example

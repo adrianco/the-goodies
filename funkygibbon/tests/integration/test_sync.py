@@ -12,8 +12,8 @@ from datetime import datetime, timedelta, UTC
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from funkygibbon.models import House
-from funkygibbon.repositories import HouseRepository, RoomRepository, DeviceRepository
+from inbetweenies.models import Home
+from funkygibbon.repositories import HomeRepository, RoomRepository, AccessoryRepository
 
 
 @pytest.mark.integration
@@ -23,20 +23,14 @@ class TestSyncIntegration:
     
     async def test_sync_new_entity(self, test_session: AsyncSession):
         """Test syncing a completely new entity."""
-        repo = HouseRepository()
+        repo = HomeRepository()
         
         remote_data = {
             "sync_id": "new-sync-id",
-            "name": "New Remote House",
-            "address": "789 New St",
-            "timezone": "UTC",
-            "room_count": 0,
-            "device_count": 0,
-            "user_count": 0,
+            "name": "New Remote Home",
+            "is_primary": True,
             "created_at": datetime.now(UTC),
-            "updated_at": datetime.now(UTC),
-            "version": "1",
-            "is_deleted": False
+            "updated_at": datetime.now(UTC)
         }
         
         entity, updated, conflict = await repo.sync_entity(test_session, remote_data)
@@ -44,18 +38,17 @@ class TestSyncIntegration:
         assert entity is not None
         assert updated is True
         assert conflict is None
-        assert entity.name == "New Remote House"
+        assert entity.name == "New Remote Home"
         assert entity.sync_id == "new-sync-id"
     
-    @pytest.mark.skip(reason="Complex timezone handling between string and datetime formats - edge case")
     async def test_sync_conflict_remote_wins(self, test_session: AsyncSession):
         """Test sync conflict where remote wins."""
-        repo = HouseRepository()
+        repo = HomeRepository()
         
         # Create local entity
         local = await repo.create(
             test_session,
-            name="Local House",
+            name="Local Home",
             sync_id="conflict-sync-id"
         )
         
@@ -65,16 +58,10 @@ class TestSyncIntegration:
         # Create remote data with newer timestamp
         remote_data = {
             "sync_id": "conflict-sync-id",
-            "name": "Remote House",
-            "address": "Remote Address",
-            "timezone": "America/New_York",
-            "room_count": 5,
-            "device_count": 10,
-            "user_count": 2,
+            "name": "Remote Home",
+            "is_primary": False,
             "created_at": local.created_at,
-            "updated_at": datetime.now(UTC) + timedelta(seconds=10),
-            "version": "2",
-            "is_deleted": False
+            "updated_at": datetime.now(UTC) + timedelta(seconds=10)
         }
         
         entity, updated, conflict = await repo.sync_entity(test_session, remote_data)
@@ -82,36 +69,28 @@ class TestSyncIntegration:
         assert entity is not None
         assert updated is True
         assert conflict is not None
-        assert conflict.winner["name"] == "Remote House"
-        assert conflict.loser["name"] == "Local House"
-        assert entity.name == "Remote House"
-        assert entity.address == "Remote Address"
+        assert conflict.winner["name"] == "Remote Home"
+        assert conflict.loser["name"] == "Local Home"
+        assert entity.name == "Remote Home"
     
-    @pytest.mark.skip(reason="Complex timezone handling between string and datetime formats - edge case")
     async def test_sync_conflict_local_wins(self, test_session: AsyncSession):
         """Test sync conflict where local wins."""
-        repo = HouseRepository()
+        repo = HomeRepository()
         
         # Create local entity with recent timestamp
         local = await repo.create(
             test_session,
-            name="Local House Latest",
+            name="Local Home Latest",
             sync_id="local-wins-sync-id"
         )
         
         # Create remote data with older timestamp
         remote_data = {
             "sync_id": "local-wins-sync-id",
-            "name": "Remote House Old",
-            "address": "Old Address",
-            "timezone": "UTC",
-            "room_count": 0,
-            "device_count": 0,
-            "user_count": 0,
+            "name": "Remote Home Old",
+            "is_primary": True,
             "created_at": local.created_at,
-            "updated_at": local.updated_at - timedelta(seconds=10),
-            "version": "1",
-            "is_deleted": False
+            "updated_at": local.updated_at - timedelta(seconds=10)
         }
         
         entity, updated, conflict = await repo.sync_entity(test_session, remote_data)
@@ -119,68 +98,61 @@ class TestSyncIntegration:
         assert entity is not None
         assert updated is False  # Local wins, no update
         assert conflict is not None
-        assert conflict.winner["name"] == "Local House Latest"
-        assert conflict.loser["name"] == "Remote House Old"
-        assert entity.name == "Local House Latest"  # Unchanged
+        assert conflict.winner["name"] == "Local Home Latest"
+        assert conflict.loser["name"] == "Remote Home Old"
+        assert entity.name == "Local Home Latest"  # Unchanged
     
     async def test_sync_cascade_updates(self, test_session: AsyncSession):
         """Test syncing with cascading counter updates."""
-        house_repo = HouseRepository()
+        home_repo = HomeRepository()
         room_repo = RoomRepository()
-        device_repo = DeviceRepository()
+        accessory_repo = AccessoryRepository()
         
-        # Create house
-        house = await house_repo.create(test_session, name="Test House")
+        # Create home
+        home = await home_repo.create(test_session, name="Test Home")
         
         # Create rooms
-        room1 = await room_repo.create_with_house_name(
-            test_session, house.id, house.name, name="Room 1"
+        room1 = await room_repo.create_with_home_name(
+            test_session, home.id, home.name, name="Room 1"
         )
-        room2 = await room_repo.create_with_house_name(
-            test_session, house.id, house.name, name="Room 2"
+        room2 = await room_repo.create_with_home_name(
+            test_session, home.id, home.name, name="Room 2"
         )
         
-        # Create devices
+        # Create accessories
         for i in range(3):
-            await device_repo.create_with_names(
+            await accessory_repo.create(
                 test_session,
-                room_id=room1.id,
-                room_name=room1.name,
-                house_id=house.id,
-                house_name=house.name,
-                name=f"Device {i+1}",
-                device_type="sensor"
+                home_id=home.id,
+                name=f"Accessory {i+1}",
+                manufacturer="Test",
+                model="Sensor v1"
             )
         
-        # Update counters
-        await house_repo.update_counters(test_session, house.id)
-        await room_repo.update_device_count(test_session, room1.id)
+        # Verify creation
+        accessories = await accessory_repo.get_by_home(test_session, home.id)
+        rooms = await room_repo.get_by_home(test_session, home.id)
         
-        # Verify counters
-        updated_house = await house_repo.get_by_id(test_session, house.id)
-        updated_room = await room_repo.get_by_id(test_session, room1.id)
-        
-        assert updated_house.room_count == 2
-        assert updated_house.device_count == 3
-        assert updated_room.device_count == 3
+        assert len(rooms) == 2
+        assert len(accessories) == 3
     
     async def test_get_changes_batch(self, test_session: AsyncSession):
         """Test getting changes in batches."""
-        house_repo = HouseRepository()
+        home_repo = HomeRepository()
         
-        # Create many houses
+        # Create many homes
         base_time = datetime.now(UTC)
         
         for i in range(10):
-            await house_repo.create(
+            await home_repo.create(
                 test_session,
-                name=f"House {i}",
+                name=f"Home {i}",
                 created_at=base_time + timedelta(seconds=i),
                 updated_at=base_time + timedelta(seconds=i)
             )
         
         # Get changes with limit
-        changes = await house_repo.get_changes_since(
+        changes = await home_repo.get_changes_since(
             test_session,
             base_time - timedelta(seconds=1),
             limit=5
@@ -189,5 +161,5 @@ class TestSyncIntegration:
         assert len(changes) == 5
         
         # Verify they're the oldest 5
-        for i, house in enumerate(changes):
-            assert house.name == f"House {i}"
+        for i, home in enumerate(changes):
+            assert home.name == f"Home {i}"

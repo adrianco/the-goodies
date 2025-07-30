@@ -26,11 +26,12 @@ for the current scope.
 
 ## Executive Summary
 
-The Goodies is a distributed smart home knowledge graph system consisting of three core components:
+The Goodies is a distributed smart home knowledge graph system consisting of four core components:
 
-1. **WildThing** - A Swift Package providing an MCP server for knowledge graph operations
+1. **WildThing** - A Swift Package providing an MCP server for knowledge graph operations (planned)
 2. **FunkyGibbon** - A Python backend service for centralized data synchronization
-3. **Inbetweenies** - A bidirectional sync protocol for distributed data consistency
+3. **Inbetweenies** - Shared HomeKit-compatible models and sync protocol
+4. **Blowing-Off** - Python test client demonstrating sync functionality
 
 This architecture enables local-first smart home management with optional cloud synchronization, supporting offline operation while maintaining eventual consistency across devices.
 
@@ -160,25 +161,59 @@ Inbetweenies/
 
 ## Data Model Architecture
 
-### Entity Model
+### Entity Model (HomeKit-Compatible)
 
 ```typescript
-interface WildThingEntity {
-    id: string                    // UUID
-    version: string              // Timestamp-based version
-    entityType: EntityType       // home, room, device, etc.
-    parentVersions: string[]     // For conflict detection
-    content: Map<string, any>    // Flexible content storage
-    userId: string              // Owner identification
-    sourceType: SourceType      // homekit, manual, etc.
+// Current implementation uses HomeKit-compatible models
+interface Home {
+    id: string              // UUID
+    name: string
+    isPrimary: boolean
+    syncId: string         // For sync tracking
     createdAt: Date
-    lastModified: Date
+    updatedAt: Date
 }
 
-enum EntityType {
-    HOME, ROOM, DEVICE, ACCESSORY, SERVICE,
-    ZONE, DOOR, WINDOW, PROCEDURE, MANUAL,
-    NOTE, SCHEDULE, AUTOMATION
+interface Accessory {
+    id: string
+    homeId: string
+    name: string
+    manufacturer: string
+    model: string
+    serialNumber?: string
+    firmwareVersion?: string
+    isReachable: boolean
+    isBlocked: boolean
+    isBridge: boolean
+    bridgeId?: string
+    syncId: string
+    createdAt: Date
+    updatedAt: Date
+}
+
+interface Service {
+    id: string
+    accessoryId: string
+    serviceType: string
+    name: string
+    isPrimary: boolean
+    isHidden: boolean
+    linkedServices: string[]
+    syncId: string
+    createdAt: Date
+    updatedAt: Date
+}
+
+interface Characteristic {
+    id: string
+    serviceId: string
+    characteristicType: string
+    value: string          // JSON encoded
+    metadata: object
+    isNotificationEnabled: boolean
+    syncId: string
+    createdAt: Date
+    updatedAt: Date
 }
 ```
 
@@ -210,21 +245,35 @@ enum RelationshipType {
 
 ## Storage Architecture
 
-### SQLite Schema (WildThing)
+### SQLite Schema (Current Implementation)
 
 ```sql
--- Core entities table with versioning
-CREATE TABLE entities (
-    id TEXT NOT NULL,
-    version TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    parent_versions TEXT,  -- JSON array
-    content TEXT NOT NULL, -- JSON object
-    user_id TEXT NOT NULL,
-    source_type TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    last_modified INTEGER NOT NULL,
-    PRIMARY KEY (id, version)
+-- HomeKit-compatible tables
+CREATE TABLE homes (
+    id TEXT PRIMARY KEY,
+    sync_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE accessories (
+    id TEXT PRIMARY KEY,
+    sync_id TEXT NOT NULL UNIQUE,
+    home_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    manufacturer TEXT NOT NULL,
+    model TEXT NOT NULL,
+    serial_number TEXT,
+    firmware_version TEXT,
+    is_reachable BOOLEAN NOT NULL DEFAULT TRUE,
+    is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+    is_bridge BOOLEAN NOT NULL DEFAULT FALSE,
+    bridge_id TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (home_id) REFERENCES homes(id)
 );
 
 -- Relationships between entities

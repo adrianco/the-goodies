@@ -17,7 +17,8 @@
    - Conflict tracking and resolution
 
 2. **Client Models**
-   - Same entities as server (House, Room, Device, User, EntityState)
+   - Same entities as server using Inbetweenies shared models
+   - HomeKit-compatible models (Home, Room, Accessory, Service, Characteristic, User)
    - Additional sync metadata (last_sync, sync_status, local_changes)
    - Client-side caching strategies
 
@@ -85,8 +86,8 @@
 class BlowingOffClient:
     async def connect(self, server_url: str, auth_token: str)
     async def sync(self) -> SyncResult
-    async def get_house(self) -> House
-    async def update_device_state(self, device_id: str, state: dict)
+    async def get_home(self) -> Home  # HomeKit-compatible naming
+    async def update_characteristic(self, characteristic_id: str, value: Any)
     async def observe_changes(self, callback: Callable)
 ```
 

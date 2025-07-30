@@ -2,51 +2,54 @@
 FunkyGibbon - Base Repository Pattern with Conflict Resolution
 
 DEVELOPMENT CONTEXT:
-Created in January 2024 to implement the repository pattern for data access.
+Created in July 2025 to implement the repository pattern for data access.
 This module is central to our bidirectional sync strategy, implementing
 last-write-wins conflict resolution and providing a consistent interface
-for all entity operations across the system.
+for all entity operations across the system. Updated in July 2025 to work
+with simplified HomeKit-compatible models from the Inbetweenies package.
 
 FUNCTIONALITY:
 - Generic repository pattern for all entity types (CRUD operations)
 - ConflictResolver implements last-write-wins with sync_id tiebreaker
-- Soft delete support for sync scenarios (preserves data)
 - Sync operations with automatic conflict detection and resolution
 - Change tracking via get_changes_since for incremental sync
-- Automatic timestamp and version management
+- Automatic timestamp management (no version fields)
 - Type-safe operations using Python generics
+- Works with shared HomeKit models (no soft deletes)
 
 PURPOSE:
 Provides a consistent data access layer that handles the complexity of
-bidirectional sync, conflict resolution, and soft deletes. This ensures
-all entities follow the same patterns and sync protocol rules.
+bidirectional sync and conflict resolution. This ensures all entities
+follow the same patterns and sync protocol rules. Now uses simplified
+models without soft deletes or version tracking.
 
 KNOWN ISSUES:
-- Version increment is string-based arithmetic (fragile)
-- No transaction rollback handling in sync_entity
 - Conflict resolution within 1 second uses sync_id (may not be intuitive)
 - No batch operations for performance (single entity at a time)
-- get_changes_since doesn't handle deleted entities specially
 - Missing database indexes on updated_at for performance
+- Greenlet/async issues with some SQLAlchemy operations in sync context
 
 REVISION HISTORY:
-- 2024-01-15: Initial repository pattern implementation
-- 2024-01-16: Added ConflictResolver with last-write-wins
-- 2024-01-17: Added sync_entity method for bidirectional sync
+- 2025-07-28: Initial repository pattern implementation
+- 2025-07-28: Added ConflictResolver with last-write-wins
+- 2025-07-28: Added sync_entity method for bidirectional sync
 - 2025-07-28: Fixed datetime parsing in sync_entity for ISO format strings
 - 2025-07-28: Enhanced ConflictResolver to handle both string and datetime objects
 - 2025-07-28: Added timezone normalization for datetime comparisons
 - 2025-07-29: Improved ConflictResolver with robust timezone-aware datetime normalization
 - 2025-07-29: Fixed sync_entity to check by entity ID first (for conflicts) then sync_id (for normal sync)
-- 2024-01-18: Added soft delete support
-- 2024-01-19: Added get_changes_since for incremental sync
-- 2024-01-20: Fixed timezone handling in conflict resolution
+- 2025-07-28: Added soft delete support
+- 2025-07-28: Added get_changes_since for incremental sync
+- 2025-07-28: Fixed timezone handling in conflict resolution
+- 2025-07-29: Migrated to shared Inbetweenies models (removed soft deletes and version fields)
+- 2025-07-29: Updated all queries to work without is_deleted field
 
 DEPENDENCIES:
 - sqlalchemy: Async ORM operations
 - typing: Generic type support
 - datetime: UTC timestamp handling
-- ..models.base: Base entity classes
+- inbetweenies.models: Shared HomeKit-compatible models
+- inbetweenies.sync: Conflict resolution logic
 
 USAGE:
 # Create a repository for a model:
@@ -66,90 +69,17 @@ if conflict:
 
 import json
 from datetime import datetime, UTC
-from datetime import datetime, UTC
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models.base import Base, BaseEntity, ConflictResolution
+from inbetweenies.models import Base
+from inbetweenies.sync import ConflictResolver, ConflictResolution
+from inbetweenies.repositories import BaseSyncRepository
 
-T = TypeVar("T", bound=BaseEntity)
-
-
-class ConflictResolver:
-    """Handles last-write-wins conflict resolution."""
-    
-    @staticmethod
-    def resolve(local: Dict[str, Any], remote: Dict[str, Any]) -> ConflictResolution:
-        """
-        Resolve conflicts using last-write-wins strategy.
-        
-        Args:
-            local: Local entity data
-            remote: Remote entity data
-            
-        Returns:
-            ConflictResolution with winner and reason
-        """
-        # Handle both string and datetime objects, normalize to UTC
-        def normalize_datetime(dt):
-            """Normalize datetime to UTC timezone-aware."""
-            if isinstance(dt, str):
-                # Handle string format
-                if dt.endswith('Z'):
-                    dt = dt.replace('Z', '+00:00')
-                parsed = datetime.fromisoformat(dt)
-                # If still timezone-naive after parsing, assume UTC
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=UTC)
-                return parsed
-            else:
-                # Handle datetime object
-                if dt.tzinfo is None:
-                    # Timezone-naive, assume UTC
-                    return dt.replace(tzinfo=UTC)
-                else:
-                    # Already timezone-aware, convert to UTC
-                    return dt.astimezone(UTC)
-        
-        local_ts = normalize_datetime(local["updated_at"])
-        remote_ts = normalize_datetime(remote["updated_at"])
-        
-        # Calculate millisecond difference
-        diff_ms = int((remote_ts - local_ts).total_seconds() * 1000)
-        
-        if abs(diff_ms) < 1000:  # Within 1 second, use sync_id as tiebreaker
-            if remote["sync_id"] > local["sync_id"]:
-                return ConflictResolution(
-                    winner=remote,
-                    loser=local,
-                    reason="timestamps equal, remote has higher sync_id",
-                    timestamp_diff_ms=diff_ms
-                )
-            else:
-                return ConflictResolution(
-                    winner=local,
-                    loser=remote,
-                    reason="timestamps equal, local has higher sync_id",
-                    timestamp_diff_ms=diff_ms
-                )
-        
-        if remote_ts > local_ts:
-            return ConflictResolution(
-                winner=remote,
-                loser=local,
-                reason="remote has newer timestamp",
-                timestamp_diff_ms=diff_ms
-            )
-        else:
-            return ConflictResolution(
-                winner=local,
-                loser=remote,
-                reason="local has newer timestamp",
-                timestamp_diff_ms=diff_ms
-            )
+T = TypeVar("T", bound=Base)
 
 
 class BaseRepository(Generic[T]):
@@ -161,10 +91,20 @@ class BaseRepository(Generic[T]):
     
     async def create(self, db: AsyncSession, **kwargs) -> T:
         """Create a new entity."""
+        import uuid
+        
+        # Generate ID if not provided
+        if 'id' not in kwargs:
+            kwargs['id'] = str(uuid.uuid4())
+            
         # Set timestamps if not provided
         now = datetime.now(UTC)
         kwargs.setdefault("created_at", now)
         kwargs.setdefault("updated_at", now)
+        
+        # Generate sync_id if not provided
+        if 'sync_id' not in kwargs:
+            kwargs['sync_id'] = str(uuid.uuid4())
         
         entity = self.model_class(**kwargs)
         db.add(entity)
@@ -177,7 +117,7 @@ class BaseRepository(Generic[T]):
         stmt = select(self.model_class).where(
             and_(
                 self.model_class.id == id,
-                self.model_class.is_deleted == False
+                True  # Models don't have is_deleted - include all records
             )
         )
         result = await db.execute(stmt)
@@ -188,7 +128,7 @@ class BaseRepository(Generic[T]):
         stmt = select(self.model_class).where(
             and_(
                 self.model_class.sync_id == sync_id,
-                self.model_class.is_deleted == False
+                True  # Models don't have is_deleted - include all records
             )
         )
         result = await db.execute(stmt)
@@ -197,7 +137,7 @@ class BaseRepository(Generic[T]):
     async def get_all(self, db: AsyncSession, limit: int = 1000) -> List[T]:
         """Get all entities (excluding deleted)."""
         stmt = select(self.model_class).where(
-            self.model_class.is_deleted == False
+            True  # Models don't have is_deleted
         ).limit(limit)
         result = await db.execute(stmt)
         return list(result.scalars().all())
@@ -215,7 +155,7 @@ class BaseRepository(Generic[T]):
         
         # Update timestamp and version
         entity.updated_at = datetime.now(UTC)
-        entity.version = str(int(entity.version) + 1)
+        # Models don't have version field
         
         await db.commit()
         await db.refresh(entity)
@@ -227,10 +167,8 @@ class BaseRepository(Generic[T]):
         if not entity:
             return False
         
-        entity.is_deleted = True
-        entity.updated_at = datetime.now(UTC)
-        entity.version = str(int(entity.version) + 1)
-        
+        # Models don't have is_deleted - actually delete the record
+        await db.delete(entity)
         await db.commit()
         return True
     

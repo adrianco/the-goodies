@@ -1,0 +1,143 @@
+# do not edit or remove this file
+
+Human testing results:
+
+(venv) @adrianco ➜ /workspaces/the-goodies (main) $ blowing-off connect --server-url http://localhost:8000 --auth-token test-token
+✅ Connected to http://localhost:8000
+Client ID: 509fe8be-2263-4149-93ff-70198bf0022b
+(venv) @adrianco ➜ /workspaces/the-goodies (main) $ blowing-off sync
+🔄 Starting sync...
+✅ Sync completed successfully
+  Synced entities: 16
+  Conflicts resolved: 0
+  Duration: 0.36s
+(venv) @adrianco ➜ /workspaces/the-goodies (main) $ blowing-off rooms list
+Usage: blowing-off [OPTIONS] COMMAND [ARGS]...
+Try 'blowing-off --help' for help.
+
+Error: No such command 'rooms'.
+(venv) @adrianco ➜ /workspaces/the-goodies (main) $ blowing-off room list
+Traceback (most recent call last):
+  File "/workspaces/the-goodies/venv/bin/blowing-off", line 8, in <module>
+    sys.exit(cli())
+             ^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1442, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1363, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1830, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1830, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1226, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 794, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/blowing-off/blowingoff/cli/main.py", line 255, in room_list
+    asyncio.run(_list())
+  File "/home/codespace/.python/current/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/home/codespace/.python/current/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.python/current/lib/python3.12/asyncio/base_events.py", line 684, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/blowing-off/blowingoff/cli/main.py", line 247, in _list
+    [r["id"], r["name"], r["floor"], r["room_type"] or "-"]
+                         ~^^^^^^^^^
+KeyError: 'floor'
+
+
+$ blowing-off device list
+Traceback (most recent call last):
+  File "/workspaces/the-goodies/venv/bin/blowing-off", line 8, in <module>
+    sys.exit(cli())
+             ^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1442, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1363, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1830, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1830, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 1226, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/venv/lib/python3.12/site-packages/click/core.py", line 794, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/blowing-off/blowingoff/cli/main.py", line 306, in device_list
+    asyncio.run(_list())
+  File "/home/codespace/.python/current/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/home/codespace/.python/current/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.python/current/lib/python3.12/asyncio/base_events.py", line 684, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/workspaces/the-goodies/blowing-off/blowingoff/cli/main.py", line 287, in _list
+    devices = await client.get_devices(room_id)
+                    ^^^^^^^^^^^^^^^^^^
+AttributeError: 'BlowingOffClient' object has no attribute 'get_devices'
+
+
+
+$ python -m funkygibbon
+DEBUG: Starting server with DATABASE_URL=sqlite+aiosqlite:///./funkygibbon.db
+INFO:     Started server process [563585]
+INFO:     Waiting for application startup.
+Database initialized
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+DEBUG: Sync request from 509fe8be-2263-4149-93ff-70198bf0022b, last_sync=None, entity_types=['homes', 'rooms', 'accessories', 'users']
+DEBUG: Entity type homes: found 1 entities
+DEBUG: Entity type rooms: found 4 entities
+DEBUG: Entity type accessories: found 8 entities
+DEBUG: Entity type users: found 3 entities
+DEBUG: Returning 16 changes
+INFO:     127.0.0.1:46844 - "POST /api/v1/sync/request HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46860 - "POST /api/v1/sync/ack HTTP/1.1" 200 OK
+DEBUG: Sync request from 509fe8be-2263-4149-93ff-70198bf0022b, last_sync=2025-07-29 23:16:20.758678, entity_types=['homes', 'rooms', 'accessories', 'users']
+DEBUG: Entity type homes: found 0 entities
+DEBUG: Entity type rooms: found 0 entities
+DEBUG: Entity type accessories: found 0 entities
+DEBUG: Entity type users: found 0 entities
+DEBUG: Returning 0 changes
+INFO:     127.0.0.1:60492 - "POST /api/v1/sync/request HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60504 - "POST /api/v1/sync/ack HTTP/1.1" 200 OK
+
+FIXED ISSUES:
+
+✅ Fixed CLI commands after HomeKit migration:
+
+1. Room list was trying to access 'floor' and 'room_type' fields that were removed
+   - Fixed: Now shows ID, Name, and Home ID
+
+2. Device list was calling get_devices() method that doesn't exist and accessing old fields
+   - Fixed: Now calls get_accessories() and shows HomeKit-compatible fields (ID, Name, Manufacturer, Model, Home ID)
+
+3. Room create was using --house-id and old field parameters
+   - Fixed: Now uses --home-id and only requires name (HomeKit-compatible)
+
+Current working commands:
+$ blowing-off home show
+$ blowing-off room list  
+$ blowing-off device list
+$ blowing-off sync
+
+All commands now work correctly with the HomeKit-compatible models.

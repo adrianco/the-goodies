@@ -24,10 +24,10 @@ KNOWN ISSUES:
 - Missing async fixtures for the new async codebase
 
 REVISION HISTORY:
-- 2024-01-15: Initial creation with basic fixtures
-- 2024-01-15: Added performance testing fixtures (300 entities)
-- 2024-01-15: Added conflict scenario generators
-- 2024-01-15: Needs update for async SQLAlchemy models
+- 2025-07-28: Initial creation with basic fixtures
+- 2025-07-28: Added performance testing fixtures (300 entities)
+- 2025-07-28: Added conflict scenario generators
+- 2025-07-28: Needs update for async SQLAlchemy models
 
 DEPENDENCIES:
 - pytest: Test framework
@@ -43,7 +43,7 @@ import pytest
 import sqlite3
 import tempfile
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 from typing import Dict, List, Any
 
@@ -93,7 +93,7 @@ def sample_entities():
                 "index": i,
                 "state": "on" if i % 2 == 0 else "off"
             },
-            "version_timestamp": datetime.utcnow() - timedelta(minutes=i),
+            "version_timestamp": datetime.now(timezone.utc) - timedelta(minutes=i),
             "last_modified_by": f"user-{i % 3}"
         }
         for i in range(10)
@@ -107,7 +107,7 @@ def home_graph_data():
         "id": "home-1",
         "type": "home",
         "content": {"name": "Test Home", "address": "123 Test St"},
-        "version_timestamp": datetime.utcnow(),
+        "version_timestamp": datetime.now(timezone.utc),
         "last_modified_by": "user-1"
     }
     
@@ -116,7 +116,7 @@ def home_graph_data():
             "id": f"room-{i}",
             "type": "room",
             "content": {"name": room_name, "floor": 1},
-            "version_timestamp": datetime.utcnow(),
+            "version_timestamp": datetime.now(timezone.utc),
             "last_modified_by": "user-1"
         }
         for i, room_name in enumerate(["Living Room", "Kitchen", "Bedroom"])
@@ -140,7 +140,7 @@ def home_graph_data():
                 "state": "on",
                 "room_id": room_id
             },
-            "version_timestamp": datetime.utcnow(),
+            "version_timestamp": datetime.now(timezone.utc),
             "last_modified_by": "user-1"
         })
     
@@ -153,7 +153,7 @@ def home_graph_data():
             "from_id": room["id"],
             "to_id": home["id"],
             "type": "located_in",
-            "created_at": datetime.utcnow()
+            "created_at": datetime.now(timezone.utc)
         })
     
     # Connect devices to rooms
@@ -164,7 +164,7 @@ def home_graph_data():
             "from_id": device["id"],
             "to_id": room_id,
             "type": "located_in",
-            "created_at": datetime.utcnow()
+            "created_at": datetime.now(timezone.utc)
         })
     
     return {
@@ -204,7 +204,7 @@ def large_dataset():
         "id": "home-main",
         "type": "home",
         "content": {"name": "Performance Test Home"},
-        "version_timestamp": datetime.utcnow(),
+        "version_timestamp": datetime.now(timezone.utc),
         "last_modified_by": "perf-user"
     })
     
@@ -217,7 +217,7 @@ def large_dataset():
             "id": f"room-{i}",
             "type": "room",
             "content": {"name": name, "floor": i // 5},
-            "version_timestamp": datetime.utcnow() - timedelta(seconds=i),
+            "version_timestamp": datetime.now(timezone.utc) - timedelta(seconds=i),
             "last_modified_by": "perf-user"
         })
     
@@ -238,7 +238,7 @@ def large_dataset():
                 "battery": random.randint(0, 100) if i % 5 == 0 else None,
                 "temperature": random.uniform(18.0, 25.0) if i % 10 == 0 else None
             },
-            "version_timestamp": datetime.utcnow() - timedelta(seconds=i*10),
+            "version_timestamp": datetime.now(timezone.utc) - timedelta(seconds=i*10),
             "last_modified_by": f"user-{i % 5}"
         })
     
@@ -248,7 +248,7 @@ def large_dataset():
 @pytest.fixture
 def conflict_scenarios():
     """Generate entities with conflicting updates for testing"""
-    base_time = datetime.utcnow()
+    base_time = datetime.now(timezone.utc)
     entity_id = "conflict-entity-1"
     
     return [
@@ -333,11 +333,11 @@ class TestTimer:
         self.duration = None
     
     def __enter__(self):
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(timezone.utc)
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.duration = (datetime.utcnow() - self.start_time).total_seconds()
+        self.duration = (datetime.now(timezone.utc) - self.start_time).total_seconds()
         print(f"\n{self.name} took {self.duration:.3f}s")
 
 
@@ -347,7 +347,7 @@ def generate_test_entity(entity_type="device", **kwargs):
         "id": f"{entity_type}-{random.randint(1000, 9999)}",
         "type": entity_type,
         "content": {"name": f"Test {entity_type.title()}"},
-        "version_timestamp": datetime.utcnow(),
+        "version_timestamp": datetime.now(timezone.utc),
         "last_modified_by": "test-user"
     }
     defaults.update(kwargs)

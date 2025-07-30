@@ -118,22 +118,58 @@ public protocol MCPServerProtocol: AnyObject {
 ### Entity Models
 
 ```swift
-// MARK: - Core Entity Model
-public struct HomeEntity: Codable, Identifiable {
+// MARK: - HomeKit-Compatible Models
+// These models match the shared Inbetweenies models
+
+public struct Home: Codable, Identifiable {
     public let id: String
-    public let version: String
-    public let entityType: EntityType
-    public let parentVersions: [String]
-    public let content: EntityContent
-    public let userId: String
-    public let sourceType: SourceType
+    public let name: String
+    public let isPrimary: Bool
+    public let syncId: String
     public let createdAt: Date
-    public let lastModified: Date
-    
-    // Convenience accessors
-    public var displayName: String? {
-        content["name"] as? String
-    }
+    public let updatedAt: Date
+}
+
+public struct Accessory: Codable, Identifiable {
+    public let id: String
+    public let homeId: String
+    public let name: String
+    public let manufacturer: String
+    public let model: String
+    public let serialNumber: String?
+    public let firmwareVersion: String?
+    public let isReachable: Bool
+    public let isBlocked: Bool
+    public let isBridge: Bool
+    public let bridgeId: String?
+    public let syncId: String
+    public let createdAt: Date
+    public let updatedAt: Date
+}
+
+public struct Service: Codable, Identifiable {
+    public let id: String
+    public let accessoryId: String
+    public let serviceType: String
+    public let name: String
+    public let isPrimary: Bool
+    public let isHidden: Bool
+    public let linkedServices: [String]
+    public let syncId: String
+    public let createdAt: Date
+    public let updatedAt: Date
+}
+
+public struct Characteristic: Codable, Identifiable {
+    public let id: String
+    public let serviceId: String
+    public let characteristicType: String
+    public let value: String  // JSON encoded
+    public let metadata: [String: Any]
+    public let isNotificationEnabled: Bool
+    public let syncId: String
+    public let createdAt: Date
+    public let updatedAt: Date
 }
 
 // MARK: - Entity Content Wrapper

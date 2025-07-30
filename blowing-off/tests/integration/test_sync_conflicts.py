@@ -52,22 +52,22 @@ class TestSyncConflicts:
         await client1.sync()
         await client2.sync()
         
-        # Create test device on client1
-        houses = await client1.get_rooms()
-        if not houses:
-            room_id = await client1.create_room("test-house", "Test Room")
+        # Create test accessory on client1
+        homes = await client1.get_rooms()
+        if not homes:
+            room_id = await client1.create_room("test-home", "Test Room")
             await client1.sync()
             await client2.sync()
         else:
-            room_id = houses[0]["id"]
+            room_id = homes[0]["id"]
             
-        device_id = await client1.create_device(room_id, "Conflict Light", "light")
+        accessory_id = await client1.create_accessory(room_id, "Conflict Light", "light")
         await client1.sync()
         await client2.sync()
         
         # Update on both clients
-        await client1.update_device_state(device_id, {"power": "on", "color": "red"})
-        await client2.update_device_state(device_id, {"power": "off", "color": "blue"})
+        await client1.update_accessory_state(accessory_id, {"power": "on", "color": "red"})
+        await client2.update_accessory_state(accessory_id, {"power": "off", "color": "blue"})
         
         # Sync both - last write should win
         result1 = await client1.sync()
@@ -81,8 +81,8 @@ class TestSyncConflicts:
         await client1.sync()
         await client2.sync()
         
-        state1 = await client1.get_device_state(device_id)
-        state2 = await client2.get_device_state(device_id)
+        state1 = await client1.get_accessory_state(accessory_id)
+        state2 = await client2.get_accessory_state(accessory_id)
         
         assert state1["state"] == state2["state"]
         
@@ -96,23 +96,23 @@ class TestSyncConflicts:
         await client1.sync()
         await client2.sync()
         
-        # Create device
+        # Create accessory
         rooms = await client1.get_rooms()
         if rooms:
             room_id = rooms[0]["id"]
-            device_id = await client1.create_device(room_id, "Delete Test", "switch")
+            accessory_id = await client1.create_accessory(room_id, "Delete Test", "switch")
             await client1.sync()
             await client2.sync()
             
             # Client1 deletes, Client2 updates
             # (Direct repository access for delete since client API doesn't expose it)
             async with client1.session_factory() as session:
-                from blowing_off.repositories import ClientDeviceRepository
-                repo = ClientDeviceRepository(session)
-                await repo.delete(device_id)
+                from blowing_off.repositories import ClientAccessoryRepository
+                repo = ClientAccessoryRepository(session)
+                await repo.delete(accessory_id)
                 await session.commit()
                 
-            await client2.update_device_state(device_id, {"power": "on"})
+            await client2.update_accessory_state(accessory_id, {"power": "on"})
             
             # Sync both
             result1 = await client1.sync()
@@ -121,15 +121,15 @@ class TestSyncConflicts:
             # Delete should win
             assert result1.success or result2.success
             
-            # Verify device is gone
+            # Verify accessory is gone
             await client1.sync()
             await client2.sync()
             
-            devices1 = await client1.get_devices()
-            devices2 = await client2.get_devices()
+            accessorys1 = await client1.get_accessorys()
+            accessorys2 = await client2.get_accessorys()
             
-            assert not any(d["id"] == device_id for d in devices1)
-            assert not any(d["id"] == device_id for d in devices2)
+            assert not any(d["id"] == accessory_id for d in accessorys1)
+            assert not any(d["id"] == accessory_id for d in accessorys2)
             
     @pytest.mark.asyncio
     async def test_timestamp_tiebreaker(self, two_clients):
@@ -141,40 +141,40 @@ class TestSyncConflicts:
         await client1.sync()
         await client2.sync()
         
-        # Create device
+        # Create accessory
         rooms = await client1.get_rooms()
         if rooms:
             room_id = rooms[0]["id"]
-            device_id = f"tiebreak-{uuid.uuid4()}"
+            accessory_id = f"tiebreak-{uuid.uuid4()}"
             
             # Create with specific timestamps
             now = datetime.now()
             
             async with client1.session_factory() as session:
-                from blowing_off.repositories import ClientDeviceRepository
-                from blowing_off.models.device import ClientDeviceType
+                from blowing_off.repositories import ClientAccessoryRepository
+                from blowing_off.models.accessory import ClientAccessoryType
                 
-                repo = ClientDeviceRepository(session)
+                repo = ClientAccessoryRepository(session)
                 await repo.create(
-                    id=device_id,
+                    id=accessory_id,
                     room_id=room_id,
                     name="Tie Test 1",
-                    device_type=ClientDeviceType.LIGHT,
+                    accessory_type=ClientAccessoryType.LIGHT,
                     updated_at=now,
                     sync_id="aaa-111"  # Lower sync_id
                 )
                 await session.commit()
                 
             async with client2.session_factory() as session:
-                from blowing_off.repositories import ClientDeviceRepository
-                from blowing_off.models.device import ClientDeviceType
+                from blowing_off.repositories import ClientAccessoryRepository
+                from blowing_off.models.accessory import ClientAccessoryType
                 
-                repo = ClientDeviceRepository(session)
+                repo = ClientAccessoryRepository(session)
                 await repo.create(
-                    id=device_id,
+                    id=accessory_id,
                     room_id=room_id,
                     name="Tie Test 2",
-                    device_type=ClientDeviceType.LIGHT,
+                    accessory_type=ClientAccessoryType.LIGHT,
                     updated_at=now,
                     sync_id="zzz-999"  # Higher sync_id wins
                 )
@@ -187,15 +187,15 @@ class TestSyncConflicts:
             await client2.sync()
             
             # Check winner (higher sync_id)
-            devices1 = await client1.get_devices()
-            devices2 = await client2.get_devices()
+            accessorys1 = await client1.get_accessorys()
+            accessorys2 = await client2.get_accessorys()
             
-            device1 = next((d for d in devices1 if d["id"] == device_id), None)
-            device2 = next((d for d in devices2 if d["id"] == device_id), None)
+            accessory1 = next((d for d in accessorys1 if d["id"] == accessory_id), None)
+            accessory2 = next((d for d in accessorys2 if d["id"] == accessory_id), None)
             
-            if device1 and device2:
-                assert device1["name"] == device2["name"]
-                assert device1["name"] == "Tie Test 2"  # Higher sync_id
+            if accessory1 and accessory2:
+                assert accessory1["name"] == accessory2["name"]
+                assert accessory1["name"] == "Tie Test 2"  # Higher sync_id
                 
     @pytest.mark.asyncio
     async def test_bulk_conflict_resolution(self, two_clients):
@@ -211,24 +211,24 @@ class TestSyncConflicts:
         if rooms:
             room_id = rooms[0]["id"]
             
-            # Create multiple devices and update on both sides
-            device_ids = []
+            # Create multiple accessorys and update on both sides
+            accessory_ids = []
             for i in range(5):
-                device_id = await client1.create_device(
-                    room_id, f"Bulk Device {i}", "switch"
+                accessory_id = await client1.create_accessory(
+                    room_id, f"Bulk Accessory {i}", "switch"
                 )
-                device_ids.append(device_id)
+                accessory_ids.append(accessory_id)
                 
             await client1.sync()
             await client2.sync()
             
-            # Update all devices differently
-            for i, device_id in enumerate(device_ids):
-                await client1.update_device_state(
-                    device_id, {"power": "on", "level": i}
+            # Update all accessorys differently
+            for i, accessory_id in enumerate(accessory_ids):
+                await client1.update_accessory_state(
+                    accessory_id, {"power": "on", "level": i}
                 )
-                await client2.update_device_state(
-                    device_id, {"power": "off", "level": i * 2}
+                await client2.update_accessory_state(
+                    accessory_id, {"power": "off", "level": i * 2}
                 )
                 
             # Sync and resolve all conflicts
@@ -237,14 +237,14 @@ class TestSyncConflicts:
             
             # Should handle all conflicts
             total_conflicts = len(result1.conflicts) + len(result2.conflicts)
-            assert total_conflicts >= len(device_ids)
+            assert total_conflicts >= len(accessory_ids)
             
             # Final sync for consistency
             await client1.sync()
             await client2.sync()
             
-            # Verify all devices have consistent state
-            for device_id in device_ids:
-                state1 = await client1.get_device_state(device_id)
-                state2 = await client2.get_device_state(device_id)
+            # Verify all accessorys have consistent state
+            for accessory_id in accessory_ids:
+                state1 = await client1.get_accessory_state(accessory_id)
+                state2 = await client2.get_accessory_state(accessory_id)
                 assert state1["state"] == state2["state"]

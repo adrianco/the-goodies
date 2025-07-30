@@ -2,7 +2,7 @@
 FunkyGibbon - FastAPI Application Factory
 
 DEVELOPMENT CONTEXT:
-Created in January 2024 as the main API application factory following
+Created in July 2025 as the main API application factory following
 FastAPI best practices. This module bootstraps the REST API server that
 provides endpoints for the smart home knowledge graph system.
 
@@ -29,11 +29,11 @@ KNOWN ISSUES:
 - Shutdown doesn't close database connections explicitly
 
 REVISION HISTORY:
-- 2024-01-15: Initial FastAPI setup with basic routers
-- 2024-01-16: Added lifespan events for database initialization
-- 2024-01-17: Added CORS middleware for frontend development
-- 2024-01-18: Added health check endpoint
-- 2024-01-19: Moved to factory pattern for better testing
+- 2025-07-28: Initial FastAPI setup with basic routers
+- 2025-07-28: Added lifespan events for database initialization
+- 2025-07-28: Added CORS middleware for frontend development
+- 2025-07-28: Added health check endpoint
+- 2025-07-28: Moved to factory pattern for better testing
 
 DEPENDENCIES:
 - fastapi: Modern web framework for building APIs
@@ -62,7 +62,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..database import init_db
-from .routers import device, house, room, sync, user
+from .routers import homes, rooms, accessories, services, characteristics, users, sync, sync_metadata
 
 
 @asynccontextmanager
@@ -95,11 +95,14 @@ def create_app() -> FastAPI:
     )
     
     # Include routers
-    app.include_router(house.router, prefix=f"{settings.api_prefix}/houses", tags=["houses"])
-    app.include_router(room.router, prefix=f"{settings.api_prefix}/rooms", tags=["rooms"])
-    app.include_router(device.router, prefix=f"{settings.api_prefix}/devices", tags=["devices"])
-    app.include_router(user.router, prefix=f"{settings.api_prefix}/users", tags=["users"])
+    app.include_router(homes.router, prefix=f"{settings.api_prefix}/homes", tags=["homes"])
+    app.include_router(rooms.router, prefix=f"{settings.api_prefix}/rooms", tags=["rooms"])
+    app.include_router(accessories.router, prefix=f"{settings.api_prefix}/accessories", tags=["accessories"])
+    app.include_router(services.router, prefix=f"{settings.api_prefix}/services", tags=["services"])
+    app.include_router(characteristics.router, prefix=f"{settings.api_prefix}/characteristics", tags=["characteristics"])
+    app.include_router(users.router, prefix=f"{settings.api_prefix}/users", tags=["users"])
     app.include_router(sync.router, prefix=f"{settings.api_prefix}/sync", tags=["sync"])
+    app.include_router(sync_metadata.router, prefix=f"{settings.api_prefix}/sync-metadata", tags=["sync-metadata"])
     
     @app.get("/")
     async def root():

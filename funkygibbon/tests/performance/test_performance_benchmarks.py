@@ -8,7 +8,7 @@ REVISION HISTORY:
 import pytest
 import sqlite3
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import random
 from contextlib import contextmanager
@@ -80,7 +80,7 @@ class TestPerformanceBenchmarks:
     def test_bulk_insert_300_entities(self, optimized_db):
         """Test inserting 300 entities in bulk"""
         entities = []
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         
         # Generate 300 entities
         for i in range(300):
@@ -225,7 +225,7 @@ class TestPerformanceBenchmarks:
         optimized_db.commit()
         
         # Prepare updates for first 100 entities
-        update_time = datetime.utcnow()
+        update_time = datetime.now(timezone.utc)
         updates = []
         for i in range(100):
             entity = large_dataset[i]
@@ -294,7 +294,7 @@ class TestPerformanceBenchmarks:
                 device['id'],
                 room['id'],
                 "located_in",
-                json.dumps({"assigned_at": datetime.utcnow().isoformat()})
+                json.dumps({"assigned_at": datetime.now(timezone.utc).isoformat()})
             ))
         
         # Measure relationship insertion
@@ -323,9 +323,8 @@ class TestPerformanceBenchmarks:
         assert len(devices_in_room) > 0
     
     @pytest.mark.performance
-    @pytest.mark.skip(reason="SQLite connections cannot be shared between threads - known limitation")
     def test_concurrent_read_write(self, optimized_db, large_dataset):
-        """Test concurrent read and write operations"""
+        """Test concurrent read and write operations with proper SQLite handling"""
         import threading
         import queue
         
@@ -349,26 +348,44 @@ class TestPerformanceBenchmarks:
         )
         optimized_db.commit()
         
+        # Get the database path from the connection
+        db_path = None
+        cursor = optimized_db.execute("PRAGMA database_list")
+        for row in cursor.fetchall():
+            if row[1] == 'main':
+                db_path = row[2]
+                break
+        
         results = queue.Queue()
         errors = queue.Queue()
         
         def reader_thread(thread_id):
-            """Continuously read entities"""
+            """Continuously read entities with its own connection"""
             try:
+                # Create a new connection for this thread
+                conn = sqlite3.connect(db_path, timeout=30.0)
+                conn.execute("PRAGMA busy_timeout=5000")
+                
                 for _ in range(50):
-                    cursor = optimized_db.execute("SELECT COUNT(*) FROM entities")
+                    cursor = conn.execute("SELECT COUNT(*) FROM entities")
                     count = cursor.fetchone()[0]
                     results.put(('read', thread_id, count))
                     time.sleep(0.001)  # Small delay
+                
+                conn.close()
             except Exception as e:
                 errors.put(('read', thread_id, str(e)))
         
         def writer_thread(thread_id):
-            """Add new entities"""
+            """Add new entities with its own connection"""
             try:
+                # Create a new connection for this thread
+                conn = sqlite3.connect(db_path, timeout=30.0)
+                conn.execute("PRAGMA busy_timeout=5000")
+                
                 for i in range(20):
                     entity_id = f"concurrent-{thread_id}-{i}"
-                    optimized_db.execute(
+                    conn.execute(
                         """
                         INSERT INTO entities (id, type, content, version_timestamp, last_modified_by)
                         VALUES (?, ?, ?, ?, ?)
@@ -377,13 +394,15 @@ class TestPerformanceBenchmarks:
                             entity_id,
                             "device",
                             json.dumps({"thread": thread_id, "index": i}),
-                            datetime.utcnow().timestamp(),
+                            datetime.now(timezone.utc).timestamp(),
                             f"thread-{thread_id}"
                         )
                     )
-                    optimized_db.commit()
+                    conn.commit()
                     results.put(('write', thread_id, entity_id))
                     time.sleep(0.002)
+                
+                conn.close()
             except Exception as e:
                 errors.put(('write', thread_id, str(e)))
         
@@ -468,7 +487,7 @@ class TestPerformanceBenchmarks:
                 f"batch-test-{i}",
                 "device",
                 json.dumps({"index": i, "batch_size": batch_size}),
-                datetime.utcnow().timestamp(),
+                datetime.now(timezone.utc).timestamp(),
                 "batch-user"
             ))
         
