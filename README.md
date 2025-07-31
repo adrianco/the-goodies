@@ -2,9 +2,13 @@
 
 ## 🏠 Overview
 
-The Goodies is a modern smart home knowledge graph system built around the **Model Context Protocol (MCP)** architecture. The system provides a unified interface for managing smart home devices, relationships, and automations through a graph-based data model.
+The Goodies is a modern smart home knowledge graph data store layer built around the **Model Context Protocol (MCP)** architecture. The system provides a unified interface for managing smart home devices, relationships, and automations through a graph-based data model.
 
-**Current Status**: ✅ **Production Ready** - All tests passing (139/139), comprehensive MCP functionality, and full client-server synchronization.
+**History** Ideas discussed with Claude mobile app over the weekend, saved as a file to a new repo on Monday July 28th, claude-flow completed first running code that afternoon, tidy up on June 29th, feature branch to add MCP and graph functionality added June 30th, tidy up and merged morning of June 31st.
+
+**Current Status**: ✅ **Production Ready** - All tests passing (139/139), comprehensive MCP functionality, and full client-server synchronization for Python based use cases.
+
+**Next steps: Implement Swift versions of Inbetweenies protocol and WildThing client based on python functionality, then refactor adrianco/c11s-house-ios to use it**
 
 ## 🏗️ Architecture
 
