@@ -25,6 +25,8 @@ class User(Base, InbetweeniesTimestampMixin):
     
     # Relationships
     home = relationship("Home", back_populates="users")
+    entities = relationship("Entity", back_populates="user")
+    entity_relationships = relationship("EntityRelationship", back_populates="user")
     
     def to_dict(self) -> dict:
         """Convert to dictionary for sync."""

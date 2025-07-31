@@ -59,14 +59,14 @@ USAGE:
 """
 
 from .protocol import InbetweeniesProtocol
-from .state import SyncState, SyncResult
 from .engine import SyncEngine
 from .conflict_resolver import ConflictResolver
+from inbetweenies.sync import SyncState, SyncResult
 
 __all__ = [
     "InbetweeniesProtocol",
-    "SyncState",
-    "SyncResult",
     "SyncEngine",
     "ConflictResolver",
+    "SyncState",
+    "SyncResult",
 ]

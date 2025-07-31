@@ -230,11 +230,21 @@ coordination/orchestration/*
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
+*.sqlite-shm
 claude-flow
 claude-flow.bat
 claude-flow.ps1
 hive-mind-prompt-*.txt
+
+# Claude Flow metrics and client configuration
+.claude-flow/
+.blowingoff.json
+
+# Project-specific temporary files
+funkygibbon.db*
+blowingoff.db*
 

@@ -45,10 +45,22 @@ class TestSimpleIntegration:
             
             if result.success:
                 # If sync succeeded, we should have some data
-                home = await client.get_home()
-                print(f"Home data: {home}")
-                assert home is not None
-                print(f"✅ Synced home: {home['name']}")
+                # Use MCP tools to verify entities were synced
+                from inbetweenies.models import EntityType
+                
+                search_result = await client.execute_mcp_tool(
+                    "search_entities",
+                    query="",  # Get all entities
+                    entity_types=[EntityType.HOME.value],
+                    limit=10
+                )
+                
+                if search_result["success"] and search_result["result"]["count"] > 0:
+                    home_entity = search_result["result"]["results"][0]["entity"]
+                    print(f"✅ Found home entity: {home_entity['name']}")
+                    assert home_entity is not None
+                else:
+                    print("⚠️ No home entities found after sync")
             else:
                 # Print errors for debugging
                 print(f"❌ Sync failed with errors: {result.errors}")

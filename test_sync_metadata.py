@@ -6,6 +6,7 @@ Test that the shared SyncMetadata model works correctly.
 import asyncio
 import sys
 import tempfile
+import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select
 from datetime import datetime, UTC
@@ -15,6 +16,7 @@ sys.path.insert(0, '/workspaces/the-goodies')
 from inbetweenies.models import Base, SyncMetadata
 
 
+@pytest.mark.asyncio
 async def test_sync_metadata():
     """Test SyncMetadata functionality."""
     print("=== Testing Shared SyncMetadata Model ===\n")

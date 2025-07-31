@@ -16,6 +16,16 @@ import httpx
 import sys
 from pathlib import Path
 
+# Register pytest markers
+def pytest_configure(config):
+    """Configure pytest markers."""
+    config.addinivalue_line(
+        "markers", "integration: marks tests as integration tests"
+    )
+    config.addinivalue_line(
+        "markers", "unit: marks tests as unit tests"
+    )
+
 # Add FunkyGibbon to path
 funkygibbon_path = Path(__file__).parent.parent.parent / "funkygibbon"
 sys.path.insert(0, str(funkygibbon_path))
@@ -77,9 +87,9 @@ async def funkygibbon_server():
                 pytest.fail("FunkyGibbon server failed to start")
             await asyncio.sleep(0.5)
     
-    # Run populate_db.py to add test data
+    # Run populate_graph_db.py to add test data
     populate_result = subprocess.run(
-        [sys.executable, str(funkygibbon_path / "populate_db.py")],
+        [sys.executable, str(funkygibbon_path / "populate_graph_db.py")],
         cwd=str(parent_path),
         env=env,
         capture_output=True,

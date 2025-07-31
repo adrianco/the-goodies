@@ -6,11 +6,13 @@ Comprehensive test showing SyncMetadata is now properly shared between client an
 import asyncio
 import sys
 import tempfile
+import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from datetime import datetime, UTC
 
 sys.path.insert(0, '/workspaces/the-goodies')
 
+@pytest.mark.asyncio
 async def test_shared_sync_metadata():
     """Test that SyncMetadata is properly shared."""
     print("=== Comprehensive Shared SyncMetadata Test ===\n")
