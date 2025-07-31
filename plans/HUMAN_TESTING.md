@@ -494,25 +494,26 @@ curl -X POST http://localhost:8000/api/v1/sync/ \
   }'
 ```
 
-### Sync Client Usage (Python)
+### Sync Client Usage (CLI)
 
-```python
-from blowing_off.sync.client import EnhancedSyncClient, SyncType
+```bash
+# Connect to server with device ID
+blowing-off connect http://localhost:8000 auth-token --client-id "my-device"
 
-# Initialize client
-client = EnhancedSyncClient("http://localhost:8000", device_id="my-device")
+# Perform sync (automatically determines full or delta)
+blowing-off sync
 
-# Perform full sync
-progress = await client.full_sync()
-print(f"Synced {progress.synced_entities} entities")
+# Check sync status and history
+blowing-off status
 
-# Delta sync with filtering
-from datetime import datetime, timedelta
-since = datetime.now() - timedelta(hours=1)
-progress = await client.sync_entities(since=since)
+# Sync automatically determines whether to do full or delta sync
+# based on the last sync time and local changes
 
-# Handle conflicts
-await client.resolve_conflicts(strategy=ConflictStrategy.MERGE)
+# Run continuous sync daemon
+blowing-off sync-daemon
+
+# Conflicts are automatically shown during sync
+# The sync command will display any conflicts detected
 ```
 
 ### Version Management
@@ -541,7 +542,7 @@ A test script is provided to demonstrate sync functionality:
 
 ```bash
 cd /workspaces/the-goodies
-python funkygibbon/examples/test_sync.py
+python funkygibbon/examples/demo_sync.py
 ```
 
 This demonstrates:
@@ -570,46 +571,57 @@ curl -X POST http://localhost:8000/api/v1/mcp/tools/get_devices_in_room \
 
 #### Client-Side (Blowing-Off)
 
-The client now has local MCP functionality that works offline:
+The blowing-off client now mirrors oook's functionality but works with local data and sync capabilities. Both CLIs use the same graph API and MCP tools, providing a consistent experience.
 
-```python
-from blowingoff.client import BlowingOffClient
+First, install the client:
 
-# Initialize client
-client = BlowingOffClient("test.db")
-await client.connect("http://localhost:8000", "auth-token")
+```bash
+cd blowing-off
+pip install -e .
+cd ..
+```
 
-# Sync HomeKit data to local graph
-entities, relationships = await client.sync_graph_from_homekit()
-print(f"Synced {entities} entities and {relationships} relationships")
+Then use the blowing-off CLI (which now matches oook's functionality):
 
-# Execute MCP tools locally (works offline!)
-result = await client.execute_mcp_tool(
-    "get_devices_in_room",
-    room_id="living-room-123"
-)
-print(f"Devices in room: {result}")
+```bash
+# Connect to the server
+blowing-off connect http://localhost:8000 your-auth-token
 
-# Search entities locally
-result = await client.execute_mcp_tool(
-    "search_entities",
-    query="light",
-    entity_types=["device"],
-    limit=5
-)
-print(f"Found {result['result']['count']} lights")
+# Check connection status
+blowing-off status
 
-# Create relationships locally
-result = await client.execute_mcp_tool(
-    "create_relationship",
-    from_entity_id="device-123",
-    to_entity_id="room-456",
-    relationship_type="located_in",
-    user_id="local-user"
-)
+# Sync with server (pulls entities from graph API)
+blowing-off sync
 
-# Demo MCP functionality
-await client.demo_mcp_functionality()
+# Start background sync daemon
+blowing-off sync-daemon
+
+# List available MCP tools
+blowing-off tools
+
+# Execute MCP tools locally
+blowing-off execute search_entities -a query="smart light"
+blowing-off execute get_devices_in_room -a room_id="living-room-123"
+
+# Search for entities (uses local graph)
+blowing-off search "smart"
+blowing-off search "light" -t device -t automation
+
+# Create new entities locally
+blowing-off create device "Smart Bulb"
+blowing-off create room "Kitchen" -c '{"area": 25, "floor": 1}'
+
+# Show local graph statistics
+blowing-off stats
+
+# List all entities grouped by type
+blowing-off list-entities
+
+# Run MCP demo
+blowing-off demo
+
+# Disconnect when done
+blowing-off disconnect
 ```
 
 #### Testing Shared Functionality
@@ -628,44 +640,55 @@ oook execute get_devices_in_room -a room_id="living-room-1"
 ```
 
 2. **Test client local MCP functionality**:
-```python
-# In a Python script or interactive session
-import asyncio
-from blowingoff.client import BlowingOffClient
+```bash
+# Connect to server first
+blowing-off connect http://localhost:8000 test-token
 
-async def test_local_mcp():
-    client = BlowingOffClient("test_local.db")
-    
-    # Demo creates sample data and tests tools
-    await client.demo_mcp_functionality()
-    
-    # List available tools
-    tools = client.get_available_mcp_tools()
-    print(f"Available tools: {tools}")
+# Run the demo which creates sample data and tests MCP tools
+blowing-off demo
 
-asyncio.run(test_local_mcp())
+# After syncing, test MCP tools locally:
+blowing-off execute search_entities -a query="room"
+blowing-off execute get_devices_in_room -a room_id="<room-id>"
+
+# The local graph can be queried even when offline
+blowing-off stats
+blowing-off list-entities
 ```
 
-3. **Test sync between server and client graph data**:
-```python
-# This requires both server running and client connected
-async def test_graph_sync():
-    client = BlowingOffClient("test_sync.db")
-    await client.connect("http://localhost:8000", "test-token")
-    
-    # Sync HomeKit data to graph format
-    entities, rels = await client.sync_graph_from_homekit()
-    print(f"Converted {entities} HomeKit entities to graph format")
-    
-    # Now MCP tools work with HomeKit data
-    result = await client.execute_mcp_tool(
-        "search_entities",
-        query="room"
-    )
-    print(f"Found rooms: {result}")
+3. **Test sync between server and client**:
+```bash
+# Make sure server is running with populated data
+# Then connect and sync
+blowing-off connect http://localhost:8000 test-token
+blowing-off sync
 
-asyncio.run(test_graph_sync())
+# Check sync status
+blowing-off status
+
+# List synced data using graph operations
+blowing-off list-entities
+blowing-off search "*"  # Search all entities
+blowing-off stats      # See graph statistics
 ```
+
+#### CLI Command Comparison
+
+Both oook and blowing-off now provide similar commands:
+
+| Command | oook (server) | blowing-off (client) |
+|---------|---------------|---------------------|
+| List tools | `oook tools` | `blowing-off tools` |
+| Execute tool | `oook execute <tool> -a key=val` | `blowing-off execute <tool> -a key=val` |
+| Search | `oook search "query"` | `blowing-off search "query"` |
+| Create entity | `oook create device "name"` | `blowing-off create device "name"` |
+| Stats | `oook stats` | `blowing-off stats` |
+| Get entity | `oook get <id>` | `blowing-off execute get_entity_details -a entity_id=<id>` |
+
+Key differences:
+- **oook** queries the server's graph database directly
+- **blowing-off** queries the local SQLite database and can sync with server
+- **blowing-off** has additional sync commands (`sync`, `sync-daemon`, `status`)
 
 #### Benefits of Shared Code
 

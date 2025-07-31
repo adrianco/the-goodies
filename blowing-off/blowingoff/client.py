@@ -173,6 +173,36 @@ class BlowingOffClient:
         if hasattr(self, 'graph_storage'):
             self.graph_storage.clear()
             
+    async def get_sync_status(self) -> Dict[str, Any]:
+        """Get current sync status and statistics."""
+        async with self.session_factory() as session:
+            repo = SyncMetadataRepository(session)
+            metadata = await repo.get_metadata(
+                self.sync_engine.client_id if self.sync_engine else "default"
+            )
+            
+            if not metadata:
+                # Return default values if no metadata exists yet
+                return {
+                    "last_sync": None,
+                    "last_success": None,
+                    "total_syncs": 0,
+                    "sync_failures": 0,
+                    "total_conflicts": 0,
+                    "sync_in_progress": False,
+                    "last_error": None
+                }
+            
+            return {
+                "last_sync": metadata.last_sync_time.isoformat() if metadata.last_sync_time else None,
+                "last_success": metadata.last_sync_success.isoformat() if metadata.last_sync_success else None,
+                "total_syncs": metadata.total_syncs or 0,
+                "sync_failures": metadata.sync_failures or 0,
+                "total_conflicts": metadata.total_conflicts or 0,
+                "sync_in_progress": bool(metadata.sync_in_progress),
+                "last_error": metadata.last_sync_error
+            }
+    
     async def demo_mcp_functionality(self):
         """Demonstrate MCP functionality with sample data."""
         from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType

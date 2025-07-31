@@ -189,7 +189,8 @@ async def test_sync_api():
             results = response.json()
             print(f"   Found {len(results.get('results', []))} entities")
             for result in results.get("results", [])[:3]:
-                print(f"   - {result['name']} ({result['entity_type']})")
+                entity = result.get("entity", {})
+                print(f"   - {entity.get('name', 'Unknown')} ({entity.get('entity_type', 'Unknown')})")
     
     print("\n✅ Sync API test completed!")
 
