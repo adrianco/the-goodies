@@ -16,6 +16,16 @@ import httpx
 import sys
 from pathlib import Path
 
+# Register pytest markers
+def pytest_configure(config):
+    """Configure pytest markers."""
+    config.addinivalue_line(
+        "markers", "integration: marks tests as integration tests"
+    )
+    config.addinivalue_line(
+        "markers", "unit: marks tests as unit tests"
+    )
+
 # Add FunkyGibbon to path
 funkygibbon_path = Path(__file__).parent.parent.parent / "funkygibbon"
 sys.path.insert(0, str(funkygibbon_path))

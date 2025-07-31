@@ -3,11 +3,13 @@
 
 import asyncio
 import sys
+import pytest
 sys.path.insert(0, '/workspaces/the-goodies')
 
 from blowingoff.graph import LocalGraphStorage, LocalGraphOperations
 from inbetweenies.models import Entity, EntityType, SourceType
 
+@pytest.mark.asyncio
 async def test_graph_ops():
     storage = LocalGraphStorage()
     ops = LocalGraphOperations(storage)

@@ -33,6 +33,10 @@ venv\Scripts\activate     # On Windows
 
 # Set Python path to include project root (IMPORTANT!)
 export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
+
+# For permanent setup, add to your shell startup file:
+# echo 'export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH' >> ~/.bashrc
+# source ~/.bashrc
 ```
 
 ### Step 3: Install Dependencies
@@ -78,7 +82,7 @@ This script creates:
 
 ### Step 5: Start the FunkyGibbon Server
 ```bash
-# From project root with PYTHONPATH set
+# From project root with PYTHONPATH set (or use permanent setup from Step 2)
 export PYTHONPATH=/workspaces/the-goodies
 python -m funkygibbon
 ```

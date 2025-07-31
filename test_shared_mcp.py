@@ -10,6 +10,7 @@ server-side and client-side using the Entity model.
 import asyncio
 import sys
 import os
+import pytest
 
 # Add paths for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'blowing-off'))
@@ -17,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'blowing-off'))
 from blowingoff.client import BlowingOffClient
 
 
+@pytest.mark.asyncio
 async def test_local_mcp():
     """Test MCP functionality locally without server"""
     print("\n🔧 Testing Local MCP Functionality (Offline)")
@@ -95,36 +97,40 @@ async def test_local_mcp():
     # Rooms in home
     await client.graph_operations.store_relationship(
         EntityRelationship(
-            source_id=stored_living.id,
-            target_id=stored_home.id,
-            relationship_type=RelationshipType.LOCATED_IN,
-            source_type=SourceType.MANUAL
+            from_entity_id=stored_living.id,
+            from_entity_version=stored_living.version,
+            to_entity_id=stored_home.id,
+            to_entity_version=stored_home.version,
+            relationship_type=RelationshipType.LOCATED_IN
         )
     )
     await client.graph_operations.store_relationship(
         EntityRelationship(
-            source_id=stored_bedroom.id,
-            target_id=stored_home.id,
-            relationship_type=RelationshipType.LOCATED_IN,
-            source_type=SourceType.MANUAL
+            from_entity_id=stored_bedroom.id,
+            from_entity_version=stored_bedroom.version,
+            to_entity_id=stored_home.id,
+            to_entity_version=stored_home.version,
+            relationship_type=RelationshipType.LOCATED_IN
         )
     )
     
     # Devices in rooms
     await client.graph_operations.store_relationship(
         EntityRelationship(
-            source_id=stored_light.id,
-            target_id=stored_living.id,
-            relationship_type=RelationshipType.LOCATED_IN,
-            source_type=SourceType.MANUAL
+            from_entity_id=stored_light.id,
+            from_entity_version=stored_light.version,
+            to_entity_id=stored_living.id,
+            to_entity_version=stored_living.version,
+            relationship_type=RelationshipType.LOCATED_IN
         )
     )
     await client.graph_operations.store_relationship(
         EntityRelationship(
-            source_id=stored_thermostat.id,
-            target_id=stored_living.id,
-            relationship_type=RelationshipType.LOCATED_IN,
-            source_type=SourceType.MANUAL
+            from_entity_id=stored_thermostat.id,
+            from_entity_version=stored_thermostat.version,
+            to_entity_id=stored_living.id,
+            to_entity_version=stored_living.version,
+            relationship_type=RelationshipType.LOCATED_IN
         )
     )
     
@@ -174,6 +180,7 @@ async def test_local_mcp():
     print("\n✅ Local MCP test complete!")
 
 
+@pytest.mark.asyncio
 async def test_graph_operations():
     """Test advanced graph operations"""
     print("\n🎯 Testing Advanced Graph Operations")
@@ -212,7 +219,7 @@ async def test_graph_operations():
     # Create users
     john = await client.graph_operations.store_entity(
         Entity(
-            entity_type=EntityType.USER,
+            entity_type=EntityType.NOTE,
             name="John Doe",
             content={"role": "owner"},
             source_type=SourceType.MANUAL
@@ -221,7 +228,7 @@ async def test_graph_operations():
     
     jane = await client.graph_operations.store_entity(
         Entity(
-            entity_type=EntityType.USER,
+            entity_type=EntityType.NOTE,
             name="Jane Doe",
             content={"role": "admin"},
             source_type=SourceType.MANUAL
@@ -231,19 +238,21 @@ async def test_graph_operations():
     # Create ownership relationships
     await client.graph_operations.store_relationship(
         EntityRelationship(
-            source_id=john.id,
-            target_id=home1.id,
-            relationship_type=RelationshipType.MANAGES,
-            source_type=SourceType.MANUAL
+            from_entity_id=john.id,
+            from_entity_version=john.version,
+            to_entity_id=home1.id,
+            to_entity_version=home1.version,
+            relationship_type=RelationshipType.MANAGES
         )
     )
     
     await client.graph_operations.store_relationship(
         EntityRelationship(
-            source_id=jane.id,
-            target_id=home1.id,
-            relationship_type=RelationshipType.MANAGES,
-            source_type=SourceType.MANUAL
+            from_entity_id=jane.id,
+            from_entity_version=jane.version,
+            to_entity_id=home1.id,
+            to_entity_version=home1.version,
+            relationship_type=RelationshipType.MANAGES
         )
     )
     

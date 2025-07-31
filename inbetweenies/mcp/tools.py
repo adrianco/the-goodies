@@ -60,7 +60,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             
             return ToolResult(True, {
                 "room_id": room_id,
-                "devices": [d.__dict__ for d in devices],
+                "devices": [d.to_dict() for d in devices],
                 "count": len(devices)
             })
             
@@ -200,7 +200,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             stored = await self.store_entity(entity)
             
             return ToolResult(True, {
-                "entity": stored.__dict__,
+                "entity": stored.to_dict(),
                 "created": True
             })
             
@@ -309,7 +309,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             versions = await self.get_entity_versions(entity_id) if hasattr(self, 'get_entity_versions') else [entity]
             
             return ToolResult(True, {
-                "entity": entity.__dict__,
+                "entity": entity.to_dict(),
                 "relationships": {
                     "outgoing": [
                         {

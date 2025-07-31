@@ -6,6 +6,7 @@ Test the sync metadata API endpoints.
 import asyncio
 import sys
 import tempfile
+import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from fastapi.testclient import TestClient
 
@@ -16,6 +17,7 @@ from funkygibbon.api.app import create_app
 from funkygibbon.models import Base
 
 
+@pytest.mark.asyncio
 async def test_sync_metadata_api():
     """Test sync metadata API endpoints."""
     print("=== Testing Sync Metadata API ===\n")

@@ -153,9 +153,9 @@ def sync(full):
             result = await client.sync()
             
             console.print(f"\n[green]✅ Sync completed![/green]")
-            console.print(f"  Entities synced: {result.entities_synced}")
-            console.print(f"  Changes sent: {result.changes_sent}")
-            console.print(f"  Changes received: {result.changes_received}")
+            console.print(f"  Entities synced: {result.synced_entities}")
+            console.print(f"  Changes sent: {getattr(result, 'changes_sent', 0)}")
+            console.print(f"  Changes received: {getattr(result, 'changes_received', 0)}")
             console.print(f"  Conflicts resolved: {result.conflicts_resolved}")
             console.print(f"  Duration: {result.duration:.2f}s")
             
