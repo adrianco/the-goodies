@@ -61,7 +61,7 @@ USAGE:
 
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
-from .state import Conflict
+from inbetweenies.sync import Conflict
 from inbetweenies.sync import ConflictResolution
 
 

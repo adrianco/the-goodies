@@ -136,6 +136,5 @@ class SyncMetadata(Base, InbetweeniesTimestampMixin):
             "sync_in_progress": bool(self.sync_in_progress),
             "next_retry_time": self.next_retry_time.isoformat() if self.next_retry_time else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "sync_id": self.sync_id
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }

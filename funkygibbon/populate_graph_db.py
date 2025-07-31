@@ -12,6 +12,7 @@ Creates a realistic smart home knowledge graph with:
 
 import asyncio
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,8 +26,8 @@ from sqlalchemy import text
 
 from inbetweenies.models import Base, Entity, EntityType, SourceType, EntityRelationship, RelationshipType
 
-# Default database URL
-DATABASE_URL = "sqlite+aiosqlite:///./funkygibbon.db"
+# Default database URL - can be overridden by environment variable
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./funkygibbon.db")
 
 
 class GraphPopulator:

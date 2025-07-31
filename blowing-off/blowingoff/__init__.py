@@ -49,8 +49,6 @@ USAGE:
 __version__ = "0.1.0"
 
 from .client import BlowingOffClient
-from .sync.state import SyncState, SyncResult
-# SyncStatus removed for HomeKit focus
-# from .models.base import SyncStatus
+from inbetweenies.sync import SyncState, SyncResult
 
-__all__ = ["BlowingOffClient", "SyncState", "SyncResult"]  # SyncStatus removed
+__all__ = ["BlowingOffClient", "SyncState", "SyncResult"]

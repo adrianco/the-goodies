@@ -110,7 +110,7 @@ class TestBasicSync:
                 headers=headers
             )
             assert response.status_code in [200, 201]
-            home_entity = response.json()
+            home_entity = response.json()["entity"]
             
             # Create a room entity
             room_data = {
@@ -128,13 +128,14 @@ class TestBasicSync:
                 headers=headers
             )
             assert response.status_code in [200, 201]
-            room_entity = response.json()
+            room_entity = response.json()["entity"]
             
             # Create relationship between home and room
             rel_data = {
                 "source_id": room_entity["id"],
                 "target_id": home_entity["id"],
-                "relationship_type": "located_in"
+                "relationship_type": "located_in",
+                "user_id": "test-user"
             }
             response = await http.post(
                 "/api/v1/graph/relationships",
@@ -180,7 +181,11 @@ class TestBasicSync:
         from inbetweenies.models import Entity, EntityType, SourceType
         
         # Create a device entity locally
+        import uuid
+        entity_id = str(uuid.uuid4())
         device_entity = Entity(
+            id=entity_id,
+            version=Entity.create_version("test-user"),
             entity_type=EntityType.DEVICE,
             name="Test Smart Light",
             content={
@@ -189,7 +194,9 @@ class TestBasicSync:
                 "power": "on",
                 "brightness": 75
             },
-            source_type=SourceType.MANUAL
+            source_type=SourceType.MANUAL,
+            user_id="test-user",
+            parent_versions=[]
         )
         
         # Store it locally
@@ -211,11 +218,17 @@ class TestBasicSync:
         from inbetweenies.models import Entity, EntityType, SourceType
         
         # Create on client
+        import uuid
+        entity_id = str(uuid.uuid4())
         client_entity = Entity(
+            id=entity_id,
+            version=Entity.create_version("test-user"),
             entity_type=EntityType.DEVICE,
             name="Conflict Test Device",
             content={"value": "client-version"},
-            source_type=SourceType.MANUAL
+            source_type=SourceType.MANUAL,
+            user_id="test-user",
+            parent_versions=[]
         )
         stored_client = await client.graph_operations.store_entity(client_entity)
         
@@ -260,14 +273,20 @@ class TestBasicSync:
         
         # Create multiple entities locally
         from inbetweenies.models import Entity, EntityType, SourceType
+        import uuid
         
         entities_created = []
         for i in range(3):
+            entity_id = str(uuid.uuid4())
             entity = Entity(
+                id=entity_id,
+                version=Entity.create_version("test-user"),
                 entity_type=EntityType.DEVICE,
                 name=f"Offline Device {i}",
                 content={"index": i, "created_offline": True},
-                source_type=SourceType.MANUAL
+                source_type=SourceType.MANUAL,
+                user_id="test-user",
+                parent_versions=[]
             )
             stored = await client.graph_operations.store_entity(entity)
             entities_created.append(stored)

@@ -93,13 +93,17 @@ class LocalGraphStorage:
     
     def _entity_to_dict(self, entity: Entity) -> dict:
         """Convert entity to dictionary for JSON serialization"""
+        # Handle entity_type that might be string or enum
+        entity_type_value = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+        source_type_value = entity.source_type.value if hasattr(entity.source_type, 'value') else str(entity.source_type)
+        
         return {
             "id": entity.id,
             "version": entity.version,
-            "entity_type": entity.entity_type.value,
+            "entity_type": entity_type_value,
             "name": entity.name,
             "content": entity.content,
-            "source_type": entity.source_type.value,
+            "source_type": source_type_value,
             "user_id": entity.user_id,
             "parent_versions": entity.parent_versions,
             "created_at": entity.created_at.isoformat() if entity.created_at else None,
@@ -108,13 +112,16 @@ class LocalGraphStorage:
     
     def _relationship_to_dict(self, rel: EntityRelationship) -> dict:
         """Convert relationship to dictionary for JSON serialization"""
+        # Handle relationship_type that might be string or enum
+        rel_type_value = rel.relationship_type.value if hasattr(rel.relationship_type, 'value') else str(rel.relationship_type)
+        
         return {
             "id": rel.id,
             "from_entity_id": rel.from_entity_id,
             "from_entity_version": rel.from_entity_version,
             "to_entity_id": rel.to_entity_id,
             "to_entity_version": rel.to_entity_version,
-            "relationship_type": rel.relationship_type.value,
+            "relationship_type": rel_type_value,
             "properties": rel.properties,
             "user_id": rel.user_id,
             "created_at": rel.created_at.isoformat() if rel.created_at else None
@@ -131,7 +138,7 @@ class LocalGraphStorage:
         for entity_id, versions in self._entities.items():
             if versions:
                 latest = versions[-1]
-                type_key = latest.entity_type.value
+                type_key = latest.entity_type.value if hasattr(latest.entity_type, 'value') else str(latest.entity_type)
                 if type_key not in self._index["by_type"]:
                     self._index["by_type"][type_key] = []
                 self._index["by_type"][type_key].append(entity_id)
@@ -153,7 +160,7 @@ class LocalGraphStorage:
         self._entities[entity.id].append(entity)
         
         # Update index
-        type_key = entity.entity_type.value
+        type_key = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
         if type_key not in self._index["by_type"]:
             self._index["by_type"][type_key] = []
         if entity.id not in self._index["by_type"][type_key]:
@@ -183,7 +190,7 @@ class LocalGraphStorage:
     
     def get_entities_by_type(self, entity_type: EntityType) -> List[Entity]:
         """Get all entities of a specific type (latest versions only)"""
-        type_key = entity_type.value
+        type_key = entity_type.value if hasattr(entity_type, 'value') else str(entity_type)
         if type_key not in self._index["by_type"]:
             return []
         

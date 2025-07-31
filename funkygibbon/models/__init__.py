@@ -15,9 +15,8 @@ from inbetweenies.models import (
     SyncMetadata
 )
 
-# Import new graph models
-from .entity import Entity, EntityType, SourceType
-from .relationship import EntityRelationship, RelationshipType
+# Import new graph models from inbetweenies
+from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
 
 __all__ = [
     'Base',

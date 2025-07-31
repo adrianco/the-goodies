@@ -35,5 +35,5 @@ class SyncMetadataRepository(ClientBaseRepository[SyncMetadata]):
     async def update_sync_time(self, sync_time, client_id: str = "default"):
         """Update the last sync time."""
         metadata = await self.get_or_create(client_id)
-        metadata.last_sync = sync_time
+        metadata.last_sync_time = sync_time
         await self.session.commit()

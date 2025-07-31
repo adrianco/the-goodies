@@ -8,7 +8,6 @@ between FunkyGibbon server and clients.
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from funkygibbon.database import get_db
@@ -16,90 +15,10 @@ from funkygibbon.sync.versioning import VersionManager
 from funkygibbon.sync.conflict_resolution import ConflictResolver, ConflictStrategy
 from funkygibbon.sync.delta import DeltaSyncEngine
 from inbetweenies.models import Entity, EntityRelationship, EntityType
-
-
-# Pydantic models for sync protocol
-class VectorClock(BaseModel):
-    """Vector clock for tracking sync state"""
-    clocks: Dict[str, str] = Field(default_factory=dict)
-
-
-class EntityChange(BaseModel):
-    """Entity change in sync request"""
-    id: str
-    version: str
-    entity_type: str
-    name: str
-    content: Dict
-    source_type: str
-    user_id: str
-    parent_versions: List[str] = Field(default_factory=list)
-    checksum: Optional[str] = None
-
-
-class RelationshipChange(BaseModel):
-    """Relationship change in sync request"""
-    id: str
-    from_entity_id: str
-    from_entity_version: str
-    to_entity_id: str
-    to_entity_version: str
-    relationship_type: str
-    properties: Dict = Field(default_factory=dict)
-
-
-class SyncChange(BaseModel):
-    """Individual change in sync request"""
-    change_type: str = Field(..., pattern="^(create|update|delete)$")
-    entity: Optional[EntityChange] = None
-    relationships: List[RelationshipChange] = Field(default_factory=list)
-
-
-class SyncFilters(BaseModel):
-    """Filters for sync request"""
-    entity_types: Optional[List[str]] = None
-    since: Optional[datetime] = None
-    modified_by: Optional[List[str]] = None
-
-
-class SyncRequest(BaseModel):
-    """Sync request from client"""
-    protocol_version: str = "inbetweenies-v2"
-    device_id: str
-    user_id: str
-    sync_type: str = Field(..., pattern="^(full|delta|entities|relationships)$")
-    vector_clock: VectorClock = Field(default_factory=VectorClock)
-    changes: List[SyncChange] = Field(default_factory=list)
-    cursor: Optional[str] = None
-    filters: Optional[SyncFilters] = None
-
-
-class ConflictInfo(BaseModel):
-    """Conflict information in sync response"""
-    entity_id: str
-    local_version: str
-    remote_version: str
-    resolution_strategy: str
-    resolved_version: Optional[str] = None
-
-
-class SyncStats(BaseModel):
-    """Sync statistics"""
-    entities_synced: int = 0
-    relationships_synced: int = 0
-    conflicts_resolved: int = 0
-    duration_ms: float = 0
-
-
-class SyncResponse(BaseModel):
-    """Sync response to client"""
-    protocol_version: str = "inbetweenies-v2"
-    sync_type: str
-    changes: List[SyncChange] = Field(default_factory=list)
-    conflicts: List[ConflictInfo] = Field(default_factory=list)
-    vector_clock: VectorClock = Field(default_factory=VectorClock)
-    cursor: Optional[str] = None
-    sync_stats: SyncStats = Field(default_factory=SyncStats)
+from inbetweenies.sync import (
+    VectorClock, EntityChange, RelationshipChange, SyncChange,
+    SyncFilters, SyncRequest, ConflictInfo, SyncStats, SyncResponse
+)
 
 
 # Router
@@ -208,8 +127,11 @@ class SyncHandler:
         if not change.entity:
             return
             
-        # Check if entity already exists
-        existing = await self.db_session.get(Entity, change.entity.id)
+        # Check if entity already exists - get latest version
+        from sqlalchemy import select
+        stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
+        result = await self.db_session.execute(stmt)
+        existing = result.scalar_one_or_none()
         if existing:
             # Already exists, this is a conflict
             # For now, skip creation
@@ -236,8 +158,11 @@ class SyncHandler:
         if not change.entity:
             return None
             
-        # Get existing entity
-        existing = await self.db_session.get(Entity, change.entity.id)
+        # Get existing entity - need to get the latest version
+        from sqlalchemy import select
+        stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
+        result = await self.db_session.execute(stmt)
+        existing = result.scalar_one_or_none()
         if not existing:
             # Doesn't exist, create it
             await self._handle_create(change)
@@ -297,7 +222,11 @@ class SyncHandler:
         if not change.entity:
             return
             
-        entity = await self.db_session.get(Entity, change.entity.id)
+        # Get entity to delete - need to find the latest version
+        from sqlalchemy import select
+        stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
+        result = await self.db_session.execute(stmt)
+        entity = result.scalar_one_or_none()
         if entity:
             await self.db_session.delete(entity)
             await self.db_session.commit()

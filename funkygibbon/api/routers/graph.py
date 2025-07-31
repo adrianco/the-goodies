@@ -38,8 +38,8 @@ class EntityUpdate(BaseModel):
 
 class RelationshipCreate(BaseModel):
     """Schema for creating a relationship"""
-    from_entity_id: str
-    to_entity_id: str
+    source_id: str
+    target_id: str
     relationship_type: RelationshipType
     properties: Dict[str, Any] = Field(default_factory=dict)
     user_id: str
@@ -235,8 +235,8 @@ async def create_relationship(
     repo = GraphRepository(db)
     
     # Validate entities exist
-    from_entity = await repo.get_entity(rel_data.from_entity_id)
-    to_entity = await repo.get_entity(rel_data.to_entity_id)
+    from_entity = await repo.get_entity(rel_data.source_id)
+    to_entity = await repo.get_entity(rel_data.target_id)
     
     if not from_entity or not to_entity:
         raise HTTPException(status_code=404, detail="One or both entities not found")

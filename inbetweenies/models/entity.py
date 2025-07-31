@@ -90,17 +90,22 @@ class Entity(Base, InbetweeniesTimestampMixin):
     )
     
     def __repr__(self):
-        return f"<Entity(id={self.id}, type={self.entity_type.value if self.entity_type else None}, name={self.name}, version={self.version[:8] if self.version else ''})>"
+        entity_type_str = self.entity_type.value if hasattr(self.entity_type, 'value') else str(self.entity_type)
+        return f"<Entity(id={self.id}, type={entity_type_str}, name={self.name}, version={self.version[:8] if self.version else ''})>"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert entity to dictionary for API responses"""
+        # Handle entity_type and source_type that might be strings or enums
+        entity_type_value = self.entity_type.value if hasattr(self.entity_type, 'value') else str(self.entity_type)
+        source_type_value = self.source_type.value if hasattr(self.source_type, 'value') else str(self.source_type)
+        
         return {
             "id": self.id,
             "version": self.version,
-            "entity_type": self.entity_type.value,
+            "entity_type": entity_type_value,
             "name": self.name,
             "content": self.content,
-            "source_type": self.source_type.value,
+            "source_type": source_type_value,
             "user_id": self.user_id,
             "parent_versions": self.parent_versions,
             "created_at": self.created_at.isoformat() if self.created_at else None,

@@ -67,7 +67,11 @@ import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import httpx
-from .state import Change, Conflict, SyncOperation
+from inbetweenies.sync import Change, Conflict, SyncOperation
+from inbetweenies.sync import (
+    VectorClock, EntityChange, SyncChange,
+    SyncFilters, SyncRequest, SyncResponse
+)
 
 
 class InbetweeniesProtocol:
@@ -88,27 +92,30 @@ class InbetweeniesProtocol:
         entity_types: List[str] = None
     ) -> Dict[str, Any]:
         """Send sync request to get server changes using new protocol."""
-        # Convert to new sync protocol format
-        filters = {}
-        if last_sync:
-            filters["since"] = last_sync.isoformat()
-        if entity_types:
-            filters["entity_types"] = entity_types
+        # Build filters
+        filters = None
+        if last_sync or entity_types:
+            filters = SyncFilters()
+            if last_sync:
+                filters.since = last_sync
+            if entity_types:
+                filters.entity_types = entity_types
             
-        request_data = {
-            "protocol_version": "inbetweenies-v2",
-            "device_id": self.client_id,
-            "user_id": "client-user",  # TODO: get from auth
-            "sync_type": "delta" if last_sync else "full",
-            "vector_clock": {"clocks": {}},
-            "changes": [],
-            "filters": filters if filters else None
-        }
+        # Build sync request
+        request = SyncRequest(
+            protocol_version="inbetweenies-v2",
+            device_id=self.client_id,
+            user_id="client-user",  # TODO: get from auth
+            sync_type="delta" if last_sync else "full",
+            vector_clock=VectorClock(),
+            changes=[],
+            filters=filters
+        )
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.base_url}/api/v1/sync/",
-                json=request_data,
+                json=request.model_dump(exclude_none=True, mode='json'),
                 headers=self.headers,
                 timeout=30.0
             )
@@ -117,36 +124,46 @@ class InbetweeniesProtocol:
             
     async def sync_push(self, changes: List[Change]) -> Dict[str, Any]:
         """Push local changes to server using new protocol."""
-        # Convert changes to new format
+        # Convert changes to SyncChange objects
         sync_changes = []
         for change in changes:
-            sync_change = {
-                "change_type": change.operation.value if hasattr(change.operation, 'value') else change.operation,
-                "entity": {
-                    "id": change.entity_id,
-                    "version": change.data.get("version", ""),
-                    "entity_type": change.entity_type,
-                    "name": change.data.get("name", ""),
-                    "content": change.data.get("content", {}),
-                    "parent_versions": change.data.get("parent_versions", [])
-                } if change.operation != "delete" else None,
-                "relationships": []
-            }
+            # Create entity change if not delete
+            entity = None
+            if change.operation != SyncOperation.DELETE:
+                entity = EntityChange(
+                    id=change.entity_id,
+                    version=change.data.get("version", ""),
+                    entity_type=change.entity_type,
+                    name=change.data.get("name", ""),
+                    content=change.data.get("content", {}),
+                    source_type=change.data.get("source_type", "MANUAL"),
+                    user_id=change.data.get("user_id") or "client-user",
+                    parent_versions=change.data.get("parent_versions", [])
+                )
+            
+            # Create sync change
+            operation = change.operation.value if hasattr(change.operation, 'value') else str(change.operation).lower()
+            sync_change = SyncChange(
+                change_type=operation,
+                entity=entity,
+                relationships=[]
+            )
             sync_changes.append(sync_change)
         
-        push_data = {
-            "protocol_version": "inbetweenies-v2",
-            "device_id": self.client_id,
-            "user_id": "client-user",  # TODO: get from auth
-            "sync_type": "delta",
-            "vector_clock": {"clocks": {}},
-            "changes": sync_changes
-        }
+        # Build sync request with changes
+        request = SyncRequest(
+            protocol_version="inbetweenies-v2",
+            device_id=self.client_id,
+            user_id="client-user",  # TODO: get from auth
+            sync_type="delta",
+            vector_clock=VectorClock(),
+            changes=sync_changes
+        )
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.base_url}/api/v1/sync/",
-                json=push_data,
+                json=request.model_dump(exclude_none=True, mode='json'),
                 headers=self.headers,
                 timeout=30.0
             )
@@ -164,29 +181,33 @@ class InbetweeniesProtocol:
         changes = []
         conflicts = []
         
-        # Parse changes from new format
-        for sync_change in response.get("changes", []):
-            if sync_change.get("entity"):
-                entity = sync_change["entity"]
+        # Create SyncResponse object for validation
+        sync_response = SyncResponse(**response)
+        
+        # Parse changes from response
+        for sync_change in sync_response.changes:
+            if sync_change.entity:
+                # Convert to internal Change format
                 change = Change(
-                    entity_type=entity.get("entity_type", "unknown"),
-                    entity_id=entity.get("id", ""),
-                    operation=SyncOperation(sync_change.get("change_type", "update")),
-                    data=entity,
+                    entity_type=sync_change.entity.entity_type,
+                    entity_id=sync_change.entity.id,
+                    operation=SyncOperation(sync_change.change_type.lower()),
+                    data=sync_change.entity.model_dump(),
                     updated_at=datetime.now(),  # Use current time as updated_at
-                    sync_id=entity.get("version", "")  # Use version as sync_id
+                    sync_id=sync_change.entity.version,
+                    client_sync_id=None  # Server changes don't have client sync ID
                 )
                 changes.append(change)
             
-        # Parse conflicts from new format
-        for conflict_info in response.get("conflicts", []):
+        # Parse conflicts from response
+        for conflict_info in sync_response.conflicts:
             conflict = Conflict(
-                entity_type="entity",  # New format doesn't specify type
-                entity_id=conflict_info.get("entity_id", ""),
-                reason=conflict_info.get("resolution_strategy", "conflict"),
-                server_version=conflict_info.get("remote_version", ""),
-                client_version=conflict_info.get("local_version", ""),
-                resolution=conflict_info.get("resolution_strategy", "manual")
+                entity_type="entity",  # Could be improved to get actual type
+                entity_id=conflict_info.entity_id,
+                reason=conflict_info.resolution_strategy,
+                server_version=conflict_info.remote_version,
+                client_version=conflict_info.local_version,
+                resolution=conflict_info.resolution_strategy
             )
             conflicts.append(conflict)
             

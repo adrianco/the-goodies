@@ -162,6 +162,10 @@ class DeltaSyncEngine:
         current_time = datetime.now(timezone.utc)
         
         # Query for entities changed since last sync
+        # Ensure last_sync is timezone-aware
+        if last_sync.tzinfo is None:
+            last_sync = last_sync.replace(tzinfo=timezone.utc)
+            
         entity_query = select(Entity).where(
             or_(
                 Entity.created_at >= last_sync,
@@ -180,7 +184,14 @@ class DeltaSyncEngine:
         modified_entities = []
         
         for entity in changed_entities:
-            if entity.created_at >= last_sync:
+            # Handle timezone-aware comparison
+            entity_created_at = entity.created_at
+            if entity_created_at.tzinfo is None:
+                entity_created_at = entity_created_at.replace(tzinfo=timezone.utc)
+            if last_sync.tzinfo is None:
+                last_sync = last_sync.replace(tzinfo=timezone.utc)
+                
+            if entity_created_at >= last_sync:
                 added_entities.append(entity)
             else:
                 modified_entities.append(entity)

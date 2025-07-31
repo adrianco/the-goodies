@@ -36,7 +36,7 @@ import json
 
 from .models import Base
 from .sync.engine import SyncEngine
-from .sync.state import SyncResult
+from inbetweenies.sync import SyncResult
 from .mcp import LocalMCPClient
 from .graph import LocalGraphStorage, LocalGraphOperations
 from .repositories import SyncMetadataRepository

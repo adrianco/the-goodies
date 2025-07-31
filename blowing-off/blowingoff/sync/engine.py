@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
 from .protocol import InbetweeniesProtocol
-from .state import SyncState, SyncResult, Change, Conflict, SyncOperation
+from inbetweenies.sync import SyncState, SyncResult, Change, Conflict, SyncOperation
 from .conflict_resolver import ConflictResolver
 from ..repositories import SyncMetadataRepository
 from inbetweenies.models import Entity, EntityType, SourceType
@@ -90,9 +90,17 @@ class SyncEngine:
         try:
             start_time = datetime.now()
             
+            # Debug: Check if graph operations is set
+            if not self.graph_operations:
+                return SyncResult(
+                    success=False,
+                    errors=["Graph operations not set"],
+                    timestamp=datetime.now()
+                )
+            
             # Get last sync time
             metadata = await self.metadata_repo.get_metadata(self.client_id)
-            last_sync = metadata.last_sync if metadata else None
+            last_sync = metadata.last_sync_time if metadata else None
             
             # Get local changes (entities that need to be synced)
             local_changes = await self._get_local_changes(last_sync)
@@ -140,9 +148,10 @@ class SyncEngine:
             )
             
         except Exception as e:
+            import traceback
             return SyncResult(
                 success=False,
-                errors=[str(e)],
+                errors=[f"{type(e).__name__}: {str(e)}", traceback.format_exc()],
                 timestamp=datetime.now()
             )
         finally:
@@ -159,11 +168,15 @@ class SyncEngine:
         # For now, we'll get all entities and filter by updated_at
         # In a real implementation, we'd track which entities are dirty
         for entity_type in EntityType:
-            entities = await self.graph_operations.get_entities_by_type(entity_type)
+            try:
+                entities = await self.graph_operations.get_entities_by_type(entity_type)
+            except AttributeError:
+                # Skip if entity_type has issues
+                continue
             
             for entity in entities:
                 # Check if entity needs syncing
-                if since and hasattr(entity, 'updated_at'):
+                if since and hasattr(entity, 'updated_at') and entity.updated_at:
                     if entity.updated_at <= since:
                         continue
                         
