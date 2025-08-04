@@ -71,7 +71,9 @@ class BlowingOffClient:
         self._background_task = None
         
         # Initialize MCP and graph functionality
-        self.graph_storage = LocalGraphStorage()
+        # Use a subdirectory of the database path for graph storage
+        graph_storage_dir = Path(db_path).parent / ".blowing-off-graph"
+        self.graph_storage = LocalGraphStorage(str(graph_storage_dir))
         self.graph_operations = LocalGraphOperations(self.graph_storage)
         self.mcp_client = LocalMCPClient(self.graph_storage)
         

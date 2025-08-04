@@ -11,6 +11,7 @@ import asyncio
 import sys
 import os
 import pytest
+import tempfile
 
 # Add paths for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'blowing-off'))
@@ -24,8 +25,11 @@ async def test_local_mcp():
     print("\n🔧 Testing Local MCP Functionality (Offline)")
     print("=" * 60)
     
-    # Create client with local storage
-    client = BlowingOffClient("test_shared_mcp.db")
+    # Create client with local storage in temp directory
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    
+    client = BlowingOffClient(db_path)
     
     # Clear any existing data
     client.clear_graph_data()
@@ -186,8 +190,11 @@ async def test_graph_operations():
     print("\n🎯 Testing Advanced Graph Operations")
     print("=" * 60)
     
-    # Create client
-    client = BlowingOffClient("test_graph_ops.db")
+    # Create client with temp database
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    
+    client = BlowingOffClient(db_path)
     
     # Clear any existing data
     client.clear_graph_data()
