@@ -71,7 +71,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..database import init_db
-from .routers import homes, rooms, accessories, services, characteristics, users, sync_metadata, graph, mcp
+from .routers import homes, rooms, accessories, services, characteristics, users, sync_metadata, graph, mcp, auth
 from . import sync as enhanced_sync
 
 
@@ -105,6 +105,7 @@ def create_app() -> FastAPI:
     )
     
     # Include routers
+    app.include_router(auth.router, prefix=f"{settings.api_prefix}", tags=["authentication"])
     app.include_router(homes.router, prefix=f"{settings.api_prefix}/homes", tags=["homes"])
     app.include_router(rooms.router, prefix=f"{settings.api_prefix}/rooms", tags=["rooms"])
     app.include_router(accessories.router, prefix=f"{settings.api_prefix}/accessories", tags=["accessories"])

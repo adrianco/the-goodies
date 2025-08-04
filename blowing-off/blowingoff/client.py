@@ -56,6 +56,7 @@ from inbetweenies.sync import SyncResult
 from .mcp import LocalMCPClient
 from .graph import LocalGraphStorage, LocalGraphOperations
 from .repositories import SyncMetadataRepository
+from .auth import AuthManager
 
 
 class BlowingOffClient:
@@ -69,6 +70,7 @@ class BlowingOffClient:
         self.sync_engine = None
         self._observers = []
         self._background_task = None
+        self.auth_manager = None
         
         # Initialize MCP and graph functionality
         # Use a subdirectory of the database path for graph storage
@@ -77,8 +79,35 @@ class BlowingOffClient:
         self.graph_operations = LocalGraphOperations(self.graph_storage)
         self.mcp_client = LocalMCPClient(self.graph_storage)
         
-    async def connect(self, server_url: str, auth_token: str, client_id: str = None):
-        """Connect to server and initialize local database."""
+    async def connect(self, server_url: str, auth_token: str = None, client_id: str = None, password: str = None, qr_data: str = None):
+        """Connect to server and initialize local database.
+        
+        Args:
+            server_url: Base URL of the FunkyGibbon server
+            auth_token: Optional JWT token (if already authenticated)
+            client_id: Optional client identifier
+            password: Admin password for authentication
+            qr_data: QR code data for guest authentication
+        """
+        # Initialize auth manager
+        self.auth_manager = AuthManager(server_url)
+        
+        # Handle authentication
+        if auth_token:
+            # Use provided token
+            self.auth_manager.token = auth_token
+        elif password:
+            # Authenticate with admin password
+            success = await self.auth_manager.login_admin(password)
+            if not success:
+                raise RuntimeError("Admin authentication failed")
+        elif qr_data:
+            # Authenticate with QR code
+            success = await self.auth_manager.login_guest(qr_data)
+            if not success:
+                raise RuntimeError("Guest authentication failed")
+        elif not self.auth_manager.is_authenticated():
+            raise RuntimeError("No authentication method provided")
         # Initialize database
         db_url = f"sqlite+aiosqlite:///{self.db_path}"
         self.engine = create_async_engine(
@@ -110,10 +139,16 @@ class BlowingOffClient:
             expire_on_commit=False
         )
         
-        # Initialize sync engine
+        # Initialize sync engine with authentication
         async with self.session_factory() as session:
+            # Use auth token from auth manager
+            auth_token = self.auth_manager.token if self.auth_manager else auth_token
             self.sync_engine = SyncEngine(session, server_url, auth_token, client_id)
             self.sync_engine.set_graph_operations(self.graph_operations)
+            
+            # Set auth headers for sync engine
+            if self.auth_manager:
+                self.sync_engine.auth_headers = self.auth_manager.get_headers()
             
     async def disconnect(self):
         """Disconnect and cleanup resources."""
@@ -198,6 +233,18 @@ class BlowingOffClient:
         if hasattr(self, 'graph_storage'):
             self.graph_storage.clear()
             
+    def check_write_permission(self) -> bool:
+        """Check if client has write permission."""
+        if not self.auth_manager:
+            return False
+        return self.auth_manager.has_permission('write')
+    
+    def check_admin_permission(self) -> bool:
+        """Check if client has admin permission."""
+        if not self.auth_manager:
+            return False
+        return self.auth_manager.role == 'admin'
+    
     async def get_sync_status(self) -> Dict[str, Any]:
         """Get current sync status and statistics."""
         async with self.session_factory() as session:

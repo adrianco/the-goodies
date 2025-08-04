@@ -234,3 +234,8 @@ Based on my investigation, here's the answer to your question:
 
 > remove from the codebase and remove tests, re-run all tests and update the coverage doc.
 
+> what options would you suggest to authenticate and secure the communications between the client and server API?
+
+> I need a security solution that will work well with the Swift/iOS cluent that is going to be implemented next. I also want to know what the user flow looks like for getting setup to connect to a server 
+  that is on the same house network as the client. For remote access I will initally depend on Unifi Teleport VPN.
+
