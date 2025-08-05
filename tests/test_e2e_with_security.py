@@ -10,7 +10,7 @@ import tempfile
 import os
 from pathlib import Path
 import sys
-sys.path.insert(0, 'blowing-off')
+import pytest
 
 # Import components
 from funkygibbon.auth import PasswordManager, TokenManager, QRCodeManager
@@ -50,6 +50,7 @@ async def setup_server_with_auth():
     return app, admin_hash
 
 
+@pytest.mark.asyncio
 async def test_admin_authentication():
     """Test admin authentication flow."""
     print("\n=== Testing Admin Authentication ===")
@@ -89,6 +90,7 @@ async def test_admin_authentication():
     return True
 
 
+@pytest.mark.asyncio
 async def test_guest_authentication():
     """Test guest authentication via QR code."""
     print("\n=== Testing Guest Authentication ===")
@@ -143,6 +145,7 @@ async def test_guest_authentication():
     return True
 
 
+@pytest.mark.asyncio
 async def test_operations_with_permissions():
     """Test operations respecting permission levels."""
     print("\n=== Testing Operations with Permissions ===")
@@ -228,6 +231,7 @@ async def test_operations_with_permissions():
     return True
 
 
+@pytest.mark.asyncio
 async def test_token_expiration():
     """Test token expiration and refresh."""
     print("\n=== Testing Token Expiration ===")
@@ -276,6 +280,7 @@ async def test_token_expiration():
     return True
 
 
+@pytest.mark.asyncio
 async def test_concurrent_auth_sessions():
     """Test multiple concurrent authenticated sessions."""
     print("\n=== Testing Concurrent Sessions ===")

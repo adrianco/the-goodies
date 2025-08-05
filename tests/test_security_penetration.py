@@ -13,8 +13,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 import secrets
-import sys
-sys.path.insert(0, 'blowing-off')
+# Imports work with proper PYTHONPATH
 
 from funkygibbon.auth import PasswordManager, TokenManager, QRCodeManager
 from blowingoff.auth import AuthManager

@@ -34,7 +34,7 @@ def start_server():
     return process
 
 
-class TestClient:
+class SyncTestClient:
     """Test client for sync operations."""
     
     def __init__(self, client_id: str, storage_path: str):
@@ -131,7 +131,7 @@ def run_multi_client_test():
             temp_dir = tempfile.mkdtemp(prefix=f"client_{i}_")
             temp_dirs.append(temp_dir)
             
-            client = TestClient(f"client_{i}", temp_dir)
+            client = SyncTestClient(f"client_{i}", temp_dir)
             if client.connect():
                 clients.append(client)
                 print(f"✓ Client {i} connected")
@@ -299,7 +299,7 @@ def run_performance_test():
             temp_dir = tempfile.mkdtemp(prefix=f"perf_client_{i}_")
             temp_dirs.append(temp_dir)
             
-            client = TestClient(f"perf_client_{i}", temp_dir)
+            client = SyncTestClient(f"perf_client_{i}", temp_dir)
             if client.connect():
                 clients.append(client)
         

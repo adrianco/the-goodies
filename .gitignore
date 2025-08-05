@@ -248,3 +248,7 @@ hive-mind-prompt-*.txt
 funkygibbon.db*
 blowingoff.db*
 
+# Security configuration files (contain passwords/secrets)
+start_funkygibbon.sh
+security_audit.log
+

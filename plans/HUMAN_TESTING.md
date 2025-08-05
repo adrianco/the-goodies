@@ -19,52 +19,64 @@ pwd
 # Should output: /workspaces/the-goodies
 ```
 
-### Step 2: Set Up Virtual Environment (Recommended)
-```bash
-# Create a virtual environment
-python -m venv venv
+### Step 2: Quick Installation (Recommended)
 
-# Activate the virtual environment
+The easiest way to set up FunkyGibbon is using the installation script:
+
+```bash
+# For development/testing (uses "admin" as password)
+./install.sh --dev
+
+# For production (prompts for secure password)
+./install.sh
+
+# The installer will:
+# - Set up security configuration
+# - Install all dependencies
+# - Populate the test database
+# - Create a start_funkygibbon.sh script
+```
+
+### Step 2b: Manual Installation (Alternative)
+
+If you prefer manual setup or the installer doesn't work:
+
+```bash
+# Create and activate virtual environment
+python -m venv venv
 source venv/bin/activate  # On Linux/Mac
 # OR
 venv\Scripts\activate     # On Windows
 
-# You should see (venv) in your terminal prompt
-
-# Set Python path to include project root (IMPORTANT!)
+# Set Python path
 export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
 
-# For permanent setup, add to your shell startup file:
-# echo 'export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH' >> ~/.bashrc
-# source ~/.bashrc
+# Install dependencies
+cd funkygibbon && pip install -r requirements.txt && cd ..
+cd oook && pip install -e . && cd ..
+cd blowing-off && pip install -e . && cd ..
+
+# Configure security for development
+export ADMIN_PASSWORD_HASH=""  # Empty = "admin" password
+export JWT_SECRET="development-secret"
 ```
 
-### Step 3: Install Dependencies
-```bash
-# Install FunkyGibbon dependencies
-cd funkygibbon
-pip install -r requirements.txt
-cd ..
+#### Security Features Overview
+- **Rate Limiting**: Prevents brute force attacks (5 attempts per 5 minutes)
+- **Audit Logging**: Tracks all authentication attempts and security events
+- **JWT Tokens**: Secure token-based authentication
+- **Guest Access**: QR code-based temporary access
+- **Progressive Delays**: Increasing lockout periods for repeated failures
 
-# Install Oook CLI for testing MCP tools
-cd oook
-pip install -e .
-cd ..
+### Step 3: Populate the Database (If Manual Install)
 
-# Also install blowing-off dependencies if testing the client
-cd blowing-off
-pip install -e .
-cd ..
-```
-
-### Step 4: Populate the Database with Test Data (Optional but Recommended)
-
-Before starting the server, you can populate the database with comprehensive test data:
+If you used the installer, this is already done. For manual installation:
 
 ```bash
 # Run the population script
-cd /workspaces/the-goodies
-python funkygibbon/populate_graph_db.py
+cd /workspaces/the-goodies/funkygibbon
+python populate_graph_db.py
+cd ..
 ```
 
 This script creates:
@@ -80,10 +92,12 @@ This script creates:
 - 2 Notes (WiFi Configuration, HVAC Maintenance)
 - 30+ Relationships connecting all entities
 
-### Step 5: Start the FunkyGibbon Server
+### Step 4: Start the FunkyGibbon Server
 ```bash
-# From project root with PYTHONPATH set (or use permanent setup from Step 2)
-export PYTHONPATH=/workspaces/the-goodies
+# If you used the installer:
+./start_funkygibbon.sh
+
+# If manual install:
 python -m funkygibbon
 ```
 
@@ -97,9 +111,52 @@ DEBUG: Starting server with DATABASE_URL=sqlite+aiosqlite:///./funkygibbon.db
 Database initialized
 ```
 
+### Step 5: Test Authentication
+
+Before testing other endpoints, you need to authenticate:
+
+#### Test Admin Login
+```bash
+# Login with admin password (default "admin" in dev mode)
+curl -X POST http://localhost:8000/api/v1/auth/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{"password": "admin"}'
+```
+
+Expected output:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 604800,
+  "role": "admin"
+}
+```
+
+Save the token for authenticated requests:
+```bash
+export AUTH_TOKEN="<your-access-token>"
+```
+
+#### Test Authenticated Request
+```bash
+curl http://localhost:8000/api/v1/auth/me \
+  -H "Authorization: Bearer $AUTH_TOKEN"
+```
+
+Expected output:
+```json
+{
+  "user_id": "admin",
+  "role": "admin",
+  "permissions": ["read", "write", "delete", "configure"],
+  "expires_at": 1754513271
+}
+```
+
 ### Step 6: Test the Graph Operations API
 
-Open a new terminal and run these commands:
+Now test the API endpoints:
 
 #### Test Health Endpoint
 ```bash
@@ -145,7 +202,58 @@ Expected output (if you ran the population script):
 }
 ```
 
-### Step 7: Use Oook CLI for Testing
+### Step 7: Test Security Features
+
+#### Test Rate Limiting
+```bash
+# Try multiple failed login attempts
+for i in {1..6}; do
+  echo "Attempt $i:"
+  curl -X POST http://localhost:8000/api/v1/auth/admin/login \
+    -H "Content-Type: application/json" \
+    -d '{"password": "wrong-password"}' \
+    -w "\nHTTP Status: %{http_code}\n"
+  echo "---"
+done
+```
+
+Expected behavior:
+- First 5 attempts: HTTP 401 (Unauthorized)
+- 6th attempt: HTTP 429 (Too Many Requests) with retry-after header
+
+#### Check Security Audit Log
+```bash
+# View recent authentication attempts
+tail -n 20 security_audit.log | grep -E "auth\.(success|failure|lockout)"
+```
+
+#### Test Guest QR Code Generation (Admin Only)
+```bash
+# Generate a guest QR code
+curl -X POST http://localhost:8000/api/v1/auth/guest/generate-qr \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"duration_hours": 24}'
+```
+
+Expected output:
+```json
+{
+  "qr_code": "data:image/png;base64,iVBORw0KGgo...",
+  "qr_data": {
+    "version": "1.0",
+    "type": "guest_access",
+    "server": "funkygibbon.local",
+    "port": 8000,
+    "token": "guest_token_here",
+    "expires": "2025-08-06T15:41:00Z",
+    "permissions": ["read"]
+  },
+  "expires_in": 86400
+}
+```
+
+### Step 8: Use Oook CLI for Testing
 
 The Oook CLI is a powerful tool for testing the MCP server and graph operations.
 
@@ -233,7 +341,7 @@ oook execute create_relationship \
   -a relationship_type="part_of"
 ```
 
-### Step 8: Test with Example Script
+### Step 9: Test with Example Script
 
 Run the provided test script for additional testing:
 ```bash
@@ -430,6 +538,15 @@ oook tools  # Should list all MCP tools
 
 ## 📝 API Endpoints
 
+### Authentication (Phase 5)
+- `POST /api/v1/auth/admin/login` - Admin login with password
+- `POST /api/v1/auth/guest/generate-qr` - Generate guest QR code (admin only)
+- `POST /api/v1/auth/guest/verify` - Verify guest token from QR
+- `GET /api/v1/auth/me` - Get current user info (authenticated)
+- `POST /api/v1/auth/refresh` - Refresh admin token
+- `POST /api/v1/auth/guest/revoke` - Revoke guest token (admin only)
+- `GET /api/v1/auth/guest/list` - List active guest tokens (admin only)
+
 ### Graph Operations
 - `GET /api/v1/graph/statistics` - Graph statistics
 - `POST /api/v1/graph/entities` - Create entity
@@ -447,8 +564,9 @@ oook tools  # Should list all MCP tools
 - `GET /api/v1/accessories/` - List accessories
 - `GET /api/v1/users/` - List users
 
-## 🌟 What's New in Phase 2
+## 🌟 What's New
 
+### Phase 2 Features
 1. **Knowledge Graph**: Flexible entity-relationship model beyond HomeKit
 2. **MCP Protocol**: Standardized tool interface for AI assistants
 3. **Immutable Versioning**: Every change creates a new version
@@ -456,6 +574,15 @@ oook tools  # Should list all MCP tools
 5. **Full-Text Search**: Search across entity names and content
 6. **Oook CLI**: Powerful testing tool for MCP operations
 7. **Population Script**: Comprehensive test data generator (populate_graph_db.py)
+
+### Phase 5 Security Features (NEW)
+1. **Authentication System**: Admin password login with Argon2id hashing
+2. **JWT Tokens**: Secure token-based authentication with expiration
+3. **Rate Limiting**: Brute force protection with progressive delays
+4. **Audit Logging**: Comprehensive security event tracking
+5. **Guest Access**: QR code-based temporary read-only access
+6. **Permission System**: Role-based access control (admin/guest)
+7. **Security Headers**: CORS and security middleware configured
 
 ## 🔄 Phase 3: Enhanced Sync Protocol
 

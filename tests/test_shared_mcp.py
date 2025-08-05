@@ -13,8 +13,7 @@ import os
 import pytest
 import tempfile
 
-# Add paths for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'blowing-off'))
+# Add paths for imports (not needed with PYTHONPATH set correctly)
 
 from blowingoff.client import BlowingOffClient
 
