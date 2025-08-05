@@ -225,15 +225,17 @@ echo ""
 echo "🗃️  Populating Test Database"
 echo "============================"
 
-cd funkygibbon
-$PYTHON_CMD populate_graph_db.py
+# Run from project root so database is created in the right place
+$PYTHON_CMD funkygibbon/populate_graph_db.py
 if [ $? -eq 0 ]; then
     echo "✅ Database populated with test data"
+    if [ -f "funkygibbon.db" ]; then
+        echo "   Database created at: ./funkygibbon.db"
+    fi
 else
     echo "⚠️  Warning: Database population may have failed"
     echo "   (This is normal if dependencies aren't installed yet)"
 fi
-cd ..
 
 echo ""
 echo "✨ Installation Complete!"
