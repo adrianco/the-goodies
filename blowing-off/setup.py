@@ -65,6 +65,7 @@ setup(
     install_requires=[
         "inbetweenies",
         "sqlalchemy>=2.0.0",
+        "greenlet>=2.0.0",
         "aiosqlite>=0.17.0",
         "httpx>=0.24.0",
         "aiohttp>=3.8.0",
