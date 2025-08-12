@@ -53,6 +53,7 @@ export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
 
 # Install dependencies
 cd funkygibbon && pip install -r requirements.txt && cd ..
+cd inbetweenies && pip install -e . && cd ..
 cd oook && pip install -e . && cd ..
 cd blowing-off && pip install -e . && cd ..
 
@@ -628,6 +629,9 @@ curl -X POST http://localhost:8000/api/v1/sync/ \
 ### Sync Client Usage (CLI)
 
 ```bash
+# IMPORTANT: Set Python path first (required for finding inbetweenies)
+export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
+
 # Connect to server with device ID
 blowing-off connect http://localhost:8000 auth-token --client-id "my-device"
 
@@ -704,12 +708,14 @@ curl -X POST http://localhost:8000/api/v1/mcp/tools/get_devices_in_room \
 
 The blowing-off client now mirrors oook's functionality but works with local data and sync capabilities. Both CLIs use the same graph API and MCP tools, providing a consistent experience.
 
-First, install the client:
+First, install the client (if not already installed):
 
 ```bash
-cd blowing-off
-pip install -e .
-cd ..
+# Install inbetweenies first (required dependency)
+cd inbetweenies && pip install -e . && cd ..
+
+# Then install blowing-off
+cd blowing-off && pip install -e . && cd ..
 ```
 
 Then use the blowing-off CLI (which now matches oook's functionality):

@@ -66,6 +66,7 @@ export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
 
 # Install dependencies
 cd funkygibbon && pip install -r requirements.txt && cd ..
+cd inbetweenies && pip install -e . && cd ..
 cd oook && pip install -e . && cd ..
 cd blowing-off && pip install -e . && cd ..
 
@@ -151,7 +152,10 @@ The knowledge graph supports these entity types:
 
 ### Blowing-off Client Usage
 ```bash
-# First, get an auth token by logging in as admin
+# First, ensure Python path is set (required for finding inbetweenies)
+export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
+
+# Get an auth token by logging in as admin
 curl -X POST http://localhost:8000/api/v1/auth/admin/login \
   -H "Content-Type: application/json" \
   -d '{"password": "admin"}' | jq -r '.access_token'

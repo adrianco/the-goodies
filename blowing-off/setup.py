@@ -63,9 +63,12 @@ setup(
     description="Python test client for The Goodies smart home system",
     packages=find_packages(),
     install_requires=[
+        "inbetweenies",
         "sqlalchemy>=2.0.0",
         "aiosqlite>=0.17.0",
         "httpx>=0.24.0",
+        "aiohttp>=3.8.0",
+        "rich>=10.0.0",
         "click>=8.0.0",
         "tabulate>=0.9.0",
     ],
