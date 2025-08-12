@@ -243,6 +243,8 @@ hive-mind-prompt-*.txt
 # Claude Flow metrics and client configuration
 .claude-flow/
 .blowingoff.json
+.blowing-off/
+.blowing-off-graph/
 
 # Project-specific temporary files
 funkygibbon.db*
