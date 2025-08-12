@@ -326,3 +326,56 @@ class LocalGraphStorage:
         # Rebuild index and save
         self._rebuild_index()
         self._save_data()
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get statistics about the local graph."""
+        # Count unique entities (latest version only)
+        total_entities = len(self._entities)
+        
+        # Count relationships
+        total_relationships = len(self._relationships)
+        
+        # Count by entity type
+        entity_types = {}
+        for entity_id, versions in self._entities.items():
+            if versions:
+                latest = versions[-1]  # Get latest version
+                entity_type = str(latest.entity_type)
+                if entity_type.startswith('EntityType.'):
+                    entity_type = entity_type.replace('EntityType.', '').lower()
+                entity_types[entity_type] = entity_types.get(entity_type, 0) + 1
+        
+        # Count by relationship type
+        relationship_types = {}
+        for rel in self._relationships:
+            rel_type = str(rel.relationship_type)
+            if rel_type.startswith('RelationshipType.'):
+                rel_type = rel_type.replace('RelationshipType.', '').lower()
+            relationship_types[rel_type] = relationship_types.get(rel_type, 0) + 1
+        
+        # Calculate average degree
+        if total_entities > 0:
+            total_connections = len(set(
+                [r.from_entity_id for r in self._relationships] +
+                [r.to_entity_id for r in self._relationships]
+            ))
+            average_degree = (total_relationships * 2) / total_entities if total_entities > 0 else 0
+        else:
+            average_degree = 0
+        
+        # Find isolated entities
+        connected_entities = set()
+        for rel in self._relationships:
+            connected_entities.add(rel.from_entity_id)
+            connected_entities.add(rel.to_entity_id)
+        
+        isolated_entities = len(self._entities) - len(connected_entities)
+        
+        return {
+            'total_entities': total_entities,
+            'total_relationships': total_relationships,
+            'entity_types': entity_types,
+            'relationship_types': relationship_types,
+            'average_degree': average_degree,
+            'isolated_entities': max(0, isolated_entities)
+        }
