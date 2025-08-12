@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch
 import json
-from datetime import datetime
+from datetime import datetime, UTC
 import uuid
 
 from blowingoff.client import BlowingOffClient
@@ -182,12 +182,12 @@ class TestClientSync:
         mock_entities = [
             {
                 "id": str(uuid.uuid4()),
-                "version": f"{datetime.utcnow().isoformat()}Z-server",
+                "version": f"{datetime.now(UTC).isoformat()}Z-server",
                 "entity_type": "device",
                 "name": "Server Device",
                 "content": {"from": "server"},
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
                 "created_by": "server",
                 "updated_by": "server"
             }

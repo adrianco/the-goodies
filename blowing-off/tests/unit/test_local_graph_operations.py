@@ -5,9 +5,10 @@ Tests the local graph operations and MCP tool implementations.
 """
 
 import pytest
+import pytest_asyncio
 import tempfile
 import shutil
-from datetime import datetime
+from datetime import datetime, UTC
 import uuid
 
 from blowingoff.graph.local_operations import LocalGraphOperations, SearchResult
@@ -31,30 +32,29 @@ def graph_ops(temp_storage_dir):
     return LocalGraphOperations(storage)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def sample_room(graph_ops):
     """Create and store a sample room."""
     room = Entity(
         id=str(uuid.uuid4()),
-        version=f"{datetime.utcnow().isoformat()}Z-test",
+        version=f"{datetime.now(UTC).isoformat()}Z-test",
         entity_type=EntityType.ROOM,
         name="Living Room",
         content={"area": 30, "floor": 1},
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-        created_by="test-user",
-        updated_by="test-user"
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        user_id="test-user"
     )
     await graph_ops.store_entity(room)
     return room
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def sample_device(graph_ops):
     """Create and store a sample device."""
     device = Entity(
         id=str(uuid.uuid4()),
-        version=f"{datetime.utcnow().isoformat()}Z-test",
+        version=f"{datetime.now(UTC).isoformat()}Z-test",
         entity_type=EntityType.DEVICE,
         name="Smart Light",
         content={
@@ -62,28 +62,26 @@ async def sample_device(graph_ops):
             "model": "Hue",
             "capabilities": ["on_off", "brightness", "color"]
         },
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-        created_by="test-user",
-        updated_by="test-user"
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        user_id="test-user"
     )
     await graph_ops.store_entity(device)
     return device
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def sample_automation(graph_ops):
     """Create and store a sample automation."""
     automation = Entity(
         id=str(uuid.uuid4()),
-        version=f"{datetime.utcnow().isoformat()}Z-test",
+        version=f"{datetime.now(UTC).isoformat()}Z-test",
         entity_type=EntityType.AUTOMATION,
         name="Evening Scene",
         content={"trigger": "sunset", "actions": ["dim_lights", "close_blinds"]},
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-        created_by="test-user",
-        updated_by="test-user"
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        user_id="test-user"
     )
     await graph_ops.store_entity(automation)
     return automation
@@ -97,13 +95,13 @@ class TestLocalGraphOperations:
         """Test storing and retrieving entities."""
         entity = Entity(
             id=str(uuid.uuid4()),
-            version=f"{datetime.utcnow().isoformat()}Z-test",
+            version=f"{datetime.now(UTC).isoformat()}Z-test",
             entity_type=EntityType.DEVICE,
             name="Test Device",
             content={"test": True},
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            created_by="test-user",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            user_id="test-user",
             updated_by="test-user"
         )
         
@@ -142,8 +140,8 @@ class TestLocalGraphOperations:
             to_entity_version=sample_room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
-            created_at=datetime.utcnow(),
-            created_by="test-user"
+            created_at=datetime.now(UTC),
+            user_id="test-user"
         )
         await graph_ops.store_relationship(rel)
         
@@ -169,8 +167,8 @@ class TestMCPTools:
             to_entity_version=sample_room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
-            created_at=datetime.utcnow(),
-            created_by="test-user"
+            created_at=datetime.now(UTC),
+            user_id="test-user"
         )
         await graph_ops.store_relationship(rel)
         
@@ -249,8 +247,8 @@ class TestMCPTools:
             to_entity_version=sample_room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
-            created_at=datetime.utcnow(),
-            created_by="test-user"
+            created_at=datetime.now(UTC),
+            user_id="test-user"
         )
         await graph_ops.store_relationship(rel)
         
@@ -300,8 +298,8 @@ class TestMCPTools:
             to_entity_version=sample_room.version,
             relationship_type=RelationshipType.AUTOMATES,
             properties={},
-            created_at=datetime.utcnow(),
-            created_by="test-user"
+            created_at=datetime.now(UTC),
+            user_id="test-user"
         )
         await graph_ops.store_relationship(rel)
         
@@ -317,13 +315,13 @@ class TestMCPTools:
         # Create another device
         similar_device = Entity(
             id=str(uuid.uuid4()),
-            version=f"{datetime.utcnow().isoformat()}Z-test",
+            version=f"{datetime.now(UTC).isoformat()}Z-test",
             entity_type=EntityType.DEVICE,
             name="Smart Bulb",
             content={"manufacturer": "LIFX"},
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            created_by="test-user",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            user_id="test-user",
             updated_by="test-user"
         )
         await graph_ops.store_entity(similar_device)
@@ -345,13 +343,13 @@ class TestSearchResult:
         """Test converting SearchResult to dict."""
         entity = Entity(
             id=str(uuid.uuid4()),
-            version=f"{datetime.utcnow().isoformat()}Z-test",
+            version=f"{datetime.now(UTC).isoformat()}Z-test",
             entity_type=EntityType.DEVICE,
             name="Test Device",
             content={"test": True},
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            created_by="test-user",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            user_id="test-user",
             updated_by="test-user"
         )
         

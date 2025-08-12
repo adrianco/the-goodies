@@ -7,7 +7,7 @@ Tests the sync engine, protocol, and conflict resolution.
 import pytest
 import tempfile
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from unittest.mock import Mock, AsyncMock, patch
 import uuid
 import httpx
@@ -15,7 +15,7 @@ import httpx
 from blowingoff.sync.engine import SyncEngine
 from blowingoff.sync.protocol import InbetweeniesProtocol
 from blowingoff.sync.conflict_resolver import ConflictResolver
-from inbetweenies.sync import SyncState, Change, ChangeType, Conflict, ConflictResolution
+from inbetweenies.sync import SyncState, Change, SyncOperation, Conflict, ConflictResolution
 from inbetweenies.models import Entity, EntityType
 
 
@@ -74,7 +74,7 @@ class TestInbetweeniesProtocol:
         """Test sending sync request."""
         sync_state = SyncState(
             client_id="test-client",
-            last_sync=datetime.utcnow() - timedelta(hours=1),
+            last_sync=datetime.now(UTC) - timedelta(hours=1),
             vector_clock={"test-client": 1},
             pending_changes=[]
         )
@@ -100,14 +100,15 @@ class TestInbetweeniesProtocol:
         """Test sending changes to server."""
         changes = [
             Change(
+                entity_type="device",
                 entity_id=str(uuid.uuid4()),
-                change_type=ChangeType.CREATE,
-                entity_data={
+                operation=SyncOperation.CREATE,
+                data={
                     "name": "Test Entity",
                     "entity_type": "device"
                 },
-                timestamp=datetime.utcnow(),
-                user_id="test-user"
+                updated_at=datetime.now(UTC),
+                sync_id=str(uuid.uuid4())
             )
         ]
         
@@ -238,7 +239,7 @@ class TestSyncEngine:
                             "id": str(uuid.uuid4()),
                             "name": "Test Entity",
                             "entity_type": "device",
-                            "version": f"{datetime.utcnow().isoformat()}Z-server"
+                            "version": f"{datetime.now(UTC).isoformat()}Z-server"
                         }
                     ],
                     "relationships": [],
@@ -293,7 +294,7 @@ class TestSyncEngine:
     async def test_sync_delta(self, sync_engine):
         """Test delta synchronization."""
         # Set last sync time
-        sync_engine.last_sync = datetime.utcnow() - timedelta(minutes=5)
+        sync_engine.last_sync = datetime.now(UTC) - timedelta(minutes=5)
         
         with patch.object(sync_engine.protocol, 'negotiate_protocol') as mock_negotiate:
             mock_negotiate.return_value = {
@@ -339,13 +340,13 @@ class TestSyncEngine:
         # Create a mock entity
         mock_entity = Mock()
         mock_entity.id = str(uuid.uuid4())
-        mock_entity.updated_at = datetime.utcnow()
+        mock_entity.updated_at = datetime.now(UTC)
         mock_entity.to_dict = Mock(return_value={"id": mock_entity.id, "name": "Test"})
         
         mock_session.execute = AsyncMock()
         mock_session.execute.return_value.scalars = Mock(return_value=Mock(all=Mock(return_value=[mock_entity])))
         
-        changes = await sync_engine._get_local_changes(datetime.utcnow() - timedelta(hours=1))
+        changes = await sync_engine._get_local_changes(datetime.now(UTC) - timedelta(hours=1))
         assert len(changes) >= 0  # May be 0 if no changes detected
     
     @pytest.mark.asyncio
@@ -354,12 +355,12 @@ class TestSyncEngine:
         entities = [
             {
                 "id": str(uuid.uuid4()),
-                "version": f"{datetime.utcnow().isoformat()}Z-server",
+                "version": f"{datetime.now(UTC).isoformat()}Z-server",
                 "entity_type": "device",
                 "name": "Remote Device",
                 "content": {},
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
                 "created_by": "server",
                 "updated_by": "server"
             }
@@ -386,15 +387,16 @@ class TestSyncIntegration:
         local_entity_id = str(uuid.uuid4())
         local_changes = [
             Change(
+                entity_type="device",
                 entity_id=local_entity_id,
-                change_type=ChangeType.CREATE,
-                entity_data={
+                operation=SyncOperation.CREATE,
+                data={
                     "id": local_entity_id,
                     "name": "Local Entity",
                     "entity_type": "device"
                 },
-                timestamp=datetime.utcnow(),
-                user_id="test-user"
+                updated_at=datetime.now(UTC),
+                sync_id=str(uuid.uuid4())
             )
         ]
         
@@ -419,7 +421,7 @@ class TestSyncIntegration:
                                 "id": server_entity_id,
                                 "name": "Server Entity",
                                 "entity_type": "room",
-                                "version": f"{datetime.utcnow().isoformat()}Z-server"
+                                "version": f"{datetime.now(UTC).isoformat()}Z-server"
                             }
                         ],
                         "relationships": [],

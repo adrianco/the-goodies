@@ -8,7 +8,7 @@ entities and relationships that can be used offline.
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 from datetime import datetime
 
 from inbetweenies.models import Entity, EntityRelationship, EntityType, RelationshipType

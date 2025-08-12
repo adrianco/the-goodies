@@ -8,7 +8,7 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, UTC
 import uuid
 
 from blowingoff.graph.local_storage import LocalGraphStorage
@@ -34,14 +34,13 @@ def sample_entity():
     """Create a sample entity for testing."""
     return Entity(
         id=str(uuid.uuid4()),
-        version=f"{datetime.utcnow().isoformat()}Z-test",
+        version=f"{datetime.now(UTC).isoformat()}Z-test",
         entity_type=EntityType.DEVICE,
         name="Test Device",
         content={"manufacturer": "Test Corp", "model": "T-1000"},
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-        created_by="test-user",
-        updated_by="test-user"
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        user_id="test-user"
     )
 
 
@@ -50,14 +49,13 @@ def sample_room():
     """Create a sample room entity."""
     return Entity(
         id=str(uuid.uuid4()),
-        version=f"{datetime.utcnow().isoformat()}Z-test",
+        version=f"{datetime.now(UTC).isoformat()}Z-test",
         entity_type=EntityType.ROOM,
         name="Living Room",
         content={"area": 30, "floor": 1},
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-        created_by="test-user",
-        updated_by="test-user"
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        user_id="test-user"
     )
 
 
@@ -72,8 +70,8 @@ def sample_relationship(sample_entity, sample_room):
         to_entity_version=sample_room.version,
         relationship_type=RelationshipType.LOCATED_IN,
         properties={"installed_date": "2024-01-01"},
-        created_at=datetime.utcnow(),
-        created_by="test-user"
+        created_at=datetime.now(UTC),
+        user_id="test-user"
     )
 
 
@@ -102,15 +100,14 @@ class TestLocalGraphStorage:
         # Create and store second version
         v2 = Entity(
             id=sample_entity.id,
-            version=f"{datetime.utcnow().isoformat()}Z-test-v2",
+            version=f"{datetime.now(UTC).isoformat()}Z-test-v2",
             entity_type=sample_entity.entity_type,
             name="Updated Device",
             content={"manufacturer": "Test Corp", "model": "T-2000"},
             parent_versions=[v1.version],
             created_at=sample_entity.created_at,
-            updated_at=datetime.utcnow(),
-            created_by=sample_entity.created_by,
-            updated_by="test-user-2"
+            updated_at=datetime.now(UTC),
+            user_id="test-user-2"
         )
         storage.store_entity(v2)
         
