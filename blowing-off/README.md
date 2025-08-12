@@ -16,7 +16,13 @@ Blowing-Off is a Python test client for The Goodies smart home system. It implem
 ```bash
 # From the blowing-off directory
 cd blowing-off
-pip install -e .
+
+# Set PYTHONPATH to include parent directory for inbetweenies
+export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
+
+# Install dependencies
+pip install -e ../inbetweenies  # Install inbetweenies package
+pip install -e .                # Install blowing-off client
 
 # This installs the 'blowingoff' command globally
 ```
