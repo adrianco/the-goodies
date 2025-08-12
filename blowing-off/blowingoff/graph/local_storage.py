@@ -260,26 +260,41 @@ class LocalGraphStorage:
         results = []
         query_lower = query.lower()
         
-        for entity_id, versions in self._entities.items():
-            if not versions:
-                continue
-            
-            latest = versions[-1]
-            
-            # Filter by type if specified
-            if entity_types and latest.entity_type not in entity_types:
-                continue
-            
-            # Search in name
-            if query_lower in latest.name.lower():
+        # Special case: "*" returns all entities
+        if query == "*":
+            for entity_id, versions in self._entities.items():
+                if not versions:
+                    continue
+                
+                latest = versions[-1]
+                
+                # Filter by type if specified
+                if entity_types and latest.entity_type not in entity_types:
+                    continue
+                
                 results.append(latest)
-                continue
-            
-            # Search in content (simple string search)
-            if latest.content:
-                content_str = json.dumps(latest.content).lower()
-                if query_lower in content_str:
+        else:
+            # Normal search
+            for entity_id, versions in self._entities.items():
+                if not versions:
+                    continue
+                
+                latest = versions[-1]
+                
+                # Filter by type if specified
+                if entity_types and latest.entity_type not in entity_types:
+                    continue
+                
+                # Search in name
+                if query_lower in latest.name.lower():
                     results.append(latest)
+                    continue
+                
+                # Search in content (simple string search)
+                if latest.content:
+                    content_str = json.dumps(latest.content).lower()
+                    if query_lower in content_str:
+                        results.append(latest)
         
         return results
     

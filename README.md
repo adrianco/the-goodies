@@ -171,7 +171,7 @@ blowing-off sync
 
 # Use MCP tools locally
 blowing-off tools
-blowing-off search "smart light"
+blowing-off search "smart"
 blowing-off execute get_devices_in_room -a room_id="room-123"
 ```
 
