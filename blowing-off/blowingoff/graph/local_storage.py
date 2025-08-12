@@ -98,9 +98,26 @@ class LocalGraphStorage:
     
     def _entity_to_dict(self, entity: Entity) -> dict:
         """Convert entity to dictionary for JSON serialization"""
+        from datetime import datetime
+        
         # Handle entity_type that might be string or enum
         entity_type_value = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
         source_type_value = entity.source_type.value if hasattr(entity.source_type, 'value') else str(entity.source_type)
+        
+        # Handle timestamps that might be datetime objects or strings
+        created_at = None
+        if hasattr(entity, 'created_at') and entity.created_at:
+            if isinstance(entity.created_at, datetime):
+                created_at = entity.created_at.isoformat()
+            else:
+                created_at = str(entity.created_at)
+        
+        updated_at = None
+        if hasattr(entity, 'updated_at') and entity.updated_at:
+            if isinstance(entity.updated_at, datetime):
+                updated_at = entity.updated_at.isoformat()
+            else:
+                updated_at = str(entity.updated_at)
         
         return {
             "id": entity.id or "",
@@ -111,14 +128,24 @@ class LocalGraphStorage:
             "source_type": source_type_value,
             "user_id": entity.user_id or "unknown",
             "parent_versions": entity.parent_versions or [],
-            "created_at": entity.created_at.isoformat() if entity.created_at else None,
-            "updated_at": entity.updated_at.isoformat() if entity.updated_at else None
+            "created_at": created_at,
+            "updated_at": updated_at
         }
     
     def _relationship_to_dict(self, rel: EntityRelationship) -> dict:
         """Convert relationship to dictionary for JSON serialization"""
+        from datetime import datetime
+        
         # Handle relationship_type that might be string or enum
         rel_type_value = rel.relationship_type.value if hasattr(rel.relationship_type, 'value') else str(rel.relationship_type)
+        
+        # Handle timestamp that might be datetime object or string
+        created_at = None
+        if hasattr(rel, 'created_at') and rel.created_at:
+            if isinstance(rel.created_at, datetime):
+                created_at = rel.created_at.isoformat()
+            else:
+                created_at = str(rel.created_at)
         
         return {
             "id": rel.id,
@@ -129,7 +156,7 @@ class LocalGraphStorage:
             "relationship_type": rel_type_value,
             "properties": rel.properties,
             "user_id": rel.user_id,
-            "created_at": rel.created_at.isoformat() if rel.created_at else None
+            "created_at": created_at
         }
     
     def _rebuild_index(self):
