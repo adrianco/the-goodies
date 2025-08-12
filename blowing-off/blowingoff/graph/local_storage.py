@@ -63,7 +63,12 @@ class LocalGraphStorage:
         # Load or rebuild index
         if self.index_file.exists():
             with open(self.index_file, 'r') as f:
-                self._index = json.load(f)
+                loaded_index = json.load(f)
+                # Ensure index has the proper structure
+                if not loaded_index or "by_type" not in loaded_index:
+                    self._rebuild_index()
+                else:
+                    self._index = loaded_index
         else:
             self._rebuild_index()
     
@@ -98,14 +103,14 @@ class LocalGraphStorage:
         source_type_value = entity.source_type.value if hasattr(entity.source_type, 'value') else str(entity.source_type)
         
         return {
-            "id": entity.id,
-            "version": entity.version,
+            "id": entity.id or "",
+            "version": entity.version or "",
             "entity_type": entity_type_value,
-            "name": entity.name,
-            "content": entity.content,
+            "name": entity.name or "",
+            "content": entity.content or {},
             "source_type": source_type_value,
-            "user_id": entity.user_id,
-            "parent_versions": entity.parent_versions,
+            "user_id": entity.user_id or "unknown",
+            "parent_versions": entity.parent_versions or [],
             "created_at": entity.created_at.isoformat() if entity.created_at else None,
             "updated_at": entity.updated_at.isoformat() if entity.updated_at else None
         }
@@ -157,7 +162,18 @@ class LocalGraphStorage:
         if entity.id not in self._entities:
             self._entities[entity.id] = []
         
-        self._entities[entity.id].append(entity)
+        # Check if this is a newer version that should replace the current one
+        # This is a simplified approach - in production you'd want proper version comparison
+        if self._entities[entity.id]:
+            current = self._entities[entity.id][-1]
+            # If the new entity has the same version but different content, replace it
+            # This handles the case where sync brings in updated entities
+            if current.version == entity.version:
+                self._entities[entity.id][-1] = entity
+            else:
+                self._entities[entity.id].append(entity)
+        else:
+            self._entities[entity.id].append(entity)
         
         # Update index
         type_key = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)

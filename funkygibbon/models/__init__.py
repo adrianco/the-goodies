@@ -1,34 +1,23 @@
 """
-FunkyGibbon Models - Using Inbetweenies HomeKit-compatible models + Graph models
+FunkyGibbon Models - Using Inbetweenies graph-based models only
 """
 
-# Import all shared models from inbetweenies
+# Import all shared graph models from inbetweenies
 from inbetweenies.models import (
     Base,
-    Home,
-    Room,
-    Accessory,
-    Service,
-    Characteristic,
-    User,
-    accessory_rooms,
-    SyncMetadata
+    InbetweeniesTimestampMixin,
+    SyncMetadata,
+    Entity,
+    EntityType,
+    SourceType,
+    EntityRelationship,
+    RelationshipType
 )
-
-# Import new graph models from inbetweenies
-from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
 
 __all__ = [
     'Base',
-    'Home',
-    'Room',
-    'Accessory',
-    'Service',
-    'Characteristic',
-    'User',
-    'accessory_rooms',
+    'InbetweeniesTimestampMixin',
     'SyncMetadata',
-    # Graph models
     'Entity',
     'EntityType',
     'SourceType',

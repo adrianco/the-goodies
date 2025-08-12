@@ -8,7 +8,7 @@ that work with local storage instead of a database.
 from typing import List, Optional, Any, Dict
 from dataclasses import dataclass
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 
 from inbetweenies.graph import GraphOperations, GraphSearch
 from inbetweenies.mcp import MCPTools, ToolResult
@@ -157,6 +157,19 @@ class LocalGraphOperations(MCPTools):
     
     async def store_entity(self, entity: Entity) -> Entity:
         """Store an entity locally"""
+        import uuid
+        # Generate ID if not set
+        if not entity.id:
+            entity.id = str(uuid.uuid4())
+        # Set user_id if not set
+        if not entity.user_id:
+            entity.user_id = "local-user"
+        # Generate version if not set
+        if not entity.version:
+            entity.version = Entity.create_version(entity.user_id)
+        # Ensure parent_versions is a list
+        if not hasattr(entity, 'parent_versions') or entity.parent_versions is None:
+            entity.parent_versions = []
         return self.storage.store_entity(entity)
     
     async def get_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[Entity]:
@@ -307,12 +320,11 @@ class LocalGraphOperations(MCPTools):
                 entity_type=etype,
                 name=name,
                 content=content or {},
-                version=f"{datetime.utcnow().isoformat()}Z-{user_id}",
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                created_by=user_id,
-                updated_by=user_id
-            )
+                version=f"{datetime.now(UTC).isoformat()}Z-{user_id}",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+                user_id=user_id,
+                            )
             
             # Store it
             stored = await self.store_entity(entity)
@@ -346,8 +358,8 @@ class LocalGraphOperations(MCPTools):
                 to_entity_id=to_entity_id,
                 relationship_type=rtype,
                 properties=properties or {},
-                created_at=datetime.utcnow(),
-                created_by=user_id
+                created_at=datetime.now(UTC),
+                user_id=user_id
             )
             
             # Store it
@@ -488,13 +500,12 @@ class LocalGraphOperations(MCPTools):
                 entity_type=current.entity_type,
                 name=changes.get('name', current.name),
                 content=changes.get('content', current.content),
-                version=f"{datetime.utcnow().isoformat()}Z-{user_id}",
+                version=f"{datetime.now(UTC).isoformat()}Z-{user_id}",
                 parent_versions=[current.version] if current.version else [],
                 created_at=current.created_at,
-                updated_at=datetime.utcnow(),
-                created_by=current.created_by,
-                updated_by=user_id
-            )
+                updated_at=datetime.now(UTC),
+                user_id=current.user_id if hasattr(current, 'user_id') else user_id
+                            )
             
             # Store new version
             stored = await self.store_entity(updated)

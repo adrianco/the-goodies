@@ -43,8 +43,9 @@ All MCP tools working locally with server data."""
 import os
 import asyncio
 import gc
+import uuid
 from typing import Dict, Any, List, Optional, Callable
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import event, text
@@ -343,36 +344,56 @@ class BlowingOffClient:
         # Rooms in home
         await self.graph_operations.store_relationship(
             EntityRelationship(
-                source_id=stored_living.id,
-                target_id=stored_home.id,
+                id=str(uuid.uuid4()),
+                from_entity_id=stored_living.id,
+                from_entity_version=stored_living.version,
+                to_entity_id=stored_home.id,
+                to_entity_version=stored_home.version,
                 relationship_type=RelationshipType.LOCATED_IN,
-                source_type=SourceType.MANUAL
+                properties={},
+                created_at=datetime.now(UTC),
+                user_id="demo"
             )
         )
         await self.graph_operations.store_relationship(
             EntityRelationship(
-                source_id=stored_kitchen.id,
-                target_id=stored_home.id,
+                id=str(uuid.uuid4()),
+                from_entity_id=stored_kitchen.id,
+                from_entity_version=stored_kitchen.version,
+                to_entity_id=stored_home.id,
+                to_entity_version=stored_home.version,
                 relationship_type=RelationshipType.LOCATED_IN,
-                source_type=SourceType.MANUAL
+                properties={},
+                created_at=datetime.now(UTC),
+                user_id="demo"
             )
         )
         
         # Devices in rooms
         await self.graph_operations.store_relationship(
             EntityRelationship(
-                source_id=stored_tv.id,
-                target_id=stored_living.id,
+                id=str(uuid.uuid4()),
+                from_entity_id=stored_tv.id,
+                from_entity_version=stored_tv.version,
+                to_entity_id=stored_living.id,
+                to_entity_version=stored_living.version,
                 relationship_type=RelationshipType.LOCATED_IN,
-                source_type=SourceType.MANUAL
+                properties={},
+                created_at=datetime.now(UTC),
+                user_id="demo"
             )
         )
         await self.graph_operations.store_relationship(
             EntityRelationship(
-                source_id=stored_fridge.id,
-                target_id=stored_kitchen.id,
+                id=str(uuid.uuid4()),
+                from_entity_id=stored_fridge.id,
+                from_entity_version=stored_fridge.version,
+                to_entity_id=stored_kitchen.id,
+                to_entity_version=stored_kitchen.version,
                 relationship_type=RelationshipType.LOCATED_IN,
-                source_type=SourceType.MANUAL
+                properties={},
+                created_at=datetime.now(UTC),
+                user_id="demo"
             )
         )
         
@@ -386,7 +407,11 @@ class BlowingOffClient:
             "get_devices_in_room",
             room_id=stored_living.id
         )
-        print(f"\nDevices in Living Room: {result['result']['count']}")
+        if result and result.get('success') and result.get('result'):
+            count = result['result'].get('count', 0)
+            print(f"\nDevices in Living Room: {count}")
+        else:
+            print("\nDevices in Living Room: 0")
         
         # Search for devices
         result = await self.execute_mcp_tool(
@@ -395,6 +420,10 @@ class BlowingOffClient:
             entity_types=[EntityType.DEVICE.value],
             limit=10
         )
-        print(f"Found {result['result']['count']} smart devices")
+        if result and result.get('success') and result.get('result'):
+            count = result['result'].get('count', 0)
+            print(f"Found {count} smart devices")
+        else:
+            print("Found 0 smart devices")
         
         print("\n✅ MCP demo complete!")

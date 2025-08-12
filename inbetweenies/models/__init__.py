@@ -1,19 +1,15 @@
 """
 Inbetweenies Protocol - Smart Home Data Models
 
-STATUS: ✅ Production Ready - All models tested and operational
+STATUS: ✅ Production Ready - Graph-based models only
 
 ARCHITECTURE:
 SQLAlchemy models for The Goodies smart home knowledge graph system
-supporting both modern Entity-based architecture and legacy HomeKit
-compatibility for seamless migration and integration.
+using a pure Entity-based architecture for maximum flexibility.
 
 CORE MODELS:
 - Entity: Universal smart home entity (devices, rooms, homes, etc.)
 - EntityRelationship: Connections between entities with typed relationships
-- Home/Room/Accessory: HomeKit-compatible legacy models
-- Service/Characteristic: Device capability modeling
-- User: Access control and user management
 - SyncMetadata: Client synchronization state tracking
 
 ENTITY TYPES:
@@ -27,7 +23,6 @@ flexible entity interconnection modeling
 KEY FEATURES:
 - Immutable versioning with complete audit trail
 - Full-text search capabilities across all entity content
-- Backward compatibility with HomeKit models
 - Graph operations with relationship traversal
 - Content field for flexible device-specific data storage
 
@@ -37,12 +32,6 @@ and synchronization with comprehensive test coverage.
 """
 
 from .base import Base, InbetweeniesTimestampMixin
-from .home import Home
-from .room import Room
-from .accessory import Accessory, accessory_rooms
-from .service import Service
-from .characteristic import Characteristic
-from .user import User
 from .sync_metadata import SyncMetadata
 from .entity import Entity, EntityType, SourceType
 from .relationship import EntityRelationship, RelationshipType
@@ -50,13 +39,6 @@ from .relationship import EntityRelationship, RelationshipType
 __all__ = [
     'Base',
     'InbetweeniesTimestampMixin',
-    'Home',
-    'Room',
-    'Accessory',
-    'accessory_rooms',
-    'Service',
-    'Characteristic',
-    'User',
     'SyncMetadata',
     'Entity',
     'EntityType',

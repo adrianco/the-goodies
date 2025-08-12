@@ -72,12 +72,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_db
 from inbetweenies.sync.protocol import SyncRequest, SyncResponse
-from ...repositories import (
-    AccessoryRepository,
-    HomeRepository,
-    RoomRepository,
-    UserRepository,
-)
 
 router = APIRouter()
 
@@ -94,64 +88,114 @@ async def sync_entities(
     """
     from inbetweenies.sync.protocol import SyncStats, ConflictInfo, VectorClock, SyncChange, EntityChange
     
+    # Import graph repository for entity storage
+    from ...repositories.graph import GraphRepository
+    from ...models import Entity as GraphEntity, EntityRelationship
+    from ...models import EntityType as GraphEntityType, SourceType
+    
     # Process incoming changes
     applied_changes = 0
     conflicts = []
     
-    repo_map = {
-        "home": HomeRepository(),
-        "room": RoomRepository(), 
-        "accessory": AccessoryRepository(),
-        "user": UserRepository()
-    }
+    # Use graph repository for all entity types
+    graph_repo = GraphRepository(db)
     
     for sync_change in request.changes:
         if sync_change.entity:
             entity = sync_change.entity
-            entity_type = entity.entity_type
             
-            repo = repo_map.get(entity_type)
-            if not repo:
-                continue
-                
             try:
-                # Convert entity data for repository
-                entity_data = {
-                    "id": entity.id,
-                    "name": entity.name,
-                    "sync_id": entity.version,
-                    **entity.content
-                }
+                # Convert to graph entity
+                graph_entity = GraphEntity(
+                    id=entity.id,
+                    version=entity.version or GraphEntity.create_version("sync"),
+                    entity_type=GraphEntityType(entity.entity_type),
+                    name=entity.name,
+                    content=entity.content,
+                    source_type=SourceType(entity.source_type) if entity.source_type else SourceType.IMPORTED,
+                    user_id=entity.user_id if hasattr(entity, 'user_id') else "sync",
+                    parent_versions=entity.parent_versions if hasattr(entity, 'parent_versions') else []
+                )
                 
                 if sync_change.change_type == "delete":
-                    if hasattr(repo, 'delete'):
-                        await repo.delete(db, entity.id)
-                        applied_changes += 1
+                    # Handle deletion (graph doesn't delete, it marks as deleted)
+                    # For now, skip deletes
+                    pass
                 else:
-                    # Use sync_entity if available
-                    if hasattr(repo, 'sync_entity'):
-                        _, updated, conflict = await repo.sync_entity(db, entity_data)
-                        if updated:
-                            applied_changes += 1
-                        if conflict:
-                            conflicts.append(ConflictInfo(
-                                entity_id=entity.id,
-                                local_version=conflict.local_version if hasattr(conflict, 'local_version') else "unknown",
-                                remote_version=conflict.remote_version if hasattr(conflict, 'remote_version') else entity.version,
-                                resolution_strategy="last_write_wins",
-                                resolved_version=conflict.resolved_version if hasattr(conflict, 'resolved_version') else None
-                            ))
+                    # Check for existing entity
+                    existing = await graph_repo.get_entity(entity.id)
+                    
+                    if existing:
+                        # Check for conflict
+                        if existing.version != entity.version:
+                            # Conflict detected - use last-write-wins based on version
+                            if entity.version > existing.version:
+                                # Incoming wins
+                                await graph_repo.store_entity(graph_entity)
+                                applied_changes += 1
+                            else:
+                                # Existing wins
+                                conflicts.append(ConflictInfo(
+                                    entity_id=entity.id,
+                                    local_version=existing.version,
+                                    remote_version=entity.version,
+                                    resolution_strategy="last_write_wins",
+                                    resolved_version=existing.version
+                                ))
+                    else:
+                        # New entity
+                        await graph_repo.store_entity(graph_entity)
+                        applied_changes += 1
                     
             except Exception as e:
-                print(f"Error processing change for {entity_type} {entity.id}: {e}")
+                print(f"Error processing change for {entity.entity_type} {entity.id}: {e}")
     
     await db.commit()
     
-    # Return server changes (empty for now - client should use separate endpoint)
+    # Get server changes to send back
+    server_changes = []
+    
+    # If this is a full sync or delta sync, return entities
+    if request.sync_type in ["full", "delta"]:
+        # Get all entities or entities since last sync
+        since = None
+        if request.filters and hasattr(request.filters, 'since'):
+            since = request.filters.since
+            
+        # Get entities from graph
+        for entity_type in GraphEntityType:
+            try:
+                entities = await graph_repo.get_entities_by_type(entity_type)
+                for entity in entities:
+                    # Filter by timestamp if delta sync
+                    if since and hasattr(entity, 'updated_at') and entity.updated_at:
+                        if entity.updated_at <= since:
+                            continue
+                    
+                    # Convert to sync change
+                    entity_change = EntityChange(
+                        id=entity.id,
+                        version=entity.version,
+                        entity_type=entity.entity_type.value,
+                        name=entity.name,
+                        content=entity.content,
+                        source_type=entity.source_type.value,
+                        parent_versions=entity.parent_versions
+                    )
+                    
+                    server_changes.append(SyncChange(
+                        change_type="update",
+                        entity=entity_change,
+                        timestamp=entity.updated_at if hasattr(entity, 'updated_at') else datetime.now(UTC)
+                    ))
+            except Exception as e:
+                print(f"Error getting entities for type {entity_type}: {e}")
+    
+    # Return server changes
     return SyncResponse(
         protocol_version="inbetweenies-v2",
         sync_type=request.sync_type,
-        changes=[],
+        changes=server_changes[:100],  # Limit to 100 changes per sync
         conflicts=conflicts,
         vector_clock=VectorClock(),
         sync_stats=SyncStats(
@@ -160,42 +204,4 @@ async def sync_entities(
         )
     )
 
-
-@router.get("/changes", response_model=dict)
-async def get_changes(
-    since: datetime,
-    entity_type: Optional[str] = None,
-    limit: int = 100,
-    db: AsyncSession = Depends(get_db)
-):
-    """Get entities changed since a specific timestamp."""
-    changes = {}
-    
-    if not entity_type or entity_type == "houses":
-        home_repo = HomeRepository()
-        homes = await home_repo.get_changes_since(db, since, limit)
-        changes["homes"] = [h.to_dict() for h in homes]
-    
-    if not entity_type or entity_type == "rooms":
-        room_repo = RoomRepository()
-        rooms = await room_repo.get_changes_since(db, since, limit)
-        changes["rooms"] = [r.to_dict() for r in rooms]
-    
-    if not entity_type or entity_type == "devices":
-        accessory_repo = AccessoryRepository()
-        accessories = await accessory_repo.get_changes_since(db, since, limit)
-        changes["accessories"] = [a.to_dict() for a in accessories]
-    
-    if not entity_type or entity_type == "users":
-        user_repo = UserRepository()
-        users = await user_repo.get_changes_since(db, since, limit)
-        changes["users"] = [u.to_dict() for u in users]
-    
-    return {
-        "changes": changes,
-        "since": since.isoformat(),
-        "timestamp": datetime.now(UTC).isoformat()
-    }
-
-
-# Legacy endpoints removed - only Inbetweenies v2 protocol supported
+# Graph-based sync only - no legacy HomeKit endpoints

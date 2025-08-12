@@ -5,14 +5,13 @@ FastAPI endpoints for entity management.
 """
 
 from .app import create_app
-from .routers import homes, rooms, accessories, users, sync, auth
+from .routers import sync, auth, graph, mcp, sync_metadata
 
 __all__ = [
     "create_app",
-    "homes",
-    "rooms", 
-    "accessories",
-    "users",
     "sync",
     "auth",
+    "graph",
+    "mcp",
+    "sync_metadata",
 ]

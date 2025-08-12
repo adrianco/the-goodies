@@ -7,7 +7,7 @@ between entities in the knowledge graph.
 
 from enum import Enum
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from sqlalchemy import Column, String, JSON, ForeignKey, Enum as SQLEnum, ForeignKeyConstraint
+from sqlalchemy import Column, String, JSON, Enum as SQLEnum, ForeignKeyConstraint
 from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
@@ -59,7 +59,7 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     properties = Column(JSON, default=dict)
     
     # Tracking
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    user_id = Column(String(36), nullable=True)  # No foreign key, just track the user ID
     
     # Foreign key constraints
     __table_args__ = (
@@ -74,9 +74,6 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
             name="fk_to_entity"
         ),
     )
-    
-    # Relationships
-    user = relationship("User", back_populates="entity_relationships")
     
     from_entity = relationship(
         "Entity",

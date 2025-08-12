@@ -102,7 +102,6 @@ class TestLocalGraphOperations:
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
             user_id="test-user",
-            updated_by="test-user"
         )
         
         # Store entity
@@ -322,7 +321,6 @@ class TestMCPTools:
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
             user_id="test-user",
-            updated_by="test-user"
         )
         await graph_ops.store_entity(similar_device)
         
@@ -350,7 +348,6 @@ class TestSearchResult:
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
             user_id="test-user",
-            updated_by="test-user"
         )
         
         result = SearchResult(entity=entity, score=1.5)
