@@ -216,7 +216,8 @@ class SyncEngine:
                     name=entity_data.get('name', ''),
                     content=entity_data.get('content', {}),
                     source_type=SourceType(entity_data.get('source_type', SourceType.IMPORTED)),
-                    parent_versions=entity_data.get('parent_versions', [])
+                    parent_versions=entity_data.get('parent_versions', []),
+                    user_id=entity_data.get('user_id', 'sync')
                 )
                 
                 # Store entity

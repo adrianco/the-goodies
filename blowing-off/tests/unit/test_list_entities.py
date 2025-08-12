@@ -154,12 +154,9 @@ class TestListEntitiesCommand:
                 # Run command
                 result = runner.invoke(cli, ['list-entities'])
                 
-                # Should succeed but show no entities
+                # Should succeed and show "No entities found"
                 assert result.exit_code == 0
-                # No entity groups should be shown
-                assert "HOMES" not in result.output
-                assert "ROOMS" not in result.output
-                assert "DEVICES" not in result.output
+                assert "No entities found" in result.output
     
     def test_list_entities_error(self, runner, mock_client, tmp_path, monkeypatch):
         """Test list-entities with MCP tool error."""
@@ -195,6 +192,70 @@ class TestListEntitiesCommand:
                 
                 # Verify MCP tool was called
                 mock_client.execute_mcp_tool.assert_called_once()
+    
+    def test_list_entities_with_none_timestamps(self, runner, mock_client, tmp_path, monkeypatch):
+        """Test list-entities with entities that have None timestamps."""
+        # Set working directory to temp path
+        monkeypatch.chdir(tmp_path)
+        
+        # Create config file
+        config = {
+            "server_url": "http://localhost:8000",
+            "auth_token": "test-token",
+            "client_id": "test-client",
+            "db_path": str(tmp_path / "test.db")
+        }
+        config_path = tmp_path / ".blowingoff.json"
+        config_path.write_text(json.dumps(config))
+        
+        # Create entities with None timestamps
+        sample_entities = [
+            {
+                "entity": {
+                    "id": "auto-1",
+                    "entity_type": "automation",
+                    "name": "Morning Routine",
+                    "content": {"enabled": True},
+                    "updated_at": None,  # None timestamp
+                    "created_at": None
+                },
+                "score": 1.0
+            },
+            {
+                "entity": {
+                    "id": "auto-2",
+                    "entity_type": "automation",
+                    "name": "Night Mode",
+                    "content": {"enabled": False}
+                    # Missing timestamps entirely
+                },
+                "score": 1.0
+            }
+        ]
+        
+        # Mock the client
+        mock_client.execute_mcp_tool = AsyncMock(return_value={
+            "success": True,
+            "result": {
+                "results": sample_entities,
+                "count": 2,
+                "query": "*"
+            }
+        })
+        
+        with patch('blowingoff.cli.main.BlowingOffClient', return_value=mock_client):
+            with patch('blowingoff.cli.main.load_client', new_callable=AsyncMock) as mock_load:
+                mock_load.return_value = mock_client
+                
+                # Run command - should not crash on None timestamps
+                result = runner.invoke(cli, ['list-entities'])
+                
+                # Check output
+                assert result.exit_code == 0
+                assert "AUTOMATIONS (2)" in result.output
+                assert "Morning Routine" in result.output
+                assert "Night Mode" in result.output
+                assert "Unknown" in result.output  # For None timestamps
 
 
 class TestSearchEntitiesMCPTool:
@@ -341,3 +402,48 @@ class TestSearchEntitiesMCPTool:
         assert result.success is True
         assert result.result["count"] == 1
         assert result.result["results"][0]["entity"]["entity_type"] == "room"
+    
+    @pytest.mark.asyncio
+    async def test_search_result_to_dict_with_none_values(self, tmp_path):
+        """Test SearchResult.to_dict handles None values properly."""
+        from blowingoff.graph.local_operations import LocalGraphOperations, SearchResult
+        
+        # Create storage with test data
+        storage = LocalGraphStorage(str(tmp_path / "test.db"))
+        
+        # Create entity without timestamps
+        entity = Entity(
+            id="test-1",
+            version="v1",
+            entity_type=EntityType.AUTOMATION,
+            name="Test Automation",
+            content={"enabled": True},
+            source_type=SourceType.MANUAL,
+            user_id="test"
+        )
+        # Don't set created_at or updated_at
+        
+        # Create SearchResult
+        result = SearchResult(entity=entity, score=1.0)
+        
+        # Convert to dict
+        result_dict = result.to_dict()
+        
+        # Check structure
+        assert "entity" in result_dict
+        assert "score" in result_dict
+        
+        # Check entity fields exist even if None
+        entity_dict = result_dict["entity"]
+        assert "id" in entity_dict
+        assert "name" in entity_dict
+        assert "entity_type" in entity_dict
+        assert "updated_at" in entity_dict
+        assert "created_at" in entity_dict
+        
+        # Check values
+        assert entity_dict["id"] == "test-1"
+        assert entity_dict["name"] == "Test Automation"
+        assert entity_dict["entity_type"] == "automation"
+        assert entity_dict["updated_at"] is None
+        assert entity_dict["created_at"] is None

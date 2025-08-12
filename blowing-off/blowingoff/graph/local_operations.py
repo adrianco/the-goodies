@@ -25,8 +25,12 @@ class SearchResult:
     
     def to_dict(self):
         # Properly convert entity to dict, handling SQLAlchemy objects
-        entity_dict = {}
-        if hasattr(self.entity, '__dict__'):
+        if hasattr(self.entity, 'to_dict'):
+            # Use the entity's to_dict method if available
+            entity_dict = self.entity.to_dict()
+        elif hasattr(self.entity, '__dict__'):
+            # Manually convert from attributes
+            entity_dict = {}
             for key, value in self.entity.__dict__.items():
                 if not key.startswith('_'):
                     # Convert enums to strings
@@ -34,10 +38,22 @@ class SearchResult:
                         entity_dict[key] = value.value
                     elif isinstance(value, datetime):
                         entity_dict[key] = value.isoformat()
+                    elif value is None:
+                        entity_dict[key] = None
                     else:
                         entity_dict[key] = value
         else:
-            entity_dict = self.entity.to_dict() if hasattr(self.entity, 'to_dict') else str(self.entity)
+            # Fallback to string representation
+            entity_dict = str(self.entity)
+        
+        # Ensure required fields exist
+        if isinstance(entity_dict, dict):
+            # Ensure these fields are present even if None
+            entity_dict.setdefault('id', None)
+            entity_dict.setdefault('name', None)
+            entity_dict.setdefault('entity_type', 'unknown')
+            entity_dict.setdefault('updated_at', None)
+            entity_dict.setdefault('created_at', None)
         
         return {
             "entity": entity_dict,
