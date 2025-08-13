@@ -8,7 +8,7 @@ entities and relationships that can be used offline.
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 from datetime import datetime
 
 from inbetweenies.models import Entity, EntityRelationship, EntityType, RelationshipType
@@ -63,7 +63,12 @@ class LocalGraphStorage:
         # Load or rebuild index
         if self.index_file.exists():
             with open(self.index_file, 'r') as f:
-                self._index = json.load(f)
+                loaded_index = json.load(f)
+                # Ensure index has the proper structure
+                if not loaded_index or "by_type" not in loaded_index:
+                    self._rebuild_index()
+                else:
+                    self._index = loaded_index
         else:
             self._rebuild_index()
     
@@ -93,27 +98,54 @@ class LocalGraphStorage:
     
     def _entity_to_dict(self, entity: Entity) -> dict:
         """Convert entity to dictionary for JSON serialization"""
+        from datetime import datetime
+        
         # Handle entity_type that might be string or enum
         entity_type_value = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
         source_type_value = entity.source_type.value if hasattr(entity.source_type, 'value') else str(entity.source_type)
         
+        # Handle timestamps that might be datetime objects or strings
+        created_at = None
+        if hasattr(entity, 'created_at') and entity.created_at:
+            if isinstance(entity.created_at, datetime):
+                created_at = entity.created_at.isoformat()
+            else:
+                created_at = str(entity.created_at)
+        
+        updated_at = None
+        if hasattr(entity, 'updated_at') and entity.updated_at:
+            if isinstance(entity.updated_at, datetime):
+                updated_at = entity.updated_at.isoformat()
+            else:
+                updated_at = str(entity.updated_at)
+        
         return {
-            "id": entity.id,
-            "version": entity.version,
+            "id": entity.id or "",
+            "version": entity.version or "",
             "entity_type": entity_type_value,
-            "name": entity.name,
-            "content": entity.content,
+            "name": entity.name or "",
+            "content": entity.content or {},
             "source_type": source_type_value,
-            "user_id": entity.user_id,
-            "parent_versions": entity.parent_versions,
-            "created_at": entity.created_at.isoformat() if entity.created_at else None,
-            "updated_at": entity.updated_at.isoformat() if entity.updated_at else None
+            "user_id": entity.user_id or "unknown",
+            "parent_versions": entity.parent_versions or [],
+            "created_at": created_at,
+            "updated_at": updated_at
         }
     
     def _relationship_to_dict(self, rel: EntityRelationship) -> dict:
         """Convert relationship to dictionary for JSON serialization"""
+        from datetime import datetime
+        
         # Handle relationship_type that might be string or enum
         rel_type_value = rel.relationship_type.value if hasattr(rel.relationship_type, 'value') else str(rel.relationship_type)
+        
+        # Handle timestamp that might be datetime object or string
+        created_at = None
+        if hasattr(rel, 'created_at') and rel.created_at:
+            if isinstance(rel.created_at, datetime):
+                created_at = rel.created_at.isoformat()
+            else:
+                created_at = str(rel.created_at)
         
         return {
             "id": rel.id,
@@ -124,7 +156,7 @@ class LocalGraphStorage:
             "relationship_type": rel_type_value,
             "properties": rel.properties,
             "user_id": rel.user_id,
-            "created_at": rel.created_at.isoformat() if rel.created_at else None
+            "created_at": created_at
         }
     
     def _rebuild_index(self):
@@ -157,7 +189,18 @@ class LocalGraphStorage:
         if entity.id not in self._entities:
             self._entities[entity.id] = []
         
-        self._entities[entity.id].append(entity)
+        # Check if this is a newer version that should replace the current one
+        # This is a simplified approach - in production you'd want proper version comparison
+        if self._entities[entity.id]:
+            current = self._entities[entity.id][-1]
+            # If the new entity has the same version but different content, replace it
+            # This handles the case where sync brings in updated entities
+            if current.version == entity.version:
+                self._entities[entity.id][-1] = entity
+            else:
+                self._entities[entity.id].append(entity)
+        else:
+            self._entities[entity.id].append(entity)
         
         # Update index
         type_key = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
@@ -244,26 +287,41 @@ class LocalGraphStorage:
         results = []
         query_lower = query.lower()
         
-        for entity_id, versions in self._entities.items():
-            if not versions:
-                continue
-            
-            latest = versions[-1]
-            
-            # Filter by type if specified
-            if entity_types and latest.entity_type not in entity_types:
-                continue
-            
-            # Search in name
-            if query_lower in latest.name.lower():
+        # Special case: "*" returns all entities
+        if query == "*":
+            for entity_id, versions in self._entities.items():
+                if not versions:
+                    continue
+                
+                latest = versions[-1]
+                
+                # Filter by type if specified
+                if entity_types and latest.entity_type not in entity_types:
+                    continue
+                
                 results.append(latest)
-                continue
-            
-            # Search in content (simple string search)
-            if latest.content:
-                content_str = json.dumps(latest.content).lower()
-                if query_lower in content_str:
+        else:
+            # Normal search
+            for entity_id, versions in self._entities.items():
+                if not versions:
+                    continue
+                
+                latest = versions[-1]
+                
+                # Filter by type if specified
+                if entity_types and latest.entity_type not in entity_types:
+                    continue
+                
+                # Search in name
+                if query_lower in latest.name.lower():
                     results.append(latest)
+                    continue
+                
+                # Search in content (simple string search)
+                if latest.content:
+                    content_str = json.dumps(latest.content).lower()
+                    if query_lower in content_str:
+                        results.append(latest)
         
         return results
     
@@ -326,3 +384,56 @@ class LocalGraphStorage:
         # Rebuild index and save
         self._rebuild_index()
         self._save_data()
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get statistics about the local graph."""
+        # Count unique entities (latest version only)
+        total_entities = len(self._entities)
+        
+        # Count relationships
+        total_relationships = len(self._relationships)
+        
+        # Count by entity type
+        entity_types = {}
+        for entity_id, versions in self._entities.items():
+            if versions:
+                latest = versions[-1]  # Get latest version
+                entity_type = str(latest.entity_type)
+                if entity_type.startswith('EntityType.'):
+                    entity_type = entity_type.replace('EntityType.', '').lower()
+                entity_types[entity_type] = entity_types.get(entity_type, 0) + 1
+        
+        # Count by relationship type
+        relationship_types = {}
+        for rel in self._relationships:
+            rel_type = str(rel.relationship_type)
+            if rel_type.startswith('RelationshipType.'):
+                rel_type = rel_type.replace('RelationshipType.', '').lower()
+            relationship_types[rel_type] = relationship_types.get(rel_type, 0) + 1
+        
+        # Calculate average degree
+        if total_entities > 0:
+            total_connections = len(set(
+                [r.from_entity_id for r in self._relationships] +
+                [r.to_entity_id for r in self._relationships]
+            ))
+            average_degree = (total_relationships * 2) / total_entities if total_entities > 0 else 0
+        else:
+            average_degree = 0
+        
+        # Find isolated entities
+        connected_entities = set()
+        for rel in self._relationships:
+            connected_entities.add(rel.from_entity_id)
+            connected_entities.add(rel.to_entity_id)
+        
+        isolated_entities = len(self._entities) - len(connected_entities)
+        
+        return {
+            'total_entities': total_entities,
+            'total_relationships': total_relationships,
+            'entity_types': entity_types,
+            'relationship_types': relationship_types,
+            'average_degree': average_degree,
+            'isolated_entities': max(0, isolated_entities)
+        }

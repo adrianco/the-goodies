@@ -73,7 +73,7 @@ class TestDatabaseMigration:
     
     @pytest.mark.asyncio
     async def test_new_schema_creation(self):
-        """Test that new schema uses correct column names."""
+        """Test that new graph-based schema is created correctly."""
         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
             db_path = tmp.name
         
@@ -88,18 +88,31 @@ class TestDatabaseMigration:
             sync_engine = create_engine(f"sqlite:///{db_path}")
             inspector = inspect(sync_engine)
             
-            # Check rooms table
-            columns = inspector.get_columns('rooms')
+            # Check for graph-based tables
+            tables = inspector.get_table_names()
+            assert 'entities' in tables
+            assert 'entity_relationships' in tables
+            assert 'sync_metadata' in tables
+            
+            # Old HomeKit tables should not exist
+            assert 'rooms' not in tables
+            assert 'accessories' not in tables
+            assert 'homes' not in tables
+            assert 'services' not in tables
+            assert 'characteristics' not in tables
+            assert 'users' not in tables
+            
+            # Check entities table columns
+            columns = inspector.get_columns('entities')
             column_names = [col['name'] for col in columns]
             
-            # New schema should have home_id, not house_id
-            assert 'home_id' in column_names
-            assert 'house_id' not in column_names
-            
-            # Check accessories table exists (was devices)
-            tables = inspector.get_table_names()
-            assert 'accessories' in tables
-            assert 'devices' not in tables
+            # Should have graph entity columns
+            assert 'id' in column_names
+            assert 'version' in column_names
+            assert 'entity_type' in column_names
+            assert 'name' in column_names
+            assert 'content' in column_names
+            assert 'source_type' in column_names
             
             await engine.dispose()
             
@@ -175,7 +188,7 @@ class TestDatabaseMigration:
     
     @pytest.mark.asyncio
     async def test_populate_db_with_new_schema(self):
-        """Test that populate_db.py works with new schema."""
+        """Test that populate_db.py works with graph-based schema."""
         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
             db_path = tmp.name
         
@@ -186,38 +199,67 @@ class TestDatabaseMigration:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
                 
-                # Run populate_db style inserts
+                # Insert graph entities
                 await conn.execute(text("""
-                    INSERT INTO homes (id, sync_id, name, is_primary, created_at, updated_at)
-                    VALUES (:id, :sync_id, :name, :is_primary, :created_at, :updated_at)
+                    INSERT INTO entities (id, version, entity_type, name, content, source_type, user_id, parent_versions, created_at, updated_at)
+                    VALUES (:id, :version, :entity_type, :name, :content, :source_type, :user_id, :parent_versions, :created_at, :updated_at)
                 """), {
                     "id": "home-test",
-                    "sync_id": "sync-home-test",
+                    "version": "v1",
+                    "entity_type": "home",
                     "name": "Test Home",
-                    "is_primary": True,
+                    "content": '{"is_primary": true}',
+                    "source_type": "manual",
+                    "user_id": "test-user",
+                    "parent_versions": '[]',
                     "created_at": "2025-07-29T12:00:00",
                     "updated_at": "2025-07-29T12:00:00"
                 })
                 
-                # This should NOT fail with missing columns
+                # Insert room entity
                 await conn.execute(text("""
-                    INSERT INTO rooms (id, sync_id, home_id, name, created_at, updated_at)
-                    VALUES (:id, :sync_id, :home_id, :name, :created_at, :updated_at)
+                    INSERT INTO entities (id, version, entity_type, name, content, source_type, user_id, parent_versions, created_at, updated_at)
+                    VALUES (:id, :version, :entity_type, :name, :content, :source_type, :user_id, :parent_versions, :created_at, :updated_at)
                 """), {
                     "id": "room-test",
-                    "sync_id": "sync-room-test",
-                    "home_id": "home-test",  # Note: home_id not house_id
+                    "version": "v1",
+                    "entity_type": "room",
                     "name": "Test Room",
+                    "content": '{"floor": 1}',
+                    "source_type": "manual",
+                    "user_id": "test-user",
+                    "parent_versions": '[]',
+                    "created_at": "2025-07-29T12:00:00",
+                    "updated_at": "2025-07-29T12:00:00"
+                })
+                
+                # Create relationship between home and room
+                await conn.execute(text("""
+                    INSERT INTO entity_relationships (id, from_entity_id, from_entity_version, to_entity_id, to_entity_version, relationship_type, properties, user_id, created_at, updated_at)
+                    VALUES (:id, :from_id, :from_ver, :to_id, :to_ver, :rel_type, :props, :user_id, :created_at, :updated_at)
+                """), {
+                    "id": "rel-test",
+                    "from_id": "room-test",
+                    "from_ver": "v1",
+                    "to_id": "home-test",
+                    "to_ver": "v1",
+                    "rel_type": "located_in",
+                    "props": '{}',
+                    "user_id": "test-user",
                     "created_at": "2025-07-29T12:00:00",
                     "updated_at": "2025-07-29T12:00:00"
                 })
                 
                 # Verify data was inserted
-                result = await conn.execute(text("SELECT COUNT(*) FROM homes"))
+                result = await conn.execute(text("SELECT COUNT(*) FROM entities WHERE entity_type = 'home'"))
                 count = result.scalar()
                 assert count == 1
                 
-                result = await conn.execute(text("SELECT COUNT(*) FROM rooms"))
+                result = await conn.execute(text("SELECT COUNT(*) FROM entities WHERE entity_type = 'room'"))
+                count = result.scalar()
+                assert count == 1
+                
+                result = await conn.execute(text("SELECT COUNT(*) FROM entity_relationships"))
                 count = result.scalar()
                 assert count == 1
                 

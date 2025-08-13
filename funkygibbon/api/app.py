@@ -71,8 +71,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..database import init_db
-from .routers import homes, rooms, accessories, services, characteristics, users, sync_metadata, graph, mcp
+from .routers import sync_metadata, graph, mcp, auth
 from . import sync as enhanced_sync
+from ..auth import auth_rate_limiter, audit_logger
 
 
 @asynccontextmanager
@@ -81,9 +82,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # Startup
     await init_db()
     print("Database initialized")
+    
+    # Start rate limiter cleanup task
+    await auth_rate_limiter.start_cleanup_task()
+    print("Rate limiter started")
+    
+    # Start audit logger pattern detection
+    await audit_logger.start_pattern_detection()
+    print("Audit logger started")
+    
     yield
+    
     # Shutdown
     print("Shutting down")
+    
+    # Stop background tasks
+    await auth_rate_limiter.stop_cleanup_task()
+    await audit_logger.stop_pattern_detection()
+    print("Background tasks stopped")
 
 
 def create_app() -> FastAPI:
@@ -105,15 +121,10 @@ def create_app() -> FastAPI:
     )
     
     # Include routers
-    app.include_router(homes.router, prefix=f"{settings.api_prefix}/homes", tags=["homes"])
-    app.include_router(rooms.router, prefix=f"{settings.api_prefix}/rooms", tags=["rooms"])
-    app.include_router(accessories.router, prefix=f"{settings.api_prefix}/accessories", tags=["accessories"])
-    app.include_router(services.router, prefix=f"{settings.api_prefix}/services", tags=["services"])
-    app.include_router(characteristics.router, prefix=f"{settings.api_prefix}/characteristics", tags=["characteristics"])
-    app.include_router(users.router, prefix=f"{settings.api_prefix}/users", tags=["users"])
+    app.include_router(auth.router, prefix=f"{settings.api_prefix}", tags=["authentication"])
     app.include_router(enhanced_sync.router, tags=["sync"])
     app.include_router(sync_metadata.router, prefix=f"{settings.api_prefix}/sync-metadata", tags=["sync-metadata"])
-    # Include new graph routers
+    # Graph and MCP routers (primary functionality)
     app.include_router(graph.router, prefix=f"{settings.api_prefix}", tags=["graph"])
     app.include_router(mcp.router, prefix=f"{settings.api_prefix}", tags=["mcp"])
     

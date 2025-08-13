@@ -456,11 +456,23 @@ def list_entities():
             if result.get('success') and 'result' in result:
                 entities = result['result'].get('results', [])
                 
+                if not entities:
+                    console.print("[yellow]No entities found.[/yellow]")
+                    return
+                
                 # Group by type
                 by_type = {}
                 for item in entities:
+                    if not isinstance(item, dict) or 'entity' not in item:
+                        console.print(f"[yellow]Warning: Invalid item format: {item}[/yellow]")
+                        continue
+                    
                     entity = item['entity']
-                    entity_type = entity['entity_type']
+                    if not isinstance(entity, dict):
+                        console.print(f"[yellow]Warning: Invalid entity format: {entity}[/yellow]")
+                        continue
+                    
+                    entity_type = entity.get('entity_type', 'unknown')
                     if entity_type not in by_type:
                         by_type[entity_type] = []
                     by_type[entity_type].append(entity)
@@ -475,16 +487,27 @@ def list_entities():
                     table.add_column("Updated", style="dim")
                     
                     for entity in entities_list:
+                        # Handle None or missing updated_at
+                        updated_at = entity.get('updated_at')
+                        if updated_at:
+                            updated_str = str(updated_at)[:19]
+                        else:
+                            updated_str = 'Unknown'
+                        
                         table.add_row(
-                            entity['name'],
-                            entity['id'][:8] + "...",
-                            entity.get('updated_at', 'Unknown')[:19]
+                            entity.get('name', 'Unnamed'),
+                            (entity.get('id', '') or '')[:8] + "...",
+                            updated_str
                         )
                     
                     console.print(table)
+            else:
+                console.print(f"[red]Failed to retrieve entities: {result}[/red]")
                     
         except Exception as e:
+            import traceback
             console.print(f"[red]Error: {e}[/red]")
+            console.print(f"[dim]{traceback.format_exc()}[/dim]")
         finally:
             await client.disconnect()
     

@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from datetime import datetime, UTC
 
 from funkygibbon.database import Base
-from funkygibbon.models import Home, Room, Accessory, Service, Characteristic, User
+from funkygibbon.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
 
 # Use SQLite in-memory database for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -68,14 +68,18 @@ async def async_session(async_engine):
 
 
 @pytest_asyncio.fixture
-async def test_home(async_session):
-    """Create a test home."""
+async def test_home_entity(async_session):
+    """Create a test home entity."""
     import uuid
     
-    home = Home(
+    home = Entity(
         id=str(uuid.uuid4()),
+        version=Entity.create_version("test-user"),
+        entity_type=EntityType.HOME,
         name="Test Home",
-        is_primary=True
+        content={"is_primary": True},
+        source_type=SourceType.MANUAL,
+        user_id="test-user"
     )
     async_session.add(home)
     await async_session.commit()
@@ -83,65 +87,72 @@ async def test_home(async_session):
 
 
 @pytest_asyncio.fixture
-async def test_room(async_session, test_home):
-    """Create a test room."""
+async def test_room_entity(async_session, test_home_entity):
+    """Create a test room entity."""
     import uuid
     
-    room = Room(
+    room = Entity(
         id=str(uuid.uuid4()),
-        home_id=test_home.id,
-        name="Living Room"
+        version=Entity.create_version("test-user"),
+        entity_type=EntityType.ROOM,
+        name="Living Room",
+        content={"home_id": test_home_entity.id},
+        source_type=SourceType.MANUAL,
+        user_id="test-user"
     )
     async_session.add(room)
+    
+    # Create relationship to home
+    rel = EntityRelationship(
+        id=str(uuid.uuid4()),
+        from_entity_id=room.id,
+        from_entity_version=room.version,
+        to_entity_id=test_home_entity.id,
+        to_entity_version=test_home_entity.version,
+        relationship_type=RelationshipType.LOCATED_IN,
+        user_id="test-user"
+    )
+    async_session.add(rel)
+    
     await async_session.commit()
     return room
 
 
 @pytest_asyncio.fixture
-async def test_accessory(async_session, test_home, test_room):
-    """Create a test accessory."""
+async def test_device_entity(async_session, test_home_entity, test_room_entity):
+    """Create a test device entity."""
     import uuid
     
-    accessory = Accessory(
+    device = Entity(
         id=str(uuid.uuid4()),
-        home_id=test_home.id,
+        version=Entity.create_version("test-user"),
+        entity_type=EntityType.DEVICE,
         name="Test Light",
-        manufacturer="Test Corp",
-        model="TL-100",
-        serial_number="SN-12345",
-        firmware_version="1.0.0",
-        is_reachable=True,
-        is_blocked=False,
-        is_bridge=False
+        content={
+            "manufacturer": "Test Corp",
+            "model": "TL-100",
+            "serial_number": "SN-12345",
+            "firmware_version": "1.0.0",
+            "is_reachable": True,
+            "is_blocked": False,
+            "is_bridge": False
+        },
+        source_type=SourceType.HOMEKIT,
+        user_id="test-user"
     )
-    async_session.add(accessory)
+    async_session.add(device)
     
-    # Link to room
-    from funkygibbon.models import accessory_rooms
-    await async_session.execute(
-        accessory_rooms.insert().values(
-            accessory_id=accessory.id,
-            room_id=test_room.id
-        )
-    )
-    
-    await async_session.commit()
-    return accessory
-
-
-@pytest_asyncio.fixture
-async def test_user(async_session, test_home):
-    """Create a test user."""
-    import uuid
-    
-    user = User(
+    # Create relationship to room
+    rel = EntityRelationship(
         id=str(uuid.uuid4()),
-        home_id=test_home.id,
-        name="Test User",
-        is_administrator=True,
-        is_owner=True,
-        remote_access_allowed=True
+        from_entity_id=device.id,
+        from_entity_version=device.version,
+        to_entity_id=test_room_entity.id,
+        to_entity_version=test_room_entity.version,
+        relationship_type=RelationshipType.LOCATED_IN,
+        user_id="test-user"
     )
-    async_session.add(user)
+    async_session.add(rel)
+    
     await async_session.commit()
-    return user
+    return device

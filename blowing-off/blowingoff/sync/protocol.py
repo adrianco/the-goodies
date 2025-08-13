@@ -138,7 +138,7 @@ class InbetweeniesProtocol:
                     content=change.data.get("content", {}),
                     source_type=change.data.get("source_type", "MANUAL"),
                     user_id=change.data.get("user_id") or "client-user",
-                    parent_versions=change.data.get("parent_versions", [])
+                    parent_versions=change.data.get("parent_versions") or []
                 )
             
             # Create sync change

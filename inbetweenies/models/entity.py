@@ -8,7 +8,7 @@ in the knowledge graph (homes, rooms, devices, procedures, etc.).
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Any, Optional
-from sqlalchemy import Column, String, JSON, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Column, String, JSON, DateTime, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
@@ -64,13 +64,10 @@ class Entity(Base, InbetweeniesTimestampMixin):
     
     # Tracking
     source_type = Column(SQLEnum(SourceType), nullable=False, default=SourceType.MANUAL)
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    user_id = Column(String(36), nullable=True)  # No foreign key, just track the user ID
     
     # Version tracking for immutability
     parent_versions = Column(JSON, default=list)
-    
-    # Relationships
-    user = relationship("User", back_populates="entities")
     
     # Relationships defined in EntityRelationship model
     outgoing_relationships = relationship(

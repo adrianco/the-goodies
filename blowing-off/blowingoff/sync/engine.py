@@ -149,9 +149,12 @@ class SyncEngine:
             
         except Exception as e:
             import traceback
+            error_detail = traceback.format_exc()
+            print(f"SYNC ERROR: {type(e).__name__}: {str(e)}")
+            print(f"TRACEBACK: {error_detail}")
             return SyncResult(
                 success=False,
-                errors=[f"{type(e).__name__}: {str(e)}", traceback.format_exc()],
+                errors=[f"{type(e).__name__}: {str(e)}", error_detail],
                 timestamp=datetime.now()
             )
         finally:
@@ -164,36 +167,32 @@ class SyncEngine:
             
         changes = []
         
-        # Get all entities modified since last sync
-        # For now, we'll get all entities and filter by updated_at
-        # In a real implementation, we'd track which entities are dirty
-        for entity_type in EntityType:
-            try:
-                entities = await self.graph_operations.get_entities_by_type(entity_type)
-            except AttributeError:
-                # Skip if entity_type has issues
-                continue
-            
-            for entity in entities:
-                # Check if entity needs syncing
-                if since and hasattr(entity, 'updated_at') and entity.updated_at:
-                    if entity.updated_at <= since:
-                        continue
-                        
-                # Create change record
-                entity_type_value = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
-                change = Change(
-                    entity_type=entity_type_value,
-                    entity_id=entity.id,
-                    operation=SyncOperation.UPDATE,
-                    data=entity.to_dict(),
-                    updated_at=getattr(entity, 'updated_at', datetime.now()),
-                    sync_id=entity.version,
-                    client_sync_id=str(uuid.uuid4())
-                )
-                changes.append(change)
-                
+        # Check if we have any pending changes to sync
+        if hasattr(self, '_pending_sync_entities'):
+            for entity_id in self._pending_sync_entities:
+                entity = await self.graph_operations.get_entity(entity_id)
+                if entity:
+                    entity_type_value = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+                    change = Change(
+                        entity_type=entity_type_value,
+                        entity_id=entity.id,
+                        operation=SyncOperation.UPDATE,
+                        data=entity.to_dict(),
+                        updated_at=getattr(entity, 'updated_at', datetime.now()),
+                        sync_id=entity.version,
+                        client_sync_id=str(uuid.uuid4())
+                    )
+                    changes.append(change)
+            # Clear pending entities after creating changes
+            self._pending_sync_entities = set()
+        
         return changes
+    
+    def mark_entity_for_sync(self, entity_id: str):
+        """Mark an entity as needing to be synced."""
+        if not hasattr(self, '_pending_sync_entities'):
+            self._pending_sync_entities = set()
+        self._pending_sync_entities.add(entity_id)
         
     async def _apply_single_change(self, change: Change) -> bool:
         """Apply a single change from server."""
@@ -217,10 +216,12 @@ class SyncEngine:
                     name=entity_data.get('name', ''),
                     content=entity_data.get('content', {}),
                     source_type=SourceType(entity_data.get('source_type', SourceType.IMPORTED)),
-                    parent_versions=entity_data.get('parent_versions', [])
+                    parent_versions=entity_data.get('parent_versions', []),
+                    user_id=entity_data.get('user_id', 'sync')
                 )
                 
                 # Store entity
+                print(f"DEBUG: Applying change for entity {entity.id}: version={entity.version}, content={entity.content}")
                 await self.graph_operations.store_entity(entity)
                 return True
                 
@@ -232,6 +233,10 @@ class SyncEngine:
         """Push local changes to server."""
         if not changes:
             return {"applied": []}
+        
+        print(f"DEBUG: Pushing {len(changes)} local changes to server")
+        for change in changes[:3]:  # Print first 3 for debugging
+            print(f"  - {change.entity_id}: {change.data.get('content', {})}")
             
         # Convert changes to sync format and push
         response = await self.protocol.sync_push(changes)
