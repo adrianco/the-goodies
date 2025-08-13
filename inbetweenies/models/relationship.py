@@ -30,6 +30,8 @@ class RelationshipType(str, Enum):
     CONTAINED_IN = "contained_in"
     MONITORS = "monitors"
     AUTOMATES = "automates"
+    CONTROLLED_BY_APP = "controlled_by_app"  # New: Links devices to controlling apps
+    HAS_BLOB = "has_blob"  # New: Links entities to binary data (photos, PDFs)
 
 
 class EntityRelationship(Base, InbetweeniesTimestampMixin):
@@ -174,6 +176,17 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
                 (EntityType.AUTOMATION, EntityType.DEVICE),
                 (EntityType.AUTOMATION, EntityType.ROOM),
                 (EntityType.AUTOMATION, EntityType.ZONE),
+            ],
+            RelationshipType.CONTROLLED_BY_APP: [
+                (EntityType.DEVICE, EntityType.APP),
+                (EntityType.HOME, EntityType.APP),
+                (EntityType.AUTOMATION, EntityType.APP),
+            ],
+            RelationshipType.HAS_BLOB: [
+                (EntityType.DEVICE, EntityType.NOTE),  # Photos of devices
+                (EntityType.MANUAL, EntityType.NOTE),  # PDF manuals
+                (EntityType.APP, EntityType.NOTE),     # App icons
+                (EntityType.HOME, EntityType.NOTE),    # Home photos
             ],
         }
         

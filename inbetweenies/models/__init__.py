@@ -35,6 +35,7 @@ from .base import Base, InbetweeniesTimestampMixin
 from .sync_metadata import SyncMetadata
 from .entity import Entity, EntityType, SourceType
 from .relationship import EntityRelationship, RelationshipType
+from .blob import Blob, BlobType, BlobStatus
 
 __all__ = [
     'Base',
@@ -44,5 +45,8 @@ __all__ = [
     'EntityType',
     'SourceType',
     'EntityRelationship',
-    'RelationshipType'
+    'RelationshipType',
+    'Blob',
+    'BlobType',
+    'BlobStatus'
 ]

@@ -28,6 +28,7 @@ class EntityType(str, Enum):
     NOTE = "note"
     SCHEDULE = "schedule"
     AUTOMATION = "automation"
+    APP = "app"  # New: Application entity type for HomeKit, Comfort app, etc.
 
 
 class SourceType(str, Enum):
