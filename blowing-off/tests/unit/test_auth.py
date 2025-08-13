@@ -3,6 +3,7 @@
 import pytest
 import json
 import aiohttp
+import base64
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch, MagicMock, mock_open
