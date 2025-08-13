@@ -29,10 +29,12 @@ class TestServerStartup:
             assert response.status_code == 200
             assert response.json() == {"status": "healthy"}
             
-            # Test API endpoint
-            response = await client.get("/api/v1/homes/")
+            # Test graph API endpoint
+            response = await client.get("/api/v1/graph/entities")
             assert response.status_code == 200
-            assert isinstance(response.json(), list)
+            data = response.json()
+            assert "entities" in data
+            assert isinstance(data["entities"], list)
     
     @pytest.mark.asyncio
     async def test_server_handles_multiple_requests(self, running_server):
