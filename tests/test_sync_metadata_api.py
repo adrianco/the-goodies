@@ -14,7 +14,7 @@ sys.path.insert(0, '/workspaces/the-goodies')
 sys.path.insert(0, '/workspaces/the-goodies/funkygibbon')
 
 from funkygibbon.api.app import create_app
-from funkygibbon.models import Base
+from inbetweenies.models import Base
 
 
 @pytest.mark.asyncio

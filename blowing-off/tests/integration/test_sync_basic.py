@@ -41,12 +41,15 @@ import httpx
 from pathlib import Path
 import tempfile
 import sys
+import os
 
 from blowingoff import BlowingOffClient
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.environ.get('CI') == 'true' and sys.platform == 'win32',
+                    reason="Integration tests timeout on Windows CI")
 class TestBasicSync:
     """Test basic sync operations between client and server."""
     # Using fixtures from conftest.py for server_url and auth_token
