@@ -297,15 +297,17 @@ class TestSyncConflicts:
         for i, entity_id in enumerate(entity_ids):
             # Client1 updates
             entity1 = await client1.graph_operations.get_entity(entity_id)
-            entity1.content = {"power": "on", "level": i}
-            await client1.graph_operations.store_entity(entity1)
-            client1.sync_engine.mark_entity_for_sync(entity_id)
+            if entity1:
+                entity1.content = {"power": "on", "level": i}
+                await client1.graph_operations.store_entity(entity1)
+                client1.sync_engine.mark_entity_for_sync(entity_id)
             
             # Client2 updates
             entity2 = await client2.graph_operations.get_entity(entity_id)
-            entity2.content = {"power": "off", "level": i * 2}
-            await client2.graph_operations.store_entity(entity2)
-            client2.sync_engine.mark_entity_for_sync(entity_id)
+            if entity2:
+                entity2.content = {"power": "off", "level": i * 2}
+                await client2.graph_operations.store_entity(entity2)
+                client2.sync_engine.mark_entity_for_sync(entity_id)
             
         # Sync and resolve all conflicts
         result1 = await client1.sync()
