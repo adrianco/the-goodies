@@ -7,6 +7,9 @@ import asyncio
 import sys
 import tempfile
 import pytest
+import os
+from pathlib import Path
+import uuid
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from fastapi.testclient import TestClient
 
@@ -22,29 +25,10 @@ async def test_sync_metadata_api():
     """Test sync metadata API endpoints."""
     print("=== Testing Sync Metadata API ===\n")
     
-    # Create a temporary database for testing
-    import os
-    from pathlib import Path
-    import uuid
+    # Use the synchronous TestClient which handles async properly
+    app = create_app()
     
-    # Use a unique database path for this test
-    db_dir = Path(tempfile.gettempdir())
-    db_path = db_dir / f"test_sync_metadata_{uuid.uuid4()}.db"
-    
-    try:
-        # Set environment variable before creating app
-        os.environ['DATABASE_URL'] = f"sqlite+aiosqlite:///{db_path}"
-        
-        # Initialize the database schema
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        await engine.dispose()
-        
-        # Create test app - it will use the DATABASE_URL we just set
-        app = create_app()
-        client = TestClient(app)
-        
+    with TestClient(app) as client:
         # Test 1: Create sync metadata
         print("1. Creating sync metadata via API:")
         response = client.post("/api/v1/sync-metadata/", params={
@@ -119,21 +103,6 @@ async def test_sync_metadata_api():
         
         print("\n✅ Sync Metadata API tests completed!")
         print("✅ API endpoints working with shared SyncMetadata model!")
-        
-    finally:
-        # Cleanup
-        try:
-            if 'engine' in locals():
-                await engine.dispose()
-        except:
-            pass
-        try:
-            import time
-            time.sleep(0.5)  # Give Windows more time to release handles
-            if db_path.exists():
-                db_path.unlink()
-        except:
-            pass
 
 
 if __name__ == "__main__":

@@ -20,8 +20,6 @@ import os
 from blowingoff import BlowingOffClient
 
 
-@pytest.mark.skipif(os.environ.get('CI') == 'true' and sys.platform == 'win32', 
-                    reason="Integration tests timeout on Windows CI")
 class TestSyncConflicts:
     """Test conflict resolution scenarios."""
     
