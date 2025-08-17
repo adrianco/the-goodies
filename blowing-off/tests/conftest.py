@@ -68,23 +68,23 @@ async def funkygibbon_server():
         env=env
     )
     
-    # Wait for server to start
-    max_retries = 30
+    # Wait for server to start - fail fast
+    max_retries = 10  # 5 seconds max
     for i in range(max_retries):
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=1.0) as client:  # 1 second timeout
                 response = await client.get("http://localhost:8000/health")
                 if response.status_code == 200:
                     print("\n✅ FunkyGibbon server started successfully")
                     break
-        except (httpx.ConnectError, httpx.ConnectTimeout):
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
             if i == max_retries - 1:
                 # Get server output for debugging
                 stdout, stderr = process.communicate(timeout=1)
                 print(f"\n❌ Server failed to start. Stdout: {stdout}")
                 print(f"Stderr: {stderr}")
                 process.terminate()
-                pytest.fail("FunkyGibbon server failed to start")
+                pytest.fail("FunkyGibbon server failed to start in 5 seconds")
             await asyncio.sleep(0.5)
     
     # Run populate_graph_db.py to add test data

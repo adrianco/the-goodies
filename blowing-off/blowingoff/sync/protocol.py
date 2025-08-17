@@ -117,7 +117,7 @@ class InbetweeniesProtocol:
                 f"{self.base_url}/api/v1/sync/",
                 json=request.model_dump(exclude_none=True, mode='json'),
                 headers=self.headers,
-                timeout=30.0
+                timeout=5.0  # Fail fast
             )
             response.raise_for_status()
             return response.json()
@@ -165,7 +165,7 @@ class InbetweeniesProtocol:
                 f"{self.base_url}/api/v1/sync/",
                 json=request.model_dump(exclude_none=True, mode='json'),
                 headers=self.headers,
-                timeout=30.0
+                timeout=5.0  # Fail fast
             )
             response.raise_for_status()
             return response.json()

@@ -63,14 +63,13 @@ from .models import Base
 
 # Create async engine with appropriate pooling strategy
 if "sqlite" in settings.database_url:
-    # Use NullPool for SQLite to avoid connection reuse issues on Windows
-    # Each request gets a fresh connection
+    # Use standard pooling with shorter timeouts for fast failure
     engine = create_async_engine(
         settings.database_url,
         echo=settings.database_echo,
-        poolclass=NullPool,  # Don't pool connections for SQLite
+        pool_pre_ping=True,
         connect_args={
-            "timeout": 5,  # 5 second timeout for busy database
+            "timeout": 1,  # 1 second timeout - fail fast
         }
     )
 else:
@@ -90,7 +89,7 @@ if "sqlite" in settings.database_url:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA busy_timeout=1000")  # 1 second - fail fast
         cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.close()
 
