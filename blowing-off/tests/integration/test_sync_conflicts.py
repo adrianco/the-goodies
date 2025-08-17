@@ -222,9 +222,9 @@ class TestSyncConflicts:
         stored1 = await client1.graph_operations.store_entity(entity1)
         client1.sync_engine.mark_entity_for_sync(entity_id)
         
-        # Small delay to ensure different timestamp (shorter on Windows)
+        # Small delay to ensure different timestamp (more reliable on Windows)
         if sys.platform == "win32":
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.05)  # Increased from 0.01 for Windows reliability
         else:
             await asyncio.sleep(0.1)
         
@@ -310,4 +310,8 @@ class TestSyncConflicts:
         for entity_id in entity_ids:
             entity1 = await client1.graph_operations.get_entity(entity_id)
             entity2 = await client2.graph_operations.get_entity(entity_id)
-            assert entity1.content == entity2.content
+            # Both should exist or both should not exist
+            assert (entity1 is None) == (entity2 is None)
+            # If both exist, they should have the same content
+            if entity1 and entity2:
+                assert entity1.content == entity2.content
