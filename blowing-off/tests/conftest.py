@@ -34,6 +34,10 @@ sys.path.insert(0, str(funkygibbon_path))
 @pytest.fixture(scope="session")
 def event_loop():
     """Create an instance of the default event loop for the test session."""
+    # Fix for Windows Python 3.8+ to avoid "Event loop is closed" errors
+    if sys.platform.startswith("win") and sys.version_info[:2] >= (3, 8):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
@@ -54,8 +58,12 @@ async def funkygibbon_server():
     # Start the server process using the module approach
     env = os.environ.copy()
     parent_path = funkygibbon_path.parent
-    env["PYTHONPATH"] = f"{parent_path}:{env.get('PYTHONPATH', '')}"
-    env["DATABASE_URL"] = f"sqlite+aiosqlite:///{test_db_path}"
+    # Use the correct path separator for the platform
+    path_sep = os.pathsep  # ; on Windows, : on Unix
+    env["PYTHONPATH"] = f"{parent_path}{path_sep}{env.get('PYTHONPATH', '')}"
+    # Ensure proper path format for Windows
+    db_url_path = test_db_path.replace('\\', '/')
+    env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_url_path}"
     
     print(f"DEBUG: Setting DATABASE_URL={env['DATABASE_URL']}")
     
