@@ -129,7 +129,7 @@ async def test_sync_metadata_api():
             pass
         try:
             import time
-            time.sleep(0.1)  # Give Windows time to release handles
+            time.sleep(0.5)  # Give Windows more time to release handles
             if db_path.exists():
                 db_path.unlink()
         except:

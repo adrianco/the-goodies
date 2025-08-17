@@ -37,10 +37,18 @@ class TestSyncConflicts:
             
         yield clients
         
-        # Cleanup
+        # Cleanup with delay for Windows
+        import time
         for client, db_path in clients:
-            await client.disconnect()
-            Path(db_path).unlink(missing_ok=True)
+            try:
+                await client.disconnect()
+            except:
+                pass
+            time.sleep(0.1)  # Give Windows time to release handles
+            try:
+                Path(db_path).unlink(missing_ok=True)
+            except:
+                pass
             
     @pytest.mark.asyncio
     async def test_concurrent_updates(self, two_clients):
@@ -213,8 +221,11 @@ class TestSyncConflicts:
         stored1 = await client1.graph_operations.store_entity(entity1)
         client1.sync_engine.mark_entity_for_sync(entity_id)
         
-        # Small delay to ensure different timestamp
-        await asyncio.sleep(0.1)
+        # Small delay to ensure different timestamp (shorter on Windows)
+        if sys.platform == "win32":
+            await asyncio.sleep(0.01)
+        else:
+            await asyncio.sleep(0.1)
         
         entity2 = await client2.graph_operations.get_entity(entity_id)
         entity2.content = {"value": "client2"}
