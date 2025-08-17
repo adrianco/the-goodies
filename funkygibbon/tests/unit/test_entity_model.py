@@ -44,8 +44,12 @@ class TestEntityModel:
         assert "user1" in version1
         assert "user1" in version2
         
-        # Version should be ISO format with user suffix
-        assert version1.endswith("-user1")
+        # Version should be ISO format with nano precision and user suffix
+        # Format: timestamp-Z-nanos-user_id
+        parts1 = version1.split("-")
+        parts2 = version2.split("-")
+        assert parts1[-1] == "user1"
+        assert parts2[-1] == "user1"
     
     def test_entity_to_dict(self):
         """Test converting entity to dictionary"""

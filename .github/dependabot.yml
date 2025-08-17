@@ -1,0 +1,70 @@
+version: 2
+updates:
+  # Python dependencies for funkygibbon
+  - package-ecosystem: "pip"
+    directory: "/funkygibbon"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    reviewers:
+      - "adrianco"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+
+  # Python dependencies for inbetweenies
+  - package-ecosystem: "pip"
+    directory: "/inbetweenies"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    reviewers:
+      - "adrianco"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+
+  # Python dependencies for oook
+  - package-ecosystem: "pip"
+    directory: "/oook"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    reviewers:
+      - "adrianco"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+
+  # Python dependencies for blowing-off
+  - package-ecosystem: "pip"
+    directory: "/blowing-off"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    reviewers:
+      - "adrianco"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "04:00"
+    reviewers:
+      - "adrianco"
+    labels:
+      - "dependencies"
+      - "github-actions"

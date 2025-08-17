@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text
 
-from inbetweenies.models import Base, Entity, EntityType, SourceType, EntityRelationship, RelationshipType
+from inbetweenies.models import Base, Entity, EntityType, SourceType, EntityRelationship, RelationshipType, Blob, BlobType, BlobStatus
 
 # Default database URL - can be overridden by environment variable
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./funkygibbon.db")
@@ -47,6 +47,11 @@ class GraphPopulator:
             # Clear in reverse dependency order
             await conn.execute(text("DELETE FROM entity_relationships"))
             await conn.execute(text("DELETE FROM entities"))
+            # Try to clear blobs table if it exists
+            try:
+                await conn.execute(text("DELETE FROM blobs"))
+            except:
+                pass  # Table might not exist yet
             print("✅ Database ready for population")
     
     async def create_entity(self, session: AsyncSession, entity_type: EntityType, 
@@ -295,6 +300,37 @@ class GraphPopulator:
                 key="doorbell"
             )
             
+            # Mitsubishi thermostat for kitchen area
+            mitsubishi_thermostat = await self.create_entity(
+                session, EntityType.DEVICE,
+                "Mitsubishi PAR-42MAA Thermostat",
+                {
+                    "manufacturer": "Mitsubishi",
+                    "model": "PAR-42MAAUB",
+                    "type": "climate",
+                    "capabilities": ["temperature", "fan_speed", "mode", "schedule", "remote_control"],
+                    "network": "proprietary",
+                    "location_notes": "Kitchen wall - controls air blower for kitchen, dining room, living room, bar and kitchen bathroom",
+                    "remote_app": "Mitsubishi Comfort"
+                },
+                key="mitsubishi_thermostat"
+            )
+            
+            # Air handler blower unit
+            pvfy_blower = await self.create_entity(
+                session, EntityType.DEVICE,
+                "PVFY Air Handler Blower",
+                {
+                    "manufacturer": "Mitsubishi",
+                    "model": "PVFY",
+                    "type": "hvac",
+                    "capabilities": ["heating", "cooling", "fan"],
+                    "location_notes": "Closet in garage",
+                    "serial_number": "See photo documentation"
+                },
+                key="pvfy_blower"
+            )
+            
             # Device location relationships
             await self.create_relationship(session, tv, living_room, RelationshipType.LOCATED_IN,
                                          {"position": "wall_mounted", "height": "eye_level"})
@@ -308,6 +344,14 @@ class GraphPopulator:
                                          {"positions": ["ceiling_center", "corners"]})
             await self.create_relationship(session, doorbell, home, RelationshipType.MONITORS,
                                          {"location": "front_entrance"})
+            await self.create_relationship(session, mitsubishi_thermostat, kitchen, RelationshipType.LOCATED_IN,
+                                         {"position": "wall", "height": "5ft"})
+            await self.create_relationship(session, pvfy_blower, garage, RelationshipType.LOCATED_IN,
+                                         {"position": "closet"})
+            
+            # Control relationship between thermostat and blower
+            await self.create_relationship(session, mitsubishi_thermostat, pvfy_blower, RelationshipType.CONTROLS,
+                                         {"control_type": "temperature_and_fan"})
             
             # Create procedures
             print("\n📋 Creating procedures and manuals...")
@@ -468,6 +512,117 @@ class GraphPopulator:
             await self.create_relationship(session, wifi_note, home, RelationshipType.DOCUMENTED_BY)
             await self.create_relationship(session, maintenance_note, thermostat, RelationshipType.DOCUMENTED_BY)
             
+            # Create APP entities
+            print("\n📱 Creating app entities...")
+            
+            homekit_app = await self.create_entity(
+                session, EntityType.APP,
+                "Apple HomeKit",
+                {
+                    "platform": "iOS",
+                    "url_scheme": "com.apple.home://",
+                    "icon": "house.fill",
+                    "description": "Apple's home automation platform",
+                    "compatible_devices": ["lights", "thermostats", "locks", "cameras", "sensors"]
+                },
+                key="homekit_app"
+            )
+            
+            comfort_app = await self.create_entity(
+                session, EntityType.APP,
+                "Mitsubishi Comfort",
+                {
+                    "platform": "iOS",
+                    "url_scheme": "mitsubishicomfort://",
+                    "icon": "thermometer",
+                    "description": "Remote control app for Mitsubishi HVAC systems",
+                    "compatible_devices": ["PAR-42MAA", "PVFY", "Mitsubishi thermostats"]
+                },
+                key="comfort_app"
+            )
+            
+            # Link devices to apps
+            await self.create_relationship(session, thermostat, homekit_app, RelationshipType.CONTROLLED_BY_APP,
+                                         {"integration": "native"})
+            await self.create_relationship(session, living_room_lights, homekit_app, RelationshipType.CONTROLLED_BY_APP,
+                                         {"integration": "hue_bridge"})
+            await self.create_relationship(session, mitsubishi_thermostat, comfort_app, RelationshipType.CONTROLLED_BY_APP,
+                                         {"integration": "wifi_adapter", "features": ["remote_control", "scheduling", "energy_monitoring"]})
+            
+            # Create user-generated content notes
+            print("\n📝 Creating user-generated content notes...")
+            
+            mitsubishi_user_note = await self.create_entity(
+                session, EntityType.NOTE,
+                "Mitsubishi System User Notes",
+                {
+                    "content": "This thermostat is in the kitchen, it controls the air blower that heats and cools the kitchen, dining room, living room, bar and kitchen bathroom. The air blower is in a closet in the garage. The thermostat can be remotely controlled using the Mitsubishi Comfort app on iPhone or iPad.",
+                    "category": "user_provided",
+                    "device_references": ["mitsubishi_thermostat", "pvfy_blower"],
+                    "created": datetime.now(timezone.utc).isoformat()
+                },
+                key="mitsubishi_user_note"
+            )
+            
+            # Create manual entities for PDFs
+            mitsubishi_manual = await self.create_entity(
+                session, EntityType.MANUAL,
+                "PAR-42MAAUB Instruction Manual",
+                {
+                    "manufacturer": "Mitsubishi",
+                    "model": "PAR-42MAAUB",
+                    "document_type": "instruction_manual",
+                    "original_filename": "PAR-42MAAUB_Instruction Book.pdf",
+                    "summary": "Complete instruction manual for Mitsubishi PAR-42MAAUB thermostat including installation, operation, and maintenance procedures.",
+                    "has_blob": True,
+                    "blob_reference": "pdf_manual_par42"
+                },
+                key="mitsubishi_manual"
+            )
+            
+            # Link manual to devices
+            await self.create_relationship(session, mitsubishi_thermostat, mitsubishi_manual, RelationshipType.DOCUMENTED_BY,
+                                         {"document_type": "user_manual"})
+            
+            # Link user note to devices
+            await self.create_relationship(session, mitsubishi_user_note, mitsubishi_thermostat, RelationshipType.DOCUMENTED_BY,
+                                         {"note_type": "user_provided"})
+            await self.create_relationship(session, mitsubishi_user_note, pvfy_blower, RelationshipType.DOCUMENTED_BY,
+                                         {"note_type": "user_provided"})
+            
+            # Create photo documentation notes
+            thermostat_photo_note = await self.create_entity(
+                session, EntityType.NOTE,
+                "Thermostat Photo Documentation",
+                {
+                    "content": "Photo of Mitsubishi PAR-42MAA thermostat installed in kitchen",
+                    "category": "photo_documentation",
+                    "photo_filename": "PAR-42.jpeg",
+                    "has_blob": True,
+                    "blob_reference": "photo_par42"
+                },
+                key="thermostat_photo_note"
+            )
+            
+            blower_photo_note = await self.create_entity(
+                session, EntityType.NOTE,
+                "Air Handler Photo Documentation",
+                {
+                    "content": "Photos of PVFY air handler blower unit and serial number plate",
+                    "category": "photo_documentation",
+                    "photo_filenames": ["PVFY-Blower.jpeg", "PVFY-Serial_Number.jpeg"],
+                    "has_blob": True,
+                    "blob_references": ["photo_pvfy_blower", "photo_pvfy_serial"]
+                },
+                key="blower_photo_note"
+            )
+            
+            # Link photo documentation to devices
+            await self.create_relationship(session, thermostat_photo_note, mitsubishi_thermostat, RelationshipType.HAS_BLOB,
+                                         {"blob_type": "photo"})
+            await self.create_relationship(session, blower_photo_note, pvfy_blower, RelationshipType.HAS_BLOB,
+                                         {"blob_type": "photo"})
+            
             # Commit all changes
             await session.commit()
             
@@ -478,13 +633,14 @@ class GraphPopulator:
             print(f"  • 3 Zones")
             print(f"  • 6 Rooms")
             print(f"  • 1 Door")
-            print(f"  • 6 Devices")
+            print(f"  • 8 Devices (including Mitsubishi thermostat & PVFY blower)")
             print(f"  • 2 Procedures")
-            print(f"  • 1 Manual")
+            print(f"  • 2 Manuals (including Mitsubishi manual)")
             print(f"  • 2 Automations")
             print(f"  • 1 Schedule")
-            print(f"  • 2 Notes")
-            print(f"  • ~30+ Relationships")
+            print(f"  • 6 Notes (including UGC notes and photo documentation)")
+            print(f"  • 2 Apps (HomeKit & Mitsubishi Comfort)")
+            print(f"  • ~45+ Relationships")
             
             return True
 

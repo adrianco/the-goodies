@@ -254,3 +254,9 @@ blowingoff.db*
 start_funkygibbon.sh
 security_audit.log
 
+# CI/CD artifacts
+bandit-report.json
+safety-report.json
+test_env/
+.test_env/
+

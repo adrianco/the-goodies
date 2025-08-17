@@ -24,6 +24,7 @@ class TestDatabaseMigration:
         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
             db_path = tmp.name
         
+        engine = None
         try:
             # Create database with old schema
             engine = create_engine(f"sqlite:///{db_path}")
@@ -69,6 +70,10 @@ class TestDatabaseMigration:
             assert 'home_id' not in column_names
             
         finally:
+            if engine:
+                engine.dispose()
+            import time
+            time.sleep(0.1)  # Give Windows time to release file handles
             Path(db_path).unlink(missing_ok=True)
     
     @pytest.mark.asyncio
@@ -77,6 +82,8 @@ class TestDatabaseMigration:
         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
             db_path = tmp.name
         
+        engine = None
+        sync_engine = None
         try:
             # Create database with new schema
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
@@ -114,9 +121,13 @@ class TestDatabaseMigration:
             assert 'content' in column_names
             assert 'source_type' in column_names
             
-            await engine.dispose()
-            
         finally:
+            if engine:
+                await engine.dispose()
+            if sync_engine:
+                sync_engine.dispose()
+            import time
+            time.sleep(0.1)  # Give Windows time to release file handles
             Path(db_path).unlink(missing_ok=True)
     
     def test_field_removal_detection(self):
@@ -124,6 +135,7 @@ class TestDatabaseMigration:
         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
             db_path = tmp.name
         
+        engine = None
         try:
             # Create database with old schema including removed fields
             engine = create_engine(f"sqlite:///{db_path}")
@@ -184,6 +196,10 @@ class TestDatabaseMigration:
             assert 'role' in user_column_names
             
         finally:
+            if engine:
+                engine.dispose()
+            import time
+            time.sleep(0.1)  # Give Windows time to release file handles
             Path(db_path).unlink(missing_ok=True)
     
     @pytest.mark.asyncio
