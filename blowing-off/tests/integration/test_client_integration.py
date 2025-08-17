@@ -208,6 +208,9 @@ class TestClientSync:
         # Mock sync_engine since client isn't connected
         client.sync_engine = Mock()
         client.sync_engine.sync = AsyncMock()
+        client.sync_engine.base_url = "http://localhost:8000"  # Add base_url for connectivity check</        
+        # Mock check_server_connectivity to return True
+        client.check_server_connectivity = AsyncMock(return_value=True)
         
         # Create a proper mock session with context manager
         mock_session = AsyncMock()

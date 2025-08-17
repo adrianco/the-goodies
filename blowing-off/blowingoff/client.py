@@ -50,6 +50,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import event, text
 import json
+import httpx
 
 from .models import Base
 from .sync.engine import SyncEngine
@@ -72,6 +73,8 @@ class BlowingOffClient:
         self._observers = []
         self._background_task = None
         self.auth_manager = None
+        self._is_offline = False  # Track offline status
+        self._offline_changes_count = 0  # Track pending changes
         
         # Initialize MCP and graph functionality
         # Use a subdirectory of the database path for graph storage
@@ -164,16 +167,71 @@ class BlowingOffClient:
             await self.engine.dispose()
             gc.collect()
             
+    async def check_server_connectivity(self) -> bool:
+        """Check if server is reachable and responding."""
+        if not self.sync_engine or not self.sync_engine.base_url:
+            return False
+            
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{self.sync_engine.base_url}/health")
+                return response.status_code == 200
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+            return False
+    
     async def sync(self) -> SyncResult:
-        """Perform manual sync with server."""
+        """Perform manual sync with server.
+        
+        Returns a SyncResult indicating success or failure.
+        Works in disconnected mode if server is not reachable.
+        """
         if not self.sync_engine:
             raise RuntimeError("Client not connected")
+        
+        # Check server connectivity first
+        server_available = await self.check_server_connectivity()
+        
+        if not server_available:
+            # Server is not available - return disconnected result
+            self._is_offline = True
+            
+            # Count pending changes
+            if self.sync_engine and hasattr(self.sync_engine, '_pending_sync_entities'):
+                self._offline_changes_count = len(self.sync_engine._pending_sync_entities)
+            else:
+                self._offline_changes_count = 0
+            
+            result = SyncResult(
+                success=False,
+                synced_entities=0,
+                conflicts=[],
+                errors=[f"Server not reachable - operating in disconnected mode ({self._offline_changes_count} pending changes)"]
+            )
+            
+            # Notify observers
+            await self._notify_observers("sync_disconnected", result)
+            
+            return result
+        
+        # Server is available - we're online
+        self._is_offline = False
             
         async with self.session_factory() as session:
             try:
                 self.sync_engine.session = session
                 result = await self.sync_engine.sync()
                 await session.commit()
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+                # Network error - switch to disconnected mode
+                await session.rollback()
+                result = SyncResult(
+                    success=False,
+                    synced_entities=0,
+                    conflicts=[],
+                    errors=[f"Network error: {str(e)} - operating in disconnected mode"]
+                )
+                await self._notify_observers("sync_disconnected", result)
+                return result
             except Exception:
                 await session.rollback()
                 raise
@@ -186,16 +244,31 @@ class BlowingOffClient:
         return result
         
     async def start_background_sync(self, interval: int = 30):
-        """Start background sync task."""
+        """Start background sync task.
+        
+        Automatically handles disconnected mode and retries when server becomes available.
+        """
         async def sync_loop():
+            consecutive_failures = 0
             while True:
                 try:
                     await asyncio.sleep(interval)
-                    await self.sync()
+                    result = await self.sync()
+                    
+                    if result.success:
+                        consecutive_failures = 0
+                    else:
+                        consecutive_failures += 1
+                        # Back off if multiple failures
+                        if consecutive_failures >= 3:
+                            print(f"Multiple sync failures, backing off...")
+                            await asyncio.sleep(interval * 2)  # Double the interval on failures
+                            
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
                     print(f"Background sync error: {e}")
+                    consecutive_failures += 1
                     
         self._background_task = asyncio.create_task(sync_loop())
         
@@ -233,6 +306,16 @@ class BlowingOffClient:
         """Clear all graph data from storage."""
         if hasattr(self, 'graph_storage'):
             self.graph_storage.clear()
+    
+    @property
+    def is_offline(self) -> bool:
+        """Check if client is currently in offline mode."""
+        return self._is_offline
+    
+    @property
+    def pending_changes_count(self) -> int:
+        """Get count of changes pending sync."""
+        return self._offline_changes_count
             
     def check_write_permission(self) -> bool:
         """Check if client has write permission."""
