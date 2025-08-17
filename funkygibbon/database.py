@@ -53,24 +53,47 @@ async with get_db_context() as db:
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from sqlalchemy import text
+from sqlalchemy import text, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from .config import settings
 from .models import Base
 
 
-# Create async engine
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.database_echo,
-    pool_pre_ping=True,
-    # SQLite-specific optimizations
-    connect_args={
-        "check_same_thread": False,
-        "timeout": 30,
-    } if "sqlite" in settings.database_url else {}
-)
+# Create async engine with appropriate pooling strategy
+if "sqlite" in settings.database_url:
+    # Use NullPool for SQLite to avoid connection reuse issues on Windows
+    # Each request gets a fresh connection
+    engine = create_async_engine(
+        settings.database_url,
+        echo=settings.database_echo,
+        poolclass=NullPool,  # Don't pool connections for SQLite
+        connect_args={
+            "timeout": 5,  # 5 second timeout for busy database
+        }
+    )
+else:
+    # Use default pooling for other databases
+    engine = create_async_engine(
+        settings.database_url,
+        echo=settings.database_echo,
+        pool_pre_ping=True,
+    )
+
+
+# Configure SQLite connections with optimal settings
+if "sqlite" in settings.database_url:
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        """Configure each SQLite connection."""
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA temp_store=MEMORY")
+        cursor.close()
+
 
 # Create async session factory
 async_session = async_sessionmaker(
