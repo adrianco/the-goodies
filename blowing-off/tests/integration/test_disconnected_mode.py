@@ -8,6 +8,8 @@ and operate in offline mode.
 import pytest
 import pytest_asyncio
 import asyncio
+import sys
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
@@ -142,6 +144,8 @@ class TestDisconnectedMode:
             Path(db_path).unlink(missing_ok=True)
     
     @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32" and os.environ.get('CI') == 'true',
+                        reason="Windows CI has SQLite file locking issues - see issue #7")
     async def test_background_sync_with_offline_handling(self, server_url, auth_token):
         """Test background sync handles offline mode gracefully."""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

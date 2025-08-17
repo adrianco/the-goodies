@@ -52,6 +52,8 @@ class TestSyncConflicts:
                 pass
             
     @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32" and os.environ.get('CI') == 'true',
+                        reason="Windows CI has SQLite file locking issues - see issue #7")
     async def test_concurrent_updates(self, two_clients):
         """Test concurrent updates to same entity."""
         from inbetweenies.models import Entity, EntityType, SourceType
@@ -131,6 +133,8 @@ class TestSyncConflicts:
         assert final_entity1.content == final_entity2.content
         
     @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32" and os.environ.get('CI') == 'true',
+                        reason="Windows CI has SQLite file locking issues - see issue #7")
     async def test_delete_update_conflict(self, two_clients):
         """Test conflict when one client deletes while other updates."""
         from inbetweenies.models import Entity, EntityType, SourceType
@@ -186,6 +190,8 @@ class TestSyncConflicts:
         assert (entity1 is None) == (entity2 is None)
             
     @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32" and os.environ.get('CI') == 'true',
+                        reason="Windows CI has SQLite file locking issues - see issue #7")
     async def test_timestamp_tiebreaker(self, two_clients):
         """Test version tiebreaker for conflict resolution."""
         from inbetweenies.models import Entity, EntityType, SourceType

@@ -18,6 +18,8 @@ from blowingoff import BlowingOffClient
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(sys.platform == "win32" and os.environ.get('CI') == 'true',
+                    reason="Windows CI has SQLite file locking issues - see issue #7")
 class TestSyncDiagnostics:
     """Diagnostic tests for sync service."""
     
