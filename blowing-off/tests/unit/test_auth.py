@@ -199,7 +199,6 @@ class TestAuthManager:
             assert auth_manager.token is None
     
     @pytest.mark.asyncio
-    @pytest.mark.skipif(sys.platform == "win32", reason="Mock async context manager issue on Windows CI")
     async def test_login_guest_success(self, auth_manager):
         """Test successful guest login with QR code."""
         qr_data = json.dumps({
@@ -217,9 +216,19 @@ class TestAuthManager:
             "expires_in": 3600
         })
         
-        with patch('aiohttp.ClientSession') as mock_session:
-            mock_session.return_value.__aenter__.return_value.post.return_value.__aenter__.return_value = mock_response
-            
+        # Create proper async context manager mock
+        mock_post = AsyncMock()
+        mock_post.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post.__aexit__ = AsyncMock(return_value=None)
+        
+        mock_session_instance = AsyncMock()
+        mock_session_instance.post = MagicMock(return_value=mock_post)
+        
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session_instance)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        
+        with patch('aiohttp.ClientSession', return_value=mock_session_ctx):
             result = await auth_manager.login_guest(qr_data)
             
             assert result == True
@@ -338,7 +347,6 @@ class TestAuthManager:
         assert not temp_token_file.exists()
     
     @pytest.mark.asyncio
-    @pytest.mark.skipif(sys.platform == "win32", reason="Mock async context manager issue on Windows CI")
     async def test_refresh_token_admin_success(self, auth_manager):
         """Test successful token refresh for admin."""
         auth_manager.token = "old-token"
@@ -351,9 +359,19 @@ class TestAuthManager:
             "expires_in": 3600
         })
         
-        with patch('aiohttp.ClientSession') as mock_session:
-            mock_session.return_value.__aenter__.return_value.post.return_value.__aenter__.return_value = mock_response
-            
+        # Create proper async context manager mock
+        mock_post = AsyncMock()
+        mock_post.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post.__aexit__ = AsyncMock(return_value=None)
+        
+        mock_session_instance = AsyncMock()
+        mock_session_instance.post = MagicMock(return_value=mock_post)
+        
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session_instance)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        
+        with patch('aiohttp.ClientSession', return_value=mock_session_ctx):
             result = await auth_manager.refresh_token()
             
             assert result == True
@@ -393,7 +411,6 @@ class TestAuthManager:
         assert headers == {}
     
     @pytest.mark.asyncio
-    @pytest.mark.skipif(sys.platform == "win32", reason="Mock async context manager issue on Windows CI")
     async def test_generate_guest_qr_admin(self, auth_manager):
         """Test generating guest QR code as admin."""
         auth_manager.role = "admin"
@@ -407,9 +424,19 @@ class TestAuthManager:
             "expires_in": 86400
         })
         
-        with patch('aiohttp.ClientSession') as mock_session:
-            mock_session.return_value.__aenter__.return_value.post.return_value.__aenter__.return_value = mock_response
-            
+        # Create proper async context manager mock
+        mock_post = AsyncMock()
+        mock_post.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post.__aexit__ = AsyncMock(return_value=None)
+        
+        mock_session_instance = AsyncMock()
+        mock_session_instance.post = MagicMock(return_value=mock_post)
+        
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session_instance)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        
+        with patch('aiohttp.ClientSession', return_value=mock_session_ctx):
             result = await auth_manager.generate_guest_qr(duration_hours=24)
             
             assert result is not None
