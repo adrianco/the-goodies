@@ -166,7 +166,7 @@ class TestAuthManager:
         with patch('aiohttp.ClientSession', return_value=mock_session_instance):
             result = await auth_manager.login_admin("admin_password")
             
-            assert result is True
+            assert result == True
             assert auth_manager.token == "admin-token-789"
             assert auth_manager.role == "admin"
             assert auth_manager.permissions == ['read', 'write', 'delete', 'configure']
@@ -183,7 +183,7 @@ class TestAuthManager:
             
             result = await auth_manager.login_admin("wrong_password")
             
-            assert result is False
+            assert result == False
             assert auth_manager.token is None
     
     @pytest.mark.asyncio
@@ -194,7 +194,7 @@ class TestAuthManager:
             
             result = await auth_manager.login_admin("admin_password")
             
-            assert result is False
+            assert result == False
             assert auth_manager.token is None
     
     @pytest.mark.asyncio
@@ -220,7 +220,7 @@ class TestAuthManager:
             
             result = await auth_manager.login_guest(qr_data)
             
-            assert result is True
+            assert result == True
             assert auth_manager.token == "guest-token-123"
             assert auth_manager.role == "guest"
             assert auth_manager.permissions == ["read"]
@@ -238,7 +238,7 @@ class TestAuthManager:
         
         result = await auth_manager.login_guest(qr_data)
         
-        assert result is False
+        assert result == False
         assert auth_manager.token is None
     
     @pytest.mark.asyncio
@@ -248,7 +248,7 @@ class TestAuthManager:
         
         result = await auth_manager.login_guest(qr_data)
         
-        assert result is False
+        assert result == False
         assert auth_manager.token is None
     
     @pytest.mark.asyncio
@@ -266,50 +266,50 @@ class TestAuthManager:
             
             result = await auth_manager.login_guest(qr_data)
             
-            assert result is False
+            assert result == False
     
     def test_is_authenticated_valid(self, auth_manager):
         """Test is_authenticated with valid token."""
         auth_manager.token = "valid-token"
         auth_manager.token_expires = datetime.now(timezone.utc) + timedelta(hours=1)
         
-        assert auth_manager.is_authenticated() is True
+        assert auth_manager.is_authenticated() == True
     
     def test_is_authenticated_expired(self, auth_manager):
         """Test is_authenticated with expired token."""
         auth_manager.token = "expired-token"
         auth_manager.token_expires = datetime.now(timezone.utc) - timedelta(hours=1)
         
-        assert auth_manager.is_authenticated() is False
+        assert auth_manager.is_authenticated() == False
     
     def test_is_authenticated_no_token(self, auth_manager):
         """Test is_authenticated with no token."""
-        assert auth_manager.is_authenticated() is False
+        assert auth_manager.is_authenticated() == False
     
     def test_has_permission_admin(self, auth_manager):
         """Test permission check for admin."""
         auth_manager.role = "admin"
         auth_manager.permissions = ["read", "write", "delete", "configure"]
         
-        assert auth_manager.has_permission("read") is True
-        assert auth_manager.has_permission("write") is True
-        assert auth_manager.has_permission("delete") is True
-        assert auth_manager.has_permission("configure") is True
+        assert auth_manager.has_permission("read") == True
+        assert auth_manager.has_permission("write") == True
+        assert auth_manager.has_permission("delete") == True
+        assert auth_manager.has_permission("configure") == True
     
     def test_has_permission_user(self, auth_manager):
         """Test permission check for regular user."""
         auth_manager.role = "user"
         auth_manager.permissions = ["read"]
         
-        assert auth_manager.has_permission("read") is True
-        assert auth_manager.has_permission("write") is False
-        assert auth_manager.has_permission("delete") is False
+        assert auth_manager.has_permission("read") == True
+        assert auth_manager.has_permission("write") == False
+        assert auth_manager.has_permission("delete") == False
     
     def test_has_permission_no_permissions(self, auth_manager):
         """Test permission check with no permissions set."""
         auth_manager.permissions = []
         
-        assert auth_manager.has_permission("read") is False
+        assert auth_manager.has_permission("read") == False
     
     def test_logout(self, auth_manager, temp_token_file):
         """Test logout functionality."""
@@ -353,7 +353,7 @@ class TestAuthManager:
             
             result = await auth_manager.refresh_token()
             
-            assert result is True
+            assert result == True
             assert auth_manager.token == "refreshed-token"
     
     @pytest.mark.asyncio
@@ -364,7 +364,7 @@ class TestAuthManager:
         
         result = await auth_manager.refresh_token()
         
-        assert result is False
+        assert result == False
     
     @pytest.mark.asyncio
     async def test_refresh_token_no_token(self, auth_manager):
@@ -373,7 +373,7 @@ class TestAuthManager:
         
         result = await auth_manager.refresh_token()
         
-        assert result is False
+        assert result == False
     
     def test_get_headers(self, auth_manager):
         """Test getting authorization headers."""

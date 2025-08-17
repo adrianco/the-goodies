@@ -113,8 +113,12 @@ class Entity(Base, InbetweeniesTimestampMixin):
     @classmethod
     def create_version(cls, user_id: str) -> str:
         """Generate a new version string for immutable versioning"""
+        import time
+        import random
         timestamp = datetime.now(timezone.utc).isoformat()
-        return f"{timestamp}Z-{user_id}"
+        # Add nanosecond precision to ensure uniqueness on Windows
+        nanos = int(time.perf_counter_ns() % 1000000)
+        return f"{timestamp}Z-{nanos:06d}-{user_id}"
     
     def create_new_version(self, user_id: str, changes: Dict[str, Any]) -> "Entity":
         """

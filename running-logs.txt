@@ -219,3 +219,57 @@ room-1753893...  Studio          home-1753893...
 [{"id":"room-home-1753893303.410653-0","home_id":"home-1753893303.410653","name":"Living Room","created_at":"2025-07-30T16:35:03.411372+00:00","updated_at":"2025-07-30T16:35:03.411373+00:00","sync_id":"sync-room-home-1753893303.410653-0"},{"id":"room-home-1753893303.410653-1","home_id":"home-1753893303.410653","name":"Kitchen","created_at":"2025-07-30T16:35:03.411884+00:00","updated_at":"2025-07-30T16:35:03.411886+00:00","sync_id":"sync-room-home-1753893303.410653-1"},{"id":"room-home-1753893303.410653-2","home_id":"home-1753893303.410653","name":"Master Bedroom","created_at":"2025-07-30T16:35:03.412291+00:00","updated_at":"2025-07-30T16:35:03.412293+00:00","sync_id":"sync-room-home-1753893303.410653-2"},{"id":"room-home-1753893303.410653-3","home_id":"home-1753893303.410653","name":"Office","created_at":"2025-07-30T16:35:03.412676+00:00","updated_at":"2025-07-30T16:35:03.412677+00:00","sync_id":"sync-room-home-1753893303.410653-3"},{"id":"room-1753893705.40167","home_id":"home-1753893303.410653","name":"Studio","created_at":"2025-07-30T16:41:45.423104","updated_at":"2025-07-30T16:41:45.423107","sync_id":null}]@adrianco ➜ /workspaces/the-goodies (main) $ 
 @adrianco ➜ /workspaces/the-goodies (main) $ 
 
+
+
+● Great! Now let's run all tests again to make sure everything passes:
+
+● Bash(python -m pytest tests/ -v --tb=no | tail -20)
+  ⎿  tests/test_shared_mcp.py::test_graph_operations PASSED                   [ 63%]
+     tests/test_shared_sync_metadata.py::test_shared_sync_metadata PASSED     [ 65%]
+     tests/test_sync_metadata.py::test_sync_metadata PASSED                   [ 67%]
+     … +17 lines (ctrl+r to expand)
+
+● Perfect! All 46 tests are passing. Now let's commit and push the code:
+
+  Bash(git status)
+  ⎿  On branch feature/next-phase                               
+     Your branch is up to date with 'origin/feature/next-phase'.
+     … +18 lines (ctrl+r to expand)
+
+  Bash(git add -A)
+  ⎿  (No content)
+
+  Bash(git commit -m "feat: Implement comprehensive UGC support with BLOB storage…)
+  ⎿  [feature/next-phase abacbb9] feat: Implement comprehensive UGC support with BLOB storage
+      11 files changed, 1263 insertions(+), 10 deletions(-)
+      create mode 100644 inbetweenies/models/blob.py
+     … +4 lines (ctrl+r to expand)
+
+● Bash(git push origin feature/next-phase)
+  ⎿  To https://github.com/adrianco/the-goodies                   
+        856a77b..abacbb9  feature/next-phase -> feature/next-phase
+
+● ✅ Complete!
+
+  Successfully implemented all UGC features, fixed all tests, and pushed to remote:
+
+  Summary:
+
+  - All 46 tests passing ✅
+  - Implemented features:
+    - APP entity type for app integration
+    - BLOB storage model with sync capabilities
+    - PDF summarization utilities
+    - Photo metadata extraction
+    - Mitsubishi thermostat integration
+    - User-generated content notes
+    - New relationship types (CONTROLLED_BY_APP, HAS_BLOB)
+
+  Code pushed to feature/next-phase branch
+
+  - Commit: abacbb9
+  - 11 files changed, 1263 insertions
+  - Full implementation documentation at tests/ugc/IMPLEMENTATION_SUMMARY.md
+
+  The system now fully supports the user-generated content requirements from the specification, with comprehensive test
+   coverage and demo data.

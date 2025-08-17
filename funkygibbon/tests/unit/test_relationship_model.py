@@ -180,7 +180,8 @@ class TestRelationshipModel:
         expected_types = [
             "located_in", "controls", "connects_to", "part_of",
             "manages", "documented_by", "procedure_for", "triggered_by",
-            "depends_on", "contained_in", "monitors", "automates"
+            "depends_on", "contained_in", "monitors", "automates",
+            "controlled_by_app", "has_blob"
         ]
         
         actual_types = [rt.value for rt in RelationshipType]

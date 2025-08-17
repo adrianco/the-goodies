@@ -22,7 +22,19 @@ async def test_sync_metadata_api():
     """Test sync metadata API endpoints."""
     print("=== Testing Sync Metadata API ===\n")
     
-    # Create test app
+    # Create a temporary database for testing
+    with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+        db_path = tmp.name
+    
+    # Initialize the database schema
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await engine.dispose()
+    
+    # Create test app with the test database
+    import os
+    os.environ['DATABASE_URL'] = f"sqlite+aiosqlite:///{db_path}"
     app = create_app()
     client = TestClient(app)
     
@@ -100,6 +112,14 @@ async def test_sync_metadata_api():
     
     print("\n✅ Sync Metadata API tests completed!")
     print("✅ API endpoints working with shared SyncMetadata model!")
+    
+    # Cleanup
+    import os
+    from pathlib import Path
+    try:
+        Path(db_path).unlink(missing_ok=True)
+    except:
+        pass
 
 
 if __name__ == "__main__":

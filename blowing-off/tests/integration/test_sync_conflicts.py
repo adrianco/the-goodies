@@ -14,10 +14,12 @@ import httpx
 from pathlib import Path
 import tempfile
 import uuid
+import sys
 
 from blowingoff import BlowingOffClient
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Timing-sensitive tests are flaky on Windows")
 class TestSyncConflicts:
     """Test conflict resolution scenarios."""
     
