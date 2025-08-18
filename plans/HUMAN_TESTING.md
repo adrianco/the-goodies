@@ -380,9 +380,10 @@ The system supports these entity types:
 - WINDOW - External connections
 - PROCEDURE - Step-by-step instructions
 - MANUAL - Device documentation
-- NOTE - User annotations
+- NOTE - User annotations (including photo documentation)
 - SCHEDULE - Time-based rules
 - AUTOMATION - Event-based rules
+- APP - Mobile/web applications that control devices
 
 ## 🔗 Relationship Types
 
@@ -391,12 +392,14 @@ Valid relationships between entities:
 - CONTROLS - Control relationships (device→device, automation→device)
 - CONNECTS_TO - Physical connections (room→room, door→room)
 - PART_OF - Logical grouping (room→zone, zone→home)
-- DOCUMENTED_BY - Documentation links (device→manual)
+- DOCUMENTED_BY - Documentation links (device→manual, device→note)
 - PROCEDURE_FOR - Procedure associations
 - TRIGGERED_BY - Event triggers
 - MANAGES - Management relationships
 - MONITORS - Monitoring relationships
 - AUTOMATES - Automation targets
+- CONTROLLED_BY_APP - Device controlled by mobile/web app
+- HAS_BLOB - Entity has associated binary data (PDFs, photos)
 
 ## 🎯 Interactive Mode
 
@@ -502,6 +505,137 @@ oook execute update_entity \
   -a entity_id="$DEVICE1_ID" \
   -a changes='{"name": "Alexa Echo Dot", "content": {"generation": "5th"}}' \
   -a user_id="test-user"
+```
+
+## 📸 Testing User Generated Content (UGC) Features
+
+### Create APP Entities
+```bash
+# Create a mobile app entity
+APP_ID=$(oook create app "Mitsubishi Comfort" \
+  -c '{"platform": "iOS", "url_scheme": "mitsubishicomfort://", "description": "Control Mitsubishi HVAC"}' \
+  | grep -o '"id": "[^"]*' | grep -o '[^"]*$')
+
+# Create another app
+APP2_ID=$(oook create app "SmartThings" \
+  -c '{"platform": "Android", "url_scheme": "smartthings://", "description": "Samsung SmartThings hub control"}' \
+  | grep -o '"id": "[^"]*' | grep -o '[^"]*$')
+```
+
+### Link Devices to Apps
+```bash
+# Create a Mitsubishi thermostat device
+THERMO_ID=$(oook create device "Mitsubishi PAR-42MAA" \
+  -c '{"manufacturer": "Mitsubishi", "model": "PAR-42MAAUB", "type": "climate", "capabilities": ["temperature", "fan_speed", "mode", "schedule"]}' \
+  | grep -o '"id": "[^"]*' | grep -o '[^"]*$')
+
+# Link thermostat to app
+oook execute create_relationship \
+  -a from_entity_id="$THERMO_ID" \
+  -a to_entity_id="$APP_ID" \
+  -a relationship_type="controlled_by_app" \
+  -a properties='{"integration": "wifi_adapter", "features": ["remote_control", "scheduling"]}'
+```
+
+### Create User Notes with Photo References
+```bash
+# Create a photo documentation note
+NOTE_ID=$(oook create note "Installation Photos" \
+  -c '{"content": "HVAC installation photos from 2025-08-01", "category": "photo_documentation", "has_blob": true, "blob_references": ["blob_001", "blob_002"]}' \
+  | grep -o '"id": "[^"]*' | grep -o '[^"]*$')
+
+# Link note to device
+oook execute create_relationship \
+  -a from_entity_id="$NOTE_ID" \
+  -a to_entity_id="$THERMO_ID" \
+  -a relationship_type="documented_by" \
+  -a properties='{"note_type": "photo_documentation"}'
+```
+
+### Create PDF Manual Documentation
+```bash
+# Create a manual note with PDF reference
+MANUAL_ID=$(oook create note "PAR-42MAA Manual" \
+  -c '{"content": "Instruction manual for Mitsubishi thermostat", "category": "manual", "has_blob": true, "blob_type": "pdf", "model_number": "PAR-42MAAUB"}' \
+  | grep -o '"id": "[^"]*' | grep -o '[^"]*$')
+
+# Link manual to device
+oook execute create_relationship \
+  -a from_entity_id="$MANUAL_ID" \
+  -a to_entity_id="$THERMO_ID" \
+  -a relationship_type="documented_by" \
+  -a properties='{"document_type": "instruction_manual"}'
+```
+
+### Test BLOB Storage (via API)
+```bash
+# Note: BLOB upload requires direct API access with file data
+# This example shows the API structure
+
+# Upload a PDF blob (requires actual file)
+curl -X POST http://localhost:8000/api/v1/blobs \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@manual.pdf" \
+  -F "name=PAR-42MAAUB_Manual.pdf" \
+  -F "blob_type=pdf" \
+  -F "entity_id=$THERMO_ID"
+
+# Upload a photo blob
+curl -X POST http://localhost:8000/api/v1/blobs \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@serial_number.jpg" \
+  -F "name=PVFY-Serial_Number.jpeg" \
+  -F "blob_type=jpeg" \
+  -F "entity_id=$THERMO_ID"
+```
+
+### Query UGC Entities
+```bash
+# Search for apps
+oook search "app" -t app
+
+# Search for devices with apps
+oook execute search_entities -a query="Mitsubishi" -a entity_types='["device", "app"]'
+
+# Find all notes for a device
+oook execute search_entities -a query="$THERMO_ID" -a entity_types='["note"]'
+
+# Get device with all documentation
+oook execute get_entity_details -a entity_id="$THERMO_ID"
+```
+
+### Complete UGC Example Workflow
+```bash
+# 1. Create a complete device setup with UGC
+DEVICE_ID=$(oook create device "PVFY-P18NMMU-E" \
+  -c '{"manufacturer": "Mitsubishi", "type": "mini_split", "location": "Master Bedroom"}' \
+  | grep -o '"id": "[^"]*' | grep -o '[^"]*$')
+
+# 2. Create control app
+APP_ID=$(oook create app "kumo cloud" \
+  -c '{"platform": "web", "url": "https://app.kumocloud.com", "manufacturer": "Mitsubishi"}' \
+  | grep -o '"id": "[^"]*' | grep -o '[^"]*$')
+
+# 3. Link device to app
+oook execute create_relationship \
+  -a from_entity_id="$DEVICE_ID" \
+  -a to_entity_id="$APP_ID" \
+  -a relationship_type="controlled_by_app"
+
+# 4. Add installation notes
+NOTE_ID=$(oook create note "Mini-split Installation" \
+  -c '{"content": "Installed 2025-08-15, 18000 BTU, uses PAG oil", "category": "installation"}' \
+  | grep -o '"id": "[^"]*' | grep -o '[^"]*$')
+
+oook execute create_relationship \
+  -a from_entity_id="$NOTE_ID" \
+  -a to_entity_id="$DEVICE_ID" \
+  -a relationship_type="documented_by"
+
+# 5. Query the complete setup
+oook execute get_entity_details -a entity_id="$DEVICE_ID"
 ```
 
 ## 🔧 Troubleshooting

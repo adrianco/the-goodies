@@ -144,9 +144,10 @@ The knowledge graph supports these entity types:
 - **DOOR/WINDOW** - Connections
 - **PROCEDURE** - Instructions
 - **MANUAL** - Documentation
-- **NOTE** - User annotations
+- **NOTE** - User annotations (including photo documentation)
 - **SCHEDULE** - Time-based rules
 - **AUTOMATION** - Event-based rules
+- **APP** - Mobile/web applications that control devices
 
 ## 🔄 Client Synchronization
 
@@ -184,7 +185,8 @@ The system has comprehensive test coverage:
 - **Security Tests**: 21 passing
 - **Performance Tests**: 10 passing
 - **E2E Tests**: 10 passing
-- **Total**: 211 tests passing (60% coverage)
+- **UGC Tests**: 14 passing
+- **Total**: 225 tests passing (60% coverage)
 
 ```bash
 # Run all tests
@@ -232,7 +234,105 @@ the-goodies/
 - ✅ **Conflict Resolution** - Multiple strategies available
 - ✅ **Search & Discovery** - Full-text entity search
 - ✅ **CLI Interface** - Both server and client CLIs
-- ✅ **Production Ready** - 211 tests passing, 60% coverage
+- ✅ **Production Ready** - 225 tests passing (including 14 UGC tests), 60% coverage
+- ✅ **User Generated Content** - Support for PDFs, photos, and user notes
+- ✅ **BLOB Storage** - Binary data storage with sync capabilities
+- ✅ **Device-App Integration** - Link devices to their control apps
+
+## 📸 User Generated Content (UGC) Features
+
+The system supports comprehensive User Generated Content functionality for storing and managing device documentation, photos, and user notes:
+
+### UGC Entity Types
+
+#### APP Entity Type
+- Store mobile/web applications that control smart devices
+- Link apps to devices using `CONTROLLED_BY_APP` relationship
+- Track app metadata (platform, URL scheme, icon, description)
+
+#### BLOB Storage
+- Binary large object storage for PDFs and photos
+- Support for multiple blob types: PDF, JPEG, PNG, and generic binary
+- Automatic checksum generation (SHA-256)
+- Sync status tracking (pending upload, uploaded, downloaded)
+- Metadata storage for structured information
+
+#### User Notes
+- Free-form text notes with categorization
+- Link notes to devices using `DOCUMENTED_BY` relationship
+- Support for device references within notes
+- Photo documentation with blob references
+
+### Key UGC Features
+
+#### PDF Document Management
+- Store device manuals and instruction books
+- Automatic summary generation from PDF content
+- Model number extraction from filenames
+- Link manuals to specific devices
+- Full-text searchable content
+
+#### Photo Documentation
+- Store installation photos and serial numbers
+- Extract metadata from photo files
+- Categorize photos by type (serial_number, installation, etc.)
+- Link photos to devices with `HAS_BLOB` relationship
+- Support for JPEG and PNG formats
+
+#### Mitsubishi Thermostat Integration
+- Specialized support for Mitsubishi PAR-42MAA thermostats
+- Store thermostat capabilities and configuration
+- Link to Mitsubishi Comfort mobile app
+- Track integration details (WiFi adapter, features)
+
+### UGC API Usage Examples
+
+```python
+# Create an APP entity
+app = Entity(
+    entity_type=EntityType.APP,
+    name="Mitsubishi Comfort",
+    content={
+        "platform": "iOS",
+        "url_scheme": "mitsubishicomfort://",
+        "description": "Control Mitsubishi HVAC systems"
+    }
+)
+
+# Create a BLOB for PDF storage
+pdf_blob = Blob(
+    name="PAR-42MAAUB_Manual.pdf",
+    blob_type=BlobType.PDF,
+    mime_type="application/pdf",
+    data=pdf_bytes,
+    blob_metadata={"pages": 50, "model": "PAR-42MAAUB"}
+)
+
+# Create a user NOTE with photo references
+photo_note = Entity(
+    entity_type=EntityType.NOTE,
+    name="Installation Photos",
+    content={
+        "content": "Photos from HVAC installation",
+        "category": "photo_documentation",
+        "has_blob": True,
+        "blob_references": ["blob_id_1", "blob_id_2"]
+    }
+)
+
+# Link device to app
+relationship = EntityRelationship(
+    from_entity_id=device.id,
+    to_entity_id=app.id,
+    relationship_type=RelationshipType.CONTROLLED_BY_APP,
+    properties={"integration": "wifi_adapter"}
+)
+```
+
+### UGC Relationship Types
+- **CONTROLLED_BY_APP** - Device controlled by mobile/web app
+- **DOCUMENTED_BY** - Entity documented by note or manual
+- **HAS_BLOB** - Entity has associated binary data
 
 ## 🔐 Security Features (Phase 5)
 
@@ -350,10 +450,12 @@ curl -X POST http://localhost:8000/api/v1/auth/guest/generate-qr \
 ## 🎯 Status: Production Ready
 
 The system is fully functional with:
-- 139/139 tests passing
+- 225/225 tests passing (including UGC features)
 - Complete MCP tool suite working
 - Client-server synchronization operational
 - Full human testing scenarios verified
+- User Generated Content support (PDFs, photos, notes)
+- BLOB storage with sync capabilities
 - Zero remaining issues
 
 Ready for deployment and use! 🚀
