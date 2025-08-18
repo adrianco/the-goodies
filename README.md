@@ -6,6 +6,8 @@ The Goodies is a modern smart home knowledge graph data store layer built around
 
 **Current Status**: ✅ **Production Ready** - All tests passing (211/211), comprehensive MCP functionality, full client-server synchronization, and enterprise-grade security features.
 
+**Related Projects**: adrianco/consciousness is an early prototype of the backend server that will be rewritten from scratch later. adrianco/c11s-house-ios is a native Swift iOS app that is the front end for the system. This repo is the knowledge graph protocol that will interface the app to the backend, and includes a command line client in Python that acts as a prototype implementation for the next phase, adrianco/the-goodies-swift, which will be integrated with adrianco/c11s-house-ios.
+
 ## 🏗️ Architecture
 
 ### Core Components
