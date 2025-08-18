@@ -12,7 +12,7 @@ from .audit_logger import AuditLogger, audit_logger, SecurityEventType, get_requ
 
 __all__ = [
     "PasswordManager",
-    "TokenManager", 
+    "TokenManager",
     "QRCodeManager",
     "RateLimiter",
     "auth_rate_limiter",

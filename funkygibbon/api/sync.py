@@ -27,26 +27,26 @@ router = APIRouter(prefix="/api/v1/sync", tags=["sync"])
 
 class SyncHandler:
     """Handle sync protocol requests"""
-    
+
     def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
         self.version_manager = VersionManager(db_session)
         self.conflict_resolver = ConflictResolver()
         self.delta_engine = DeltaSyncEngine(db_session)
-    
+
     async def handle_sync_request(self, request: SyncRequest) -> SyncResponse:
         """Process sync request and return changes"""
         start_time = datetime.now(timezone.utc)
-        
+
         # Validate protocol version
         if request.protocol_version != "inbetweenies-v2":
             raise HTTPException(status_code=400, detail="Unsupported protocol version")
-        
+
         # Process incoming changes
         conflicts = []
         entities_synced = 0
         relationships_synced = 0
-        
+
         for change in request.changes:
             if change.change_type == "create":
                 await self._handle_create(change)
@@ -59,40 +59,40 @@ class SyncHandler:
             elif change.change_type == "delete":
                 await self._handle_delete(change)
                 entities_synced += 1
-            
+
             # Process relationships
             relationships_synced += len(change.relationships)
-        
+
         # Get changes to send back based on sync type
         response_changes = []
-        
+
         if request.sync_type == "delta":
             # Get last sync time for device
             last_sync = self.delta_engine.get_last_sync_time(request.device_id)
             if not last_sync:
                 # First sync, use full sync
                 last_sync = datetime.min.replace(tzinfo=timezone.utc)
-            
+
             # Calculate delta
             entity_types = None
             if request.filters and request.filters.entity_types:
                 entity_types = [EntityType(et) for et in request.filters.entity_types]
-            
+
             delta = await self.delta_engine.calculate_delta(last_sync, entity_types)
-            
+
             # Convert delta to changes
             for entity in delta.added_entities:
                 response_changes.append(SyncChange(
                     change_type="create",
                     entity=self._entity_to_change(entity)
                 ))
-            
+
             for entity in delta.modified_entities:
                 response_changes.append(SyncChange(
                     change_type="update",
                     entity=self._entity_to_change(entity)
                 ))
-        
+
         elif request.sync_type == "full":
             # Return all entities
             entities = await self._get_all_entities(request.filters)
@@ -101,13 +101,13 @@ class SyncHandler:
                     change_type="create",
                     entity=self._entity_to_change(entity)
                 ))
-        
+
         # Update sync time
         self.delta_engine.update_last_sync_time(request.device_id, datetime.now(timezone.utc))
-        
+
         # Calculate duration
         duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
-        
+
         # Build response
         return SyncResponse(
             sync_type=request.sync_type,
@@ -121,12 +121,12 @@ class SyncHandler:
                 duration_ms=duration_ms
             )
         )
-    
+
     async def _handle_create(self, change: SyncChange):
         """Handle entity creation"""
         if not change.entity:
             return
-            
+
         # Check if entity already exists - get latest version
         from sqlalchemy import select
         stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
@@ -136,7 +136,7 @@ class SyncHandler:
             # Already exists, this is a conflict
             # For now, skip creation
             return
-        
+
         # Create new entity
         from inbetweenies.models import SourceType as ST
         entity = Entity(
@@ -149,15 +149,15 @@ class SyncHandler:
             user_id=change.entity.user_id,
             parent_versions=change.entity.parent_versions
         )
-        
+
         self.db_session.add(entity)
         await self.db_session.commit()
-    
+
     async def _handle_update(self, change: SyncChange) -> Optional[ConflictInfo]:
         """Handle entity update"""
         if not change.entity:
             return None
-            
+
         # Get existing entity - need to get the latest version
         from sqlalchemy import select
         stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
@@ -167,7 +167,7 @@ class SyncHandler:
             # Doesn't exist, create it
             await self._handle_create(change)
             return None
-        
+
         # Check for conflict
         if existing.version != change.entity.parent_versions[0] if change.entity.parent_versions else None:
             # Version conflict
@@ -182,12 +182,12 @@ class SyncHandler:
                 user_id=change.entity.user_id,
                 parent_versions=change.entity.parent_versions
             )
-            
+
             # Resolve conflict
             resolution = self.conflict_resolver.resolve_conflict(
                 existing, remote_entity, ConflictStrategy.MERGE
             )
-            
+
             if resolution.resolved_entity:
                 # Update with resolved entity
                 existing.version = resolution.resolved_entity.version
@@ -195,9 +195,9 @@ class SyncHandler:
                 existing.content = resolution.resolved_entity.content
                 existing.parent_versions = resolution.resolved_entity.parent_versions
                 existing.updated_at = datetime.now(timezone.utc)
-                
+
                 await self.db_session.commit()
-                
+
                 return ConflictInfo(
                     entity_id=change.entity.id,
                     local_version=existing.version,
@@ -212,16 +212,16 @@ class SyncHandler:
             existing.content = change.entity.content
             existing.parent_versions = change.entity.parent_versions
             existing.updated_at = datetime.now(timezone.utc)
-            
+
             await self.db_session.commit()
-        
+
         return None
-    
+
     async def _handle_delete(self, change: SyncChange):
         """Handle entity deletion"""
         if not change.entity:
             return
-            
+
         # Get entity to delete - need to find the latest version
         from sqlalchemy import select
         stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
@@ -230,7 +230,7 @@ class SyncHandler:
         if entity:
             await self.db_session.delete(entity)
             await self.db_session.commit()
-    
+
     def _entity_to_change(self, entity: Entity) -> EntityChange:
         """Convert entity to change format"""
         return EntityChange(
@@ -243,24 +243,24 @@ class SyncHandler:
             user_id=entity.user_id,
             parent_versions=entity.parent_versions
         )
-    
+
     async def _get_all_entities(self, filters: Optional[SyncFilters]) -> List[Entity]:
         """Get all entities with optional filters"""
         from sqlalchemy import select
-        
+
         query = select(Entity)
-        
+
         if filters:
             if filters.entity_types:
                 entity_types = [EntityType(et) for et in filters.entity_types]
                 query = query.where(Entity.entity_type.in_(entity_types))
-            
+
             if filters.since:
                 query = query.where(Entity.updated_at >= filters.since)
-            
+
             if filters.modified_by:
                 query = query.where(Entity.user_id.in_(filters.modified_by))
-        
+
         result = await self.db_session.execute(query)
         return list(result.scalars().all())
 
@@ -283,7 +283,7 @@ async def sync_status(
     """Get sync status for a device"""
     delta_engine = DeltaSyncEngine(db)
     last_sync = delta_engine.get_last_sync_time(device_id)
-    
+
     return {
         "device_id": device_id,
         "last_sync": last_sync.isoformat() if last_sync else None,
@@ -311,8 +311,8 @@ async def resolve_conflict(
     """Manually resolve a conflict"""
     conflict_resolver = ConflictResolver()
     success = conflict_resolver.resolve_manual_conflict(conflict_id, resolution)
-    
+
     if not success:
         raise HTTPException(status_code=404, detail="Conflict not found")
-    
+
     return {"status": "resolved", "conflict_id": conflict_id}

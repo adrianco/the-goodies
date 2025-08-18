@@ -20,21 +20,21 @@ from inbetweenies.models import Base, SyncMetadata
 async def test_sync_metadata():
     """Test SyncMetadata functionality."""
     print("=== Testing Shared SyncMetadata Model ===\n")
-    
+
     # Create in-memory database
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    
+
     # Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     # Create session
     session_factory = async_sessionmaker(
         bind=engine,
         class_=AsyncSession,
         expire_on_commit=False
     )
-    
+
     async with session_factory() as session:
         # Test 1: Create sync metadata
         print("1. Creating sync metadata:")
@@ -46,14 +46,14 @@ async def test_sync_metadata():
         session.add(metadata)
         await session.commit()
         print(f"   ✅ Created metadata for client: {metadata.client_id}")
-        
+
         # Test 2: Record sync start
         print("\n2. Recording sync start:")
         metadata.record_sync_start()
         await session.commit()
         print(f"   ✅ Sync started at: {metadata.last_sync_time}")
         print(f"   ✅ Sync in progress: {bool(metadata.sync_in_progress)}")
-        
+
         # Test 3: Record sync success
         print("\n3. Recording sync success:")
         await asyncio.sleep(0.1)  # Small delay to show time difference
@@ -63,7 +63,7 @@ async def test_sync_metadata():
         print(f"   ✅ Total syncs: {metadata.total_syncs}")
         print(f"   ✅ Sync failures: {metadata.sync_failures}")
         print(f"   ✅ Sync in progress: {bool(metadata.sync_in_progress)}")
-        
+
         # Test 4: Record sync failure
         print("\n4. Recording sync failure:")
         metadata.record_sync_start()
@@ -75,7 +75,7 @@ async def test_sync_metadata():
         print(f"   ✅ Total syncs: {metadata.total_syncs}")
         print(f"   ✅ Sync failures: {metadata.sync_failures}")
         print(f"   ✅ Next retry at: {metadata.next_retry_time}")
-        
+
         # Test 5: Test to_dict method
         print("\n5. Testing to_dict serialization:")
         data = metadata.to_dict()
@@ -83,7 +83,7 @@ async def test_sync_metadata():
         print(f"   ✅ Client ID: {data['client_id']}")
         print(f"   ✅ Sync in progress: {data['sync_in_progress']}")
         print(f"   ✅ Last error: {data['last_sync_error']}")
-        
+
         # Test 6: Query from database
         print("\n6. Querying from database:")
         result = await session.execute(
@@ -93,7 +93,7 @@ async def test_sync_metadata():
         print(f"   ✅ Retrieved client: {retrieved_metadata.client_id}")
         print(f"   ✅ Same instance: {retrieved_metadata is metadata}")
         print(f"   ✅ Total syncs match: {retrieved_metadata.total_syncs == 2}")
-        
+
     await engine.dispose()
     print("\n✅ All SyncMetadata tests passed!")
     print("✅ SyncMetadata is now shared in inbetweenies package!")

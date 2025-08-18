@@ -24,12 +24,12 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 async def test_engine():
     """Create test database engine."""
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-    
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     yield engine
-    
+
     await engine.dispose()
 
 
@@ -37,11 +37,11 @@ async def test_engine():
 async def test_session(test_engine):
     """Create test database session."""
     async_session_maker = async_sessionmaker(
-        test_engine, 
-        class_=AsyncSession, 
+        test_engine,
+        class_=AsyncSession,
         expire_on_commit=False
     )
-    
+
     async with async_session_maker() as session:
         yield session
 
@@ -50,15 +50,15 @@ async def test_session(test_engine):
 async def app(test_session):
     """Create test FastAPI app with test database."""
     app = create_app()
-    
+
     # Override the get_db dependency
     async def override_get_db():
         yield test_session
-    
+
     app.dependency_overrides[get_db] = override_get_db
-    
+
     yield app
-    
+
     app.dependency_overrides.clear()
 
 
@@ -66,7 +66,7 @@ async def app(test_session):
 async def async_client(app):
     """Create async test client."""
     from httpx import ASGITransport
-    
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

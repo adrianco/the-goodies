@@ -47,10 +47,10 @@ DEPENDENCIES:
 USAGE:
     # Install in development mode
     pip install -e .
-    
+
     # Install from package
     pip install blowing-off
-    
+
     # Run CLI after installation
     blowing-off --help
 """

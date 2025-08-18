@@ -85,18 +85,18 @@ async def require_admin(
 ) -> Dict[str, Any]:
     """
     Verify admin authentication.
-    
+
     Returns:
         Token payload if valid
-        
+
     Raises:
         HTTPException: If not authenticated or not admin
     """
     token = credentials.credentials
     client_ip = await get_client_ip(request)
-    
+
     payload = token_manager.verify_token(token)
-    
+
     if not payload:
         # Log invalid token
         audit_logger.log_token_event(
@@ -108,7 +108,7 @@ async def require_admin(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-    
+
     if payload.get("role") != "admin":
         # Log permission denial
         audit_logger.log_permission_check(
@@ -124,7 +124,7 @@ async def require_admin(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
-    
+
     # Log successful verification
     audit_logger.log_token_event(
         event_type=SecurityEventType.TOKEN_VERIFIED,
@@ -133,7 +133,7 @@ async def require_admin(
         role=payload.get("role"),
         request_info=get_request_info(request)
     )
-    
+
     return payload
 
 
@@ -144,18 +144,18 @@ async def require_auth(
 ) -> Dict[str, Any]:
     """
     Verify any authentication (admin or guest).
-    
+
     Returns:
         Token payload if valid
-        
+
     Raises:
         HTTPException: If not authenticated
     """
     token = credentials.credentials
     client_ip = await get_client_ip(request)
-    
+
     payload = token_manager.verify_token(token)
-    
+
     if not payload:
         # Log invalid token
         audit_logger.log_token_event(
@@ -167,7 +167,7 @@ async def require_auth(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-    
+
     # Log successful verification
     audit_logger.log_token_event(
         event_type=SecurityEventType.TOKEN_VERIFIED,
@@ -176,7 +176,7 @@ async def require_auth(
         role=payload.get("role"),
         request_info=get_request_info(request)
     )
-    
+
     return payload
 
 
@@ -189,12 +189,12 @@ async def admin_login(
 ):
     """
     Authenticate admin with password.
-    
+
     Returns JWT token for admin access.
     """
     client_ip = await get_client_ip(request)
     request_info = get_request_info(request)
-    
+
     try:
         if not ADMIN_PASSWORD_HASH:
             # For development/testing when no password is set
@@ -207,14 +207,14 @@ async def admin_login(
                     role="admin",
                     request_info=request_info
                 )
-                
+
                 token = token_manager.create_token(
                     user_id="admin",
                     role="admin",
                     permissions=["read", "write", "delete", "configure"],
                     expires_delta=timedelta(days=7)
                 )
-                
+
                 # Log token creation
                 audit_logger.log_token_event(
                     event_type=SecurityEventType.TOKEN_CREATED,
@@ -224,7 +224,7 @@ async def admin_login(
                     token_type="jwt",
                     request_info=request_info
                 )
-                
+
                 return TokenResponse(
                     access_token=token,
                     expires_in=7 * 24 * 3600,  # 7 days in seconds
@@ -242,10 +242,10 @@ async def admin_login(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid password"
                 )
-        
+
         # Verify password against stored hash
         is_valid, new_hash = password_manager.verify_password(login_request.password, ADMIN_PASSWORD_HASH)
-        
+
         if not is_valid:
             # Log failed authentication
             audit_logger.log_auth_attempt(
@@ -258,7 +258,7 @@ async def admin_login(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid password"
             )
-        
+
         # Log successful authentication
         audit_logger.log_auth_attempt(
             success=True,
@@ -267,9 +267,9 @@ async def admin_login(
             role="admin",
             request_info=request_info
         )
-        
+
         # TODO: If new_hash is provided, update the stored hash
-        
+
         # Create admin token
         token = token_manager.create_token(
             user_id="admin",
@@ -277,7 +277,7 @@ async def admin_login(
             permissions=["read", "write", "delete", "configure"],
             expires_delta=timedelta(days=7)
         )
-        
+
         # Log token creation
         audit_logger.log_token_event(
             event_type=SecurityEventType.TOKEN_CREATED,
@@ -287,13 +287,13 @@ async def admin_login(
             token_type="jwt",
             request_info=request_info
         )
-        
+
         return TokenResponse(
             access_token=token,
             expires_in=7 * 24 * 3600,  # 7 days in seconds
             role="admin"
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -318,22 +318,22 @@ async def generate_guest_qr(
 ):
     """
     Generate QR code for guest access (admin only).
-    
+
     Creates a QR code containing server information and a guest token.
     """
     client_ip = await get_client_ip(request)
     request_info = get_request_info(request)
-    
+
     # Create guest token
     guest_token = token_manager.create_guest_token(duration_hours=guest_request.duration_hours)
-    
+
     # Generate QR code
     qr_data, qr_image = qr_manager.generate_guest_qr(
         guest_token=guest_token,
         duration_hours=guest_request.duration_hours,
         custom_server=guest_request.custom_server
     )
-    
+
     # Log QR generation
     audit_logger.log_event(
         event_type=SecurityEventType.GUEST_QR_GENERATED,
@@ -346,7 +346,7 @@ async def generate_guest_qr(
         },
         request_info=request_info
     )
-    
+
     return QRCodeResponse(
         qr_code=qr_image,
         qr_data=qr_data,
@@ -362,15 +362,15 @@ async def verify_guest_token(
 ):
     """
     Verify guest token from QR code.
-    
+
     Exchanges a guest token for a JWT.
     """
     client_ip = await get_client_ip(request)
     request_info = get_request_info(request)
-    
+
     # Verify guest token
     token_data = token_manager.verify_guest_token(token_request.token)
-    
+
     if not token_data:
         # Log failed verification
         audit_logger.log_event(
@@ -383,10 +383,10 @@ async def verify_guest_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-    
+
     # Calculate remaining validity
     remaining_time = token_data["expires"] - datetime.now(timezone.utc)
-    
+
     # Create JWT for guest
     guest_id = f"guest_{token_request.token[:8]}"
     jwt_token = token_manager.create_token(
@@ -395,7 +395,7 @@ async def verify_guest_token(
         permissions=token_data["permissions"],
         expires_delta=remaining_time
     )
-    
+
     # Log guest access granted
     audit_logger.log_event(
         event_type=SecurityEventType.GUEST_ACCESS_GRANTED,
@@ -407,7 +407,7 @@ async def verify_guest_token(
         },
         request_info=request_info
     )
-    
+
     return TokenResponse(
         access_token=jwt_token,
         expires_in=int(remaining_time.total_seconds()),
@@ -422,17 +422,17 @@ async def revoke_guest_token(
 ):
     """
     Revoke a guest token (admin only).
-    
+
     Immediately invalidates the specified guest token.
     """
     success = token_manager.revoke_guest_token(token)
-    
+
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Token not found"
         )
-    
+
     return {"message": "Token revoked successfully"}
 
 
@@ -440,11 +440,11 @@ async def revoke_guest_token(
 async def list_guest_tokens(admin: Dict[str, Any] = Depends(require_admin)):
     """
     List active guest tokens (admin only).
-    
+
     Returns information about all active guest access tokens.
     """
     tokens = token_manager.get_active_guest_tokens()
-    
+
     return {
         "count": len(tokens),
         "tokens": tokens
@@ -455,7 +455,7 @@ async def list_guest_tokens(admin: Dict[str, Any] = Depends(require_admin)):
 async def get_current_user(user: Dict[str, Any] = Depends(require_auth)):
     """
     Get current user information.
-    
+
     Returns information about the authenticated user.
     """
     return {
@@ -470,7 +470,7 @@ async def get_current_user(user: Dict[str, Any] = Depends(require_auth)):
 async def refresh_token(user: Dict[str, Any] = Depends(require_auth)):
     """
     Refresh authentication token.
-    
+
     Issues a new token with extended expiration.
     """
     # Only admin tokens can be refreshed
@@ -479,7 +479,7 @@ async def refresh_token(user: Dict[str, Any] = Depends(require_auth)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin tokens can be refreshed"
         )
-    
+
     # Create new token
     new_token = token_manager.create_token(
         user_id=user.get("sub"),
@@ -487,7 +487,7 @@ async def refresh_token(user: Dict[str, Any] = Depends(require_auth)):
         permissions=user.get("permissions"),
         expires_delta=timedelta(days=7)
     )
-    
+
     return TokenResponse(
         access_token=new_token,
         expires_in=7 * 24 * 3600,

@@ -82,20 +82,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # Startup
     await init_db()
     print("Database initialized")
-    
+
     # Start rate limiter cleanup task
     await auth_rate_limiter.start_cleanup_task()
     print("Rate limiter started")
-    
+
     # Start audit logger pattern detection
     await audit_logger.start_pattern_detection()
     print("Audit logger started")
-    
+
     yield
-    
+
     # Shutdown
     print("Shutting down")
-    
+
     # Stop background tasks
     await auth_rate_limiter.stop_cleanup_task()
     await audit_logger.stop_pattern_detection()
@@ -110,7 +110,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan
     )
-    
+
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
@@ -119,7 +119,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Include routers
     app.include_router(auth.router, prefix=f"{settings.api_prefix}", tags=["authentication"])
     app.include_router(enhanced_sync.router, tags=["sync"])
@@ -127,7 +127,7 @@ def create_app() -> FastAPI:
     # Graph and MCP routers (primary functionality)
     app.include_router(graph.router, prefix=f"{settings.api_prefix}", tags=["graph"])
     app.include_router(mcp.router, prefix=f"{settings.api_prefix}", tags=["mcp"])
-    
+
     @app.get("/")
     async def root():
         """Root endpoint."""
@@ -136,10 +136,10 @@ def create_app() -> FastAPI:
             "version": "0.1.0",
             "status": "ready"
         }
-    
+
     @app.get("/health")
     async def health():
         """Health check endpoint."""
         return {"status": "healthy"}
-    
+
     return app

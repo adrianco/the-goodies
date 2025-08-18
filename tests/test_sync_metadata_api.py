@@ -24,10 +24,10 @@ from inbetweenies.models import Base
 async def test_sync_metadata_api():
     """Test sync metadata API endpoints."""
     print("=== Testing Sync Metadata API ===\n")
-    
+
     # Use the synchronous TestClient which handles async properly
     app = create_app()
-    
+
     with TestClient(app) as client:
         # Test 1: Create sync metadata
         print("1. Creating sync metadata via API:")
@@ -43,7 +43,7 @@ async def test_sync_metadata_api():
             print(f"   ✅ Server URL: {data['server_url']}")
         else:
             print(f"   ❌ Failed: {response.text}")
-        
+
         # Test 2: Get sync metadata
         print("\n2. Getting sync metadata:")
         response = client.get("/api/v1/sync-metadata/test-client-api")
@@ -55,7 +55,7 @@ async def test_sync_metadata_api():
             print(f"   ✅ Sync failures: {data['sync_failures']}")
         else:
             print(f"   ❌ Failed: {response.text}")
-        
+
         # Test 3: Record sync start
         print("\n3. Recording sync start:")
         response = client.post("/api/v1/sync-metadata/test-client-api/sync-start")
@@ -65,7 +65,7 @@ async def test_sync_metadata_api():
             print(f"   ✅ Response: {data['status']}")
         else:
             print(f"   ❌ Failed: {response.text}")
-        
+
         # Test 4: Record sync success
         print("\n4. Recording sync success:")
         response = client.post("/api/v1/sync-metadata/test-client-api/sync-success")
@@ -75,7 +75,7 @@ async def test_sync_metadata_api():
             print(f"   ✅ Response: {data['status']}")
         else:
             print(f"   ❌ Failed: {response.text}")
-        
+
         # Test 5: Get sync status
         print("\n5. Getting sync status:")
         response = client.get("/api/v1/sync-metadata/test-client-api/status")
@@ -88,7 +88,7 @@ async def test_sync_metadata_api():
             print(f"   ✅ Last success: {data['last_success'] is not None}")
         else:
             print(f"   ❌ Failed: {response.text}")
-        
+
         # Test 6: List all metadata
         print("\n6. Listing all sync metadata:")
         response = client.get("/api/v1/sync-metadata/")
@@ -100,7 +100,7 @@ async def test_sync_metadata_api():
                 print(f"   ✅ First entry client: {data[0]['client_id']}")
         else:
             print(f"   ❌ Failed: {response.text}")
-        
+
         print("\n✅ Sync Metadata API tests completed!")
         print("✅ API endpoints working with shared SyncMetadata model!")
 

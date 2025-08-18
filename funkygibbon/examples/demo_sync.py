@@ -18,17 +18,17 @@ from typing import Dict
 async def test_sync_api():
     """Test the sync API endpoints"""
     base_url = "http://localhost:8000/api/v1"
-    
+
     print("🔄 Testing Enhanced Inbetweenies Sync Protocol")
     print("=" * 50)
-    
+
     # 1. Check sync status
     print("\n1️⃣ Checking sync status for device 'test-device'...")
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{base_url}/sync/status", params={"device_id": "test-device"})
         status = response.json()
         print(f"   Status: {json.dumps(status, indent=2)}")
-    
+
     # 2. Send a full sync request
     print("\n2️⃣ Sending full sync request...")
     sync_request = {
@@ -39,12 +39,12 @@ async def test_sync_api():
         "vector_clock": {"clocks": {}},
         "changes": []
     }
-    
+
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{base_url}/sync/", json=sync_request)
         sync_response = response.json()
         print(f"   Response: {json.dumps(sync_response, indent=2)}")
-    
+
     # 3. Create some local changes to sync
     print("\n3️⃣ Creating local changes to sync...")
     changes = [
@@ -86,7 +86,7 @@ async def test_sync_api():
             ]
         }
     ]
-    
+
     # 4. Send delta sync with changes
     print("\n4️⃣ Sending delta sync with local changes...")
     delta_request = {
@@ -97,7 +97,7 @@ async def test_sync_api():
         "vector_clock": {"clocks": {"test-device": "v1"}},
         "changes": changes
     }
-    
+
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{base_url}/sync/", json=delta_request)
         if response.status_code == 200:
@@ -105,10 +105,10 @@ async def test_sync_api():
             print(f"   Sync stats: {json.dumps(delta_response['sync_stats'], indent=2)}")
         else:
             print(f"   ❌ Error: {response.status_code} - {response.text}")
-    
+
     # 5. Create a conflict scenario
     print("\n5️⃣ Creating conflict scenario...")
-    
+
     # First update from device 1
     update1 = {
         "protocol_version": "inbetweenies-v2",
@@ -130,7 +130,7 @@ async def test_sync_api():
             }
         }]
     }
-    
+
     # Conflicting update from device 2
     update2 = {
         "protocol_version": "inbetweenies-v2",
@@ -152,13 +152,13 @@ async def test_sync_api():
             }
         }]
     }
-    
+
     async with httpx.AsyncClient() as client:
         # Send first update
         print("   Sending update from device-1...")
         response1 = await client.post(f"{base_url}/sync/", json=update1)
         print(f"   Result: {response1.status_code}")
-        
+
         # Send conflicting update
         print("   Sending conflicting update from device-2...")
         response2 = await client.post(f"{base_url}/sync/", json=update2)
@@ -168,21 +168,21 @@ async def test_sync_api():
                 print(f"   ⚠️  Conflicts detected: {json.dumps(result2['conflicts'], indent=2)}")
         else:
             print(f"   ❌ Error: {response2.status_code}")
-    
+
     # 6. Check pending conflicts
     print("\n6️⃣ Checking pending conflicts...")
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{base_url}/sync/conflicts")
         conflicts = response.json()
         print(f"   Pending conflicts: {len(conflicts.get('conflicts', []))}")
-    
+
     # 7. Test entity search after sync
     print("\n7️⃣ Searching for synced entities...")
     search_request = {
         "query": "smart",
         "entity_types": ["device"]
     }
-    
+
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{base_url}/graph/search", json=search_request)
         if response.status_code == 200:
@@ -191,7 +191,7 @@ async def test_sync_api():
             for result in results.get("results", [])[:3]:
                 entity = result.get("entity", {})
                 print(f"   - {entity.get('name', 'Unknown')} ({entity.get('entity_type', 'Unknown')})")
-    
+
     print("\n✅ Sync API test completed!")
 
 

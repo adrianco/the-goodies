@@ -84,34 +84,34 @@ T = TypeVar("T", bound=Base)
 
 class BaseRepository(Generic[T]):
     """Base repository with common CRUD operations."""
-    
+
     def __init__(self, model_class: Type[T]):
         self.model_class = model_class
         self.conflict_resolver = ConflictResolver()
-    
+
     async def create(self, db: AsyncSession, **kwargs) -> T:
         """Create a new entity."""
         import uuid
-        
+
         # Generate ID if not provided
         if 'id' not in kwargs:
             kwargs['id'] = str(uuid.uuid4())
-            
+
         # Set timestamps if not provided
         now = datetime.now(UTC)
         kwargs.setdefault("created_at", now)
         kwargs.setdefault("updated_at", now)
-        
+
         # Generate sync_id if not provided
         if 'sync_id' not in kwargs:
             kwargs['sync_id'] = str(uuid.uuid4())
-        
+
         entity = self.model_class(**kwargs)
         db.add(entity)
         await db.commit()
         await db.refresh(entity)
         return entity
-    
+
     async def get_by_id(self, db: AsyncSession, id: str) -> Optional[T]:
         """Get entity by ID."""
         stmt = select(self.model_class).where(
@@ -122,7 +122,7 @@ class BaseRepository(Generic[T]):
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
-    
+
     async def get_by_sync_id(self, db: AsyncSession, sync_id: str) -> Optional[T]:
         """Get entity by sync ID."""
         stmt = select(self.model_class).where(
@@ -133,7 +133,7 @@ class BaseRepository(Generic[T]):
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
-    
+
     async def get_all(self, db: AsyncSession, limit: int = 1000) -> List[T]:
         """Get all entities (excluding deleted)."""
         stmt = select(self.model_class).where(
@@ -141,75 +141,75 @@ class BaseRepository(Generic[T]):
         ).limit(limit)
         result = await db.execute(stmt)
         return list(result.scalars().all())
-    
+
     async def update(self, db: AsyncSession, id: str, **kwargs) -> Optional[T]:
         """Update an entity by ID."""
         entity = await self.get_by_id(db, id)
         if not entity:
             return None
-        
+
         # Update fields
         for key, value in kwargs.items():
             if hasattr(entity, key):
                 setattr(entity, key, value)
-        
+
         # Update timestamp and version
         entity.updated_at = datetime.now(UTC)
         # Models don't have version field
-        
+
         await db.commit()
         await db.refresh(entity)
         return entity
-    
+
     async def soft_delete(self, db: AsyncSession, id: str) -> bool:
         """Soft delete an entity."""
         entity = await self.get_by_id(db, id)
         if not entity:
             return False
-        
+
         # Models don't have is_deleted - actually delete the record
         await db.delete(entity)
         await db.commit()
         return True
-    
+
     async def sync_entity(
-        self, 
-        db: AsyncSession, 
+        self,
+        db: AsyncSession,
         remote_data: Dict[str, Any]
     ) -> tuple[T, bool, Optional[ConflictResolution]]:
         """
         Sync a remote entity with local database.
-        
+
         Returns:
             Tuple of (entity, was_updated, conflict_resolution)
         """
         sync_id = remote_data["sync_id"]
         entity_id = remote_data.get("id")
-        
+
         # First try to find by entity ID (for conflict detection)
         local_entity = None
         if entity_id:
             local_entity = await self.get_by_id(db, entity_id)
-        
+
         # If not found by ID, try by sync_id (for normal sync)
         if not local_entity:
             local_entity = await self.get_by_sync_id(db, sync_id)
-        
+
         if not local_entity:
             # Parse datetime strings to datetime objects
             parsed_data = remote_data.copy()
             for key in ["created_at", "updated_at"]:
                 if key in parsed_data and isinstance(parsed_data[key], str):
                     parsed_data[key] = datetime.fromisoformat(parsed_data[key].replace("Z", "+00:00"))
-            
+
             # New entity, create it
             entity = await self.create(db, **parsed_data)
             return entity, True, None
-        
+
         # Check for conflicts
         local_data = local_entity.to_dict()
         resolution = self.conflict_resolver.resolve(local_data, remote_data)
-        
+
         if resolution.winner == remote_data:
             # Remote wins, update local
             for key, value in remote_data.items():
@@ -218,17 +218,17 @@ class BaseRepository(Generic[T]):
                     if key in ["updated_at"] and isinstance(value, str):
                         value = datetime.fromisoformat(value.replace("Z", "+00:00"))
                     setattr(local_entity, key, value)
-            
+
             await db.commit()
             await db.refresh(local_entity)
             return local_entity, True, resolution
         else:
             # Local wins, no update needed
             return local_entity, False, resolution
-    
+
     async def get_changes_since(
-        self, 
-        db: AsyncSession, 
+        self,
+        db: AsyncSession,
         timestamp: datetime,
         limit: int = 100
     ) -> List[T]:
@@ -238,6 +238,6 @@ class BaseRepository(Generic[T]):
         ).order_by(
             self.model_class.updated_at
         ).limit(limit)
-        
+
         result = await db.execute(stmt)
         return list(result.scalars().all())

@@ -49,16 +49,16 @@ class ConflictResolution:
 
 class ConflictResolver:
     """Handles last-write-wins conflict resolution for the Inbetweenies protocol."""
-    
+
     @staticmethod
     def resolve(local: Dict[str, Any], remote: Dict[str, Any]) -> ConflictResolution:
         """
         Resolve conflicts using last-write-wins strategy.
-        
+
         Args:
             local: Local entity data
             remote: Remote entity data
-            
+
         Returns:
             ConflictResolution with winner and reason
         """
@@ -82,13 +82,13 @@ class ConflictResolver:
                 else:
                     # Already timezone-aware, convert to UTC
                     return dt.astimezone(UTC)
-        
+
         local_ts = normalize_datetime(local["updated_at"])
         remote_ts = normalize_datetime(remote["updated_at"])
-        
+
         # Calculate millisecond difference
         diff_ms = int((remote_ts - local_ts).total_seconds() * 1000)
-        
+
         if abs(diff_ms) < 1000:  # Within 1 second, use sync_id as tiebreaker
             remote_sync_id = remote.get("sync_id") or ""
             local_sync_id = local.get("sync_id") or ""
@@ -106,7 +106,7 @@ class ConflictResolver:
                     reason="timestamps equal, local has higher sync_id",
                     timestamp_diff_ms=diff_ms
                 )
-        
+
         if remote_ts > local_ts:
             return ConflictResolution(
                 winner=remote,

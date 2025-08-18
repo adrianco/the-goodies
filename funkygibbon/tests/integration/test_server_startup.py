@@ -18,7 +18,7 @@ from conftest_server import running_server
 
 class TestServerStartup:
     """Test server startup and basic functionality."""
-    
+
     @pytest.mark.asyncio
     async def test_server_starts_and_responds(self, running_server):
         """Test that the server can start and respond to health checks."""
@@ -28,14 +28,14 @@ class TestServerStartup:
             response = await client.get("/health")
             assert response.status_code == 200
             assert response.json() == {"status": "healthy"}
-            
+
             # Test graph API endpoint
             response = await client.get("/api/v1/graph/entities")
             assert response.status_code == 200
             data = response.json()
             assert "entities" in data
             assert isinstance(data["entities"], list)
-    
+
     @pytest.mark.asyncio
     async def test_server_handles_multiple_requests(self, running_server):
         """Test that the server can handle multiple concurrent requests."""
@@ -44,9 +44,9 @@ class TestServerStartup:
             tasks = []
             for i in range(10):
                 tasks.append(client.get("/health"))
-            
+
             responses = await asyncio.gather(*tasks)
-            
+
             # All requests should succeed
             for response in responses:
                 assert response.status_code == 200

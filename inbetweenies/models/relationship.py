@@ -37,7 +37,7 @@ class RelationshipType(str, Enum):
 class EntityRelationship(Base, InbetweeniesTimestampMixin):
     """
     Represents edges in the knowledge graph connecting entities.
-    
+
     This model supports:
     - Typed relationships via RelationshipType enum
     - Versioned relationships (tracks entity versions)
@@ -45,24 +45,24 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     - User tracking for audit
     """
     __tablename__ = "entity_relationships"
-    
+
     id = Column(String(36), primary_key=True)
-    
+
     # Source entity (from)
     from_entity_id = Column(String(36), nullable=False)
     from_entity_version = Column(String(255), nullable=False)
-    
+
     # Target entity (to)
     to_entity_id = Column(String(36), nullable=False)
     to_entity_version = Column(String(255), nullable=False)
-    
+
     # Relationship metadata
     relationship_type = Column(SQLEnum(RelationshipType), nullable=False, index=True)
     properties = Column(JSON, default=dict)
-    
+
     # Tracking
     user_id = Column(String(36), nullable=True)  # No foreign key, just track the user ID
-    
+
     # Foreign key constraints
     __table_args__ = (
         ForeignKeyConstraint(
@@ -76,25 +76,25 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
             name="fk_to_entity"
         ),
     )
-    
+
     from_entity = relationship(
         "Entity",
         foreign_keys=[from_entity_id, from_entity_version],
         back_populates="outgoing_relationships"
     )
-    
+
     to_entity = relationship(
         "Entity",
         foreign_keys=[to_entity_id, to_entity_version],
         back_populates="incoming_relationships"
     )
-    
+
     def __repr__(self):
         return (f"<EntityRelationship(id={self.id}, "
                 f"type={self.relationship_type.value if self.relationship_type else None}, "
                 f"from={self.from_entity_id}, "
                 f"to={self.to_entity_id})>")
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert relationship to dictionary for API responses"""
         return {
@@ -109,20 +109,20 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }
-    
+
     def is_valid_for_entities(self, from_entity: "Entity", to_entity: "Entity") -> bool:
         """
         Validate if this relationship type is valid between the given entity types.
-        
+
         Args:
             from_entity: Source entity
             to_entity: Target entity
-            
+
         Returns:
             True if the relationship is valid, False otherwise
         """
         from .entity import EntityType
-        
+
         # Define valid combinations for each relationship type
         valid_combinations = {
             RelationshipType.LOCATED_IN: [
@@ -189,9 +189,9 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
                 (EntityType.HOME, EntityType.NOTE),    # Home photos
             ],
         }
-        
+
         # Get valid combinations for this relationship type
         valid_for_type = valid_combinations.get(self.relationship_type, [])
-        
+
         # Check if the entity type combination is valid
         return (from_entity.entity_type, to_entity.entity_type) in valid_for_type

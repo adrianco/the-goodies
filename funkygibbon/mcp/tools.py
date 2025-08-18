@@ -64,7 +64,7 @@ MCP_TOOLS: List[Dict[str, Any]] = [
                     "type": "array",
                     "items": {
                         "type": "string",
-                        "enum": ["home", "room", "device", "zone", "door", "window", 
+                        "enum": ["home", "room", "device", "zone", "door", "window",
                                 "procedure", "manual", "note", "schedule", "automation"]
                     },
                     "description": "Filter by entity types (optional)"
@@ -86,7 +86,7 @@ MCP_TOOLS: List[Dict[str, Any]] = [
             "properties": {
                 "entity_type": {
                     "type": "string",
-                    "enum": ["home", "room", "device", "zone", "door", "window", 
+                    "enum": ["home", "room", "device", "zone", "door", "window",
                             "procedure", "manual", "note", "schedule", "automation"],
                     "description": "Type of entity to create"
                 },
@@ -119,8 +119,8 @@ MCP_TOOLS: List[Dict[str, Any]] = [
                 },
                 "relationship_type": {
                     "type": "string",
-                    "enum": ["located_in", "controls", "connects_to", "part_of", 
-                            "manages", "documented_by", "procedure_for", "triggered_by", 
+                    "enum": ["located_in", "controls", "connects_to", "part_of",
+                            "manages", "documented_by", "procedure_for", "triggered_by",
                             "depends_on", "contained_in", "monitors", "automates"],
                     "description": "Type of relationship"
                 },

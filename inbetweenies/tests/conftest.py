@@ -32,7 +32,7 @@ def sample_entity():
 def sample_entities():
     """Create multiple sample entities."""
     base_time = datetime.now(timezone.utc)
-    
+
     return [
         Entity(
             id="home-1",
@@ -106,7 +106,7 @@ def sample_relationship():
 def sample_relationships():
     """Create multiple sample relationships."""
     base_time = datetime.now(timezone.utc)
-    
+
     return [
         EntityRelationship(
             id="rel-1",
@@ -151,7 +151,7 @@ def sample_relationships():
 def conflict_scenarios():
     """Create various conflict scenarios for testing."""
     base_time = datetime.now(timezone.utc)
-    
+
     # Same entity, different versions from different sources
     entity_v1 = Entity(
         id="conflict-entity",
@@ -165,7 +165,7 @@ def conflict_scenarios():
         created_at=base_time,
         updated_at=base_time
     )
-    
+
     entity_v2_client = Entity(
         id="conflict-entity",
         version="v2-client",
@@ -178,7 +178,7 @@ def conflict_scenarios():
         created_at=base_time,
         updated_at=base_time
     )
-    
+
     entity_v2_server = Entity(
         id="conflict-entity",
         version="v2-server",
@@ -191,7 +191,7 @@ def conflict_scenarios():
         created_at=base_time,
         updated_at=base_time
     )
-    
+
     return {
         "base": entity_v1,
         "client_update": entity_v2_client,
@@ -231,12 +231,12 @@ def mock_storage():
         def __init__(self):
             self.entities = {}
             self.relationships = {}
-            
+
         def store_entity(self, entity: Entity):
             if entity.id not in self.entities:
                 self.entities[entity.id] = []
             self.entities[entity.id].append(entity)
-            
+
         def get_entity(self, entity_id: str, version: str = None):
             if entity_id not in self.entities:
                 return None
@@ -247,22 +247,22 @@ def mock_storage():
                         return entity
                 return None
             return versions[-1] if versions else None
-            
+
         def get_all_entities(self):
             result = []
             for versions in self.entities.values():
                 if versions:
                     result.append(versions[-1])
             return result
-            
+
         def store_relationship(self, relationship: EntityRelationship):
             self.relationships[relationship.id] = relationship
-            
+
         def get_relationships_for_entity(self, entity_id: str):
             result = []
             for rel in self.relationships.values():
                 if rel.from_entity_id == entity_id or rel.to_entity_id == entity_id:
                     result.append(rel)
             return result
-    
+
     return MockStorage()

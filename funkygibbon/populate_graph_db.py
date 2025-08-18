@@ -32,13 +32,13 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./funkygibbon
 
 class GraphPopulator:
     """Populate graph database with realistic smart home data"""
-    
+
     def __init__(self, db_url: str = DATABASE_URL):
         self.db_url = db_url
         self.engine = create_async_engine(db_url, echo=False)
         self.session_maker = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
         self.entities = {}  # Store created entities by key for relationships
-        
+
     async def setup_database(self):
         """Create tables and clear existing data"""
         async with self.engine.begin() as conn:
@@ -53,8 +53,8 @@ class GraphPopulator:
             except:
                 pass  # Table might not exist yet
             print("✅ Database ready for population")
-    
-    async def create_entity(self, session: AsyncSession, entity_type: EntityType, 
+
+    async def create_entity(self, session: AsyncSession, entity_type: EntityType,
                           name: str, content: dict, key: str = None) -> Entity:
         """Create and store an entity"""
         entity = Entity(
@@ -68,15 +68,15 @@ class GraphPopulator:
             parent_versions=[]
         )
         session.add(entity)
-        
+
         if key:
             self.entities[key] = entity
-        
+
         return entity
-    
-    async def create_relationship(self, session: AsyncSession, 
+
+    async def create_relationship(self, session: AsyncSession,
                                 from_entity: Entity, to_entity: Entity,
-                                rel_type: RelationshipType, 
+                                rel_type: RelationshipType,
                                 properties: dict = None) -> EntityRelationship:
         """Create a relationship between entities"""
         relationship = EntityRelationship(
@@ -91,12 +91,12 @@ class GraphPopulator:
         )
         session.add(relationship)
         return relationship
-    
+
     async def populate(self):
         """Populate the database with comprehensive test data"""
         async with self.session_maker() as session:
             print("\n🏠 Creating Smart Home Graph...")
-            
+
             # Create main home
             home = await self.create_entity(
                 session, EntityType.HOME,
@@ -109,7 +109,7 @@ class GraphPopulator:
                 },
                 key="main_home"
             )
-            
+
             # Create zones
             print("\n🗺️  Creating zones...")
             ground_floor = await self.create_entity(
@@ -118,26 +118,26 @@ class GraphPopulator:
                 {"floor": 1, "description": "Main living areas"},
                 key="ground_floor"
             )
-            
+
             upper_floor = await self.create_entity(
                 session, EntityType.ZONE,
-                "Upper Floor", 
+                "Upper Floor",
                 {"floor": 2, "description": "Bedrooms and office"},
                 key="upper_floor"
             )
-            
+
             outdoor = await self.create_entity(
                 session, EntityType.ZONE,
                 "Outdoor Areas",
                 {"description": "Patio, garden, and garage"},
                 key="outdoor"
             )
-            
+
             # Create zone relationships
             await self.create_relationship(session, ground_floor, home, RelationshipType.PART_OF)
             await self.create_relationship(session, upper_floor, home, RelationshipType.PART_OF)
             await self.create_relationship(session, outdoor, home, RelationshipType.PART_OF)
-            
+
             # Create rooms
             print("\n🚪 Creating rooms...")
             living_room = await self.create_entity(
@@ -146,42 +146,42 @@ class GraphPopulator:
                 {"area": 350, "floor": 1, "features": ["fireplace", "bay_window"]},
                 key="living_room"
             )
-            
+
             kitchen = await self.create_entity(
                 session, EntityType.ROOM,
                 "Kitchen",
                 {"area": 250, "floor": 1, "features": ["island", "pantry"]},
                 key="kitchen"
             )
-            
+
             dining_room = await self.create_entity(
                 session, EntityType.ROOM,
                 "Dining Room",
                 {"area": 200, "floor": 1, "features": ["chandelier"]},
                 key="dining_room"
             )
-            
+
             master_bedroom = await self.create_entity(
                 session, EntityType.ROOM,
                 "Master Bedroom",
                 {"area": 300, "floor": 2, "features": ["walk_in_closet", "ensuite"]},
                 key="master_bedroom"
             )
-            
+
             office = await self.create_entity(
                 session, EntityType.ROOM,
                 "Home Office",
                 {"area": 150, "floor": 2, "features": ["built_in_shelves"]},
                 key="office"
             )
-            
+
             garage = await self.create_entity(
                 session, EntityType.ROOM,
                 "Garage",
                 {"area": 400, "capacity": 2, "features": ["ev_charger", "workbench"]},
                 key="garage"
             )
-            
+
             # Room relationships
             await self.create_relationship(session, living_room, ground_floor, RelationshipType.LOCATED_IN)
             await self.create_relationship(session, kitchen, ground_floor, RelationshipType.LOCATED_IN)
@@ -189,11 +189,11 @@ class GraphPopulator:
             await self.create_relationship(session, master_bedroom, upper_floor, RelationshipType.LOCATED_IN)
             await self.create_relationship(session, office, upper_floor, RelationshipType.LOCATED_IN)
             await self.create_relationship(session, garage, outdoor, RelationshipType.LOCATED_IN)
-            
+
             # Room to home relationships
             for room in [living_room, kitchen, dining_room, master_bedroom, office, garage]:
                 await self.create_relationship(session, room, home, RelationshipType.PART_OF)
-            
+
             # Create doors connecting rooms
             print("\n🚪 Creating doors and connections...")
             kitchen_dining_door = await self.create_entity(
@@ -202,15 +202,15 @@ class GraphPopulator:
                 {"type": "swinging", "material": "wood"},
                 key="kitchen_dining_door"
             )
-            
+
             await self.create_relationship(session, kitchen_dining_door, kitchen, RelationshipType.CONNECTS_TO)
             await self.create_relationship(session, kitchen_dining_door, dining_room, RelationshipType.CONNECTS_TO)
             await self.create_relationship(session, kitchen, dining_room, RelationshipType.CONNECTS_TO,
                                          {"via": "door", "accessibility": "wheelchair_accessible"})
-            
+
             # Create devices
             print("\n📱 Creating devices...")
-            
+
             # Living room devices
             tv = await self.create_entity(
                 session, EntityType.DEVICE,
@@ -225,7 +225,7 @@ class GraphPopulator:
                 },
                 key="tv"
             )
-            
+
             thermostat = await self.create_entity(
                 session, EntityType.DEVICE,
                 "Smart Thermostat",
@@ -239,7 +239,7 @@ class GraphPopulator:
                 },
                 key="thermostat"
             )
-            
+
             # Kitchen devices
             fridge = await self.create_entity(
                 session, EntityType.DEVICE,
@@ -254,7 +254,7 @@ class GraphPopulator:
                 },
                 key="fridge"
             )
-            
+
             oven = await self.create_entity(
                 session, EntityType.DEVICE,
                 "Smart Oven",
@@ -268,7 +268,7 @@ class GraphPopulator:
                 },
                 key="oven"
             )
-            
+
             # Lighting
             living_room_lights = await self.create_entity(
                 session, EntityType.DEVICE,
@@ -284,7 +284,7 @@ class GraphPopulator:
                 },
                 key="living_room_lights"
             )
-            
+
             # Security
             doorbell = await self.create_entity(
                 session, EntityType.DEVICE,
@@ -299,7 +299,7 @@ class GraphPopulator:
                 },
                 key="doorbell"
             )
-            
+
             # Mitsubishi thermostat for kitchen area
             mitsubishi_thermostat = await self.create_entity(
                 session, EntityType.DEVICE,
@@ -315,7 +315,7 @@ class GraphPopulator:
                 },
                 key="mitsubishi_thermostat"
             )
-            
+
             # Air handler blower unit
             pvfy_blower = await self.create_entity(
                 session, EntityType.DEVICE,
@@ -330,7 +330,7 @@ class GraphPopulator:
                 },
                 key="pvfy_blower"
             )
-            
+
             # Device location relationships
             await self.create_relationship(session, tv, living_room, RelationshipType.LOCATED_IN,
                                          {"position": "wall_mounted", "height": "eye_level"})
@@ -348,14 +348,14 @@ class GraphPopulator:
                                          {"position": "wall", "height": "5ft"})
             await self.create_relationship(session, pvfy_blower, garage, RelationshipType.LOCATED_IN,
                                          {"position": "closet"})
-            
+
             # Control relationship between thermostat and blower
             await self.create_relationship(session, mitsubishi_thermostat, pvfy_blower, RelationshipType.CONTROLS,
                                          {"control_type": "temperature_and_fan"})
-            
+
             # Create procedures
             print("\n📋 Creating procedures and manuals...")
-            
+
             tv_setup = await self.create_entity(
                 session, EntityType.PROCEDURE,
                 "TV Initial Setup",
@@ -374,7 +374,7 @@ class GraphPopulator:
                 },
                 key="tv_setup"
             )
-            
+
             thermostat_schedule = await self.create_entity(
                 session, EntityType.PROCEDURE,
                 "Configure Thermostat Schedule",
@@ -393,7 +393,7 @@ class GraphPopulator:
                 },
                 key="thermostat_schedule"
             )
-            
+
             # Create manuals
             tv_manual = await self.create_entity(
                 session, EntityType.MANUAL,
@@ -409,15 +409,15 @@ class GraphPopulator:
                 },
                 key="tv_manual"
             )
-            
+
             # Procedure relationships
             await self.create_relationship(session, tv_setup, tv, RelationshipType.PROCEDURE_FOR)
             await self.create_relationship(session, thermostat_schedule, thermostat, RelationshipType.PROCEDURE_FOR)
             await self.create_relationship(session, tv, tv_manual, RelationshipType.DOCUMENTED_BY)
-            
+
             # Create automations
             print("\n🤖 Creating automations...")
-            
+
             good_morning = await self.create_entity(
                 session, EntityType.AUTOMATION,
                 "Good Morning Routine",
@@ -436,7 +436,7 @@ class GraphPopulator:
                 },
                 key="good_morning"
             )
-            
+
             movie_time = await self.create_entity(
                 session, EntityType.AUTOMATION,
                 "Movie Time Scene",
@@ -451,16 +451,16 @@ class GraphPopulator:
                 },
                 key="movie_time"
             )
-            
+
             # Automation relationships
             await self.create_relationship(session, good_morning, thermostat, RelationshipType.AUTOMATES)
             await self.create_relationship(session, good_morning, living_room_lights, RelationshipType.AUTOMATES)
             await self.create_relationship(session, movie_time, tv, RelationshipType.CONTROLS)
             await self.create_relationship(session, movie_time, living_room_lights, RelationshipType.CONTROLS)
-            
+
             # Create schedules
             print("\n📅 Creating schedules...")
-            
+
             vacation_mode = await self.create_entity(
                 session, EntityType.SCHEDULE,
                 "Vacation Mode",
@@ -476,14 +476,14 @@ class GraphPopulator:
                 },
                 key="vacation_mode"
             )
-            
+
             # Schedule relationships
             await self.create_relationship(session, vacation_mode, thermostat, RelationshipType.MANAGES)
             await self.create_relationship(session, vacation_mode, doorbell, RelationshipType.MANAGES)
-            
+
             # Create notes
             print("\n📝 Creating notes...")
-            
+
             wifi_note = await self.create_entity(
                 session, EntityType.NOTE,
                 "WiFi Configuration",
@@ -495,7 +495,7 @@ class GraphPopulator:
                 },
                 key="wifi_note"
             )
-            
+
             maintenance_note = await self.create_entity(
                 session, EntityType.NOTE,
                 "HVAC Maintenance",
@@ -507,14 +507,14 @@ class GraphPopulator:
                 },
                 key="maintenance_note"
             )
-            
+
             # Note relationships
             await self.create_relationship(session, wifi_note, home, RelationshipType.DOCUMENTED_BY)
             await self.create_relationship(session, maintenance_note, thermostat, RelationshipType.DOCUMENTED_BY)
-            
+
             # Create APP entities
             print("\n📱 Creating app entities...")
-            
+
             homekit_app = await self.create_entity(
                 session, EntityType.APP,
                 "Apple HomeKit",
@@ -527,7 +527,7 @@ class GraphPopulator:
                 },
                 key="homekit_app"
             )
-            
+
             comfort_app = await self.create_entity(
                 session, EntityType.APP,
                 "Mitsubishi Comfort",
@@ -540,7 +540,7 @@ class GraphPopulator:
                 },
                 key="comfort_app"
             )
-            
+
             # Link devices to apps
             await self.create_relationship(session, thermostat, homekit_app, RelationshipType.CONTROLLED_BY_APP,
                                          {"integration": "native"})
@@ -548,10 +548,10 @@ class GraphPopulator:
                                          {"integration": "hue_bridge"})
             await self.create_relationship(session, mitsubishi_thermostat, comfort_app, RelationshipType.CONTROLLED_BY_APP,
                                          {"integration": "wifi_adapter", "features": ["remote_control", "scheduling", "energy_monitoring"]})
-            
+
             # Create user-generated content notes
             print("\n📝 Creating user-generated content notes...")
-            
+
             mitsubishi_user_note = await self.create_entity(
                 session, EntityType.NOTE,
                 "Mitsubishi System User Notes",
@@ -563,7 +563,7 @@ class GraphPopulator:
                 },
                 key="mitsubishi_user_note"
             )
-            
+
             # Create manual entities for PDFs
             mitsubishi_manual = await self.create_entity(
                 session, EntityType.MANUAL,
@@ -579,17 +579,17 @@ class GraphPopulator:
                 },
                 key="mitsubishi_manual"
             )
-            
+
             # Link manual to devices
             await self.create_relationship(session, mitsubishi_thermostat, mitsubishi_manual, RelationshipType.DOCUMENTED_BY,
                                          {"document_type": "user_manual"})
-            
+
             # Link user note to devices
             await self.create_relationship(session, mitsubishi_user_note, mitsubishi_thermostat, RelationshipType.DOCUMENTED_BY,
                                          {"note_type": "user_provided"})
             await self.create_relationship(session, mitsubishi_user_note, pvfy_blower, RelationshipType.DOCUMENTED_BY,
                                          {"note_type": "user_provided"})
-            
+
             # Create photo documentation notes
             thermostat_photo_note = await self.create_entity(
                 session, EntityType.NOTE,
@@ -603,7 +603,7 @@ class GraphPopulator:
                 },
                 key="thermostat_photo_note"
             )
-            
+
             blower_photo_note = await self.create_entity(
                 session, EntityType.NOTE,
                 "Air Handler Photo Documentation",
@@ -616,16 +616,16 @@ class GraphPopulator:
                 },
                 key="blower_photo_note"
             )
-            
+
             # Link photo documentation to devices
             await self.create_relationship(session, thermostat_photo_note, mitsubishi_thermostat, RelationshipType.HAS_BLOB,
                                          {"blob_type": "photo"})
             await self.create_relationship(session, blower_photo_note, pvfy_blower, RelationshipType.HAS_BLOB,
                                          {"blob_type": "photo"})
-            
+
             # Commit all changes
             await session.commit()
-            
+
             # Print summary
             print("\n✅ Graph population complete!")
             print("\n📊 Created:")
@@ -641,7 +641,7 @@ class GraphPopulator:
             print(f"  • 6 Notes (including UGC notes and photo documentation)")
             print(f"  • 2 Apps (HomeKit & Mitsubishi Comfort)")
             print(f"  • ~45+ Relationships")
-            
+
             return True
 
 
@@ -649,22 +649,22 @@ async def main():
     """Main entry point"""
     print("🏠 Populating FunkyGibbon MCP Graph Database...")
     print("=" * 50)
-    
+
     populator = GraphPopulator()
-    
+
     try:
         await populator.setup_database()
         await populator.populate()
         print("\n🎉 Database population successful!")
         print(f"\n📁 Database location: {DATABASE_URL}")
         print("\n🧪 Test with: oook stats")
-        
+
     except Exception as e:
         print(f"\n❌ Error populating database: {e}")
         import traceback
         traceback.print_exc()
         return False
-    
+
     return True
 
 

@@ -8,7 +8,7 @@ from blowingoff.models import Entity, EntityType, SourceType, EntityRelationship
 
 class TestModels:
     """Test model functionality."""
-    
+
     def test_entity_creation(self):
         """Test creating an entity."""
         entity = Entity(
@@ -19,12 +19,12 @@ class TestModels:
             source_type=SourceType.MANUAL,
             user_id="user-1"
         )
-        
+
         assert entity.id == "entity-1"
         assert entity.name == "Test Home"
         assert entity.entity_type == EntityType.HOME
         assert entity.content["is_primary"] == True
-        
+
     def test_room_entity_creation(self):
         """Test creating a room entity."""
         room = Entity(
@@ -35,11 +35,11 @@ class TestModels:
             source_type=SourceType.MANUAL,
             user_id="user-1"
         )
-        
+
         assert room.id == "room-1"
         assert room.entity_type == EntityType.ROOM
         assert room.name == "Living Room"
-        
+
     def test_sync_metadata(self):
         """Test sync metadata."""
         metadata = SyncMetadata(
@@ -47,13 +47,13 @@ class TestModels:
             last_sync_time=datetime.now(UTC),
             server_url="http://localhost:8000"
         )
-        
+
         assert metadata.client_id == "client-1"
         assert metadata.last_sync_time is not None
         assert metadata.server_url == "http://localhost:8000"
         assert metadata.sync_failures == 0
         assert metadata.total_syncs == 0
-        
+
     def test_to_dict(self):
         """Test converting entity to dictionary."""
         entity = Entity(
@@ -65,9 +65,9 @@ class TestModels:
             user_id="user-1",
             version="v1"
         )
-        
+
         entity_dict = entity.to_dict()
-        
+
         assert entity_dict["id"] == "entity-1"
         assert entity_dict["name"] == "Test Home"
         assert entity_dict["entity_type"] == "home"

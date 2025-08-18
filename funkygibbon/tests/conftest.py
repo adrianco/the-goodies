@@ -110,7 +110,7 @@ def home_graph_data():
         "version_timestamp": datetime.now(timezone.utc),
         "last_modified_by": "user-1"
     }
-    
+
     rooms = [
         {
             "id": f"room-{i}",
@@ -121,7 +121,7 @@ def home_graph_data():
         }
         for i, room_name in enumerate(["Living Room", "Kitchen", "Bedroom"])
     ]
-    
+
     devices = []
     device_configs = [
         ("Smart Light", "room-0", "light"),
@@ -129,7 +129,7 @@ def home_graph_data():
         ("Smart Fridge", "room-1", "appliance"),
         ("Smart TV", "room-2", "entertainment")
     ]
-    
+
     for i, (name, room_id, device_type) in enumerate(device_configs):
         devices.append({
             "id": f"device-{i}",
@@ -143,9 +143,9 @@ def home_graph_data():
             "version_timestamp": datetime.now(timezone.utc),
             "last_modified_by": "user-1"
         })
-    
+
     relationships = []
-    
+
     # Connect rooms to home
     for room in rooms:
         relationships.append({
@@ -155,7 +155,7 @@ def home_graph_data():
             "type": "located_in",
             "created_at": datetime.now(timezone.utc)
         })
-    
+
     # Connect devices to rooms
     for device in devices:
         room_id = device["content"]["room_id"]
@@ -166,7 +166,7 @@ def home_graph_data():
             "type": "located_in",
             "created_at": datetime.now(timezone.utc)
         })
-    
+
     return {
         "home": home,
         "rooms": rooms,
@@ -181,14 +181,14 @@ def performance_db(tmp_path):
     """SQLite database optimized for performance testing"""
     db_path = tmp_path / "performance.db"
     conn = sqlite3.connect(str(db_path))
-    
+
     # Performance optimizations
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=10000")
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA mmap_size=30000000000")
-    
+
     yield conn
     conn.close()
 
@@ -197,7 +197,7 @@ def performance_db(tmp_path):
 def large_dataset():
     """Generate 300 entities for performance testing"""
     entities = []
-    
+
     # Distribution: 1 home, 10 rooms, 289 devices
     # Home
     entities.append({
@@ -207,11 +207,11 @@ def large_dataset():
         "version_timestamp": datetime.now(timezone.utc),
         "last_modified_by": "perf-user"
     })
-    
+
     # Rooms
     room_names = ["Living Room", "Kitchen", "Bedroom", "Bathroom", "Office",
                   "Garage", "Basement", "Attic", "Garden", "Hallway"]
-    
+
     for i, name in enumerate(room_names):
         entities.append({
             "id": f"room-{i}",
@@ -220,11 +220,11 @@ def large_dataset():
             "version_timestamp": datetime.now(timezone.utc) - timedelta(seconds=i),
             "last_modified_by": "perf-user"
         })
-    
+
     # Devices (289 to reach 300 total)
-    device_types = ["light", "switch", "sensor", "camera", "thermostat", 
+    device_types = ["light", "switch", "sensor", "camera", "thermostat",
                     "lock", "outlet", "appliance"]
-    
+
     for i in range(289):
         room_idx = i % 10  # Distribute across rooms
         entities.append({
@@ -241,7 +241,7 @@ def large_dataset():
             "version_timestamp": datetime.now(timezone.utc) - timedelta(seconds=i*10),
             "last_modified_by": f"user-{i % 5}"
         })
-    
+
     return entities
 
 
@@ -250,7 +250,7 @@ def conflict_scenarios():
     """Generate entities with conflicting updates for testing"""
     base_time = datetime.now(timezone.utc)
     entity_id = "conflict-entity-1"
-    
+
     return [
         {
             "scenario": "simple_conflict",
@@ -331,11 +331,11 @@ class TestTimer:
         self.name = name
         self.start_time = None
         self.duration = None
-    
+
     def __enter__(self):
         self.start_time = datetime.now(timezone.utc)
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.duration = (datetime.now(timezone.utc) - self.start_time).total_seconds()
         print(f"\n{self.name} took {self.duration:.3f}s")

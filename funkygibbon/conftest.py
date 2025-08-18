@@ -44,12 +44,12 @@ def event_loop():
 async def async_engine():
     """Create async engine for tests."""
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-    
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     yield engine
-    
+
     await engine.dispose()
 
 
@@ -57,11 +57,11 @@ async def async_engine():
 async def async_session(async_engine):
     """Create async database session for tests."""
     async_session_maker = async_sessionmaker(
-        async_engine, 
-        class_=AsyncSession, 
+        async_engine,
+        class_=AsyncSession,
         expire_on_commit=False
     )
-    
+
     async with async_session_maker() as session:
         yield session
         await session.rollback()
@@ -71,7 +71,7 @@ async def async_session(async_engine):
 async def test_home_entity(async_session):
     """Create a test home entity."""
     import uuid
-    
+
     home = Entity(
         id=str(uuid.uuid4()),
         version=Entity.create_version("test-user"),
@@ -90,7 +90,7 @@ async def test_home_entity(async_session):
 async def test_room_entity(async_session, test_home_entity):
     """Create a test room entity."""
     import uuid
-    
+
     room = Entity(
         id=str(uuid.uuid4()),
         version=Entity.create_version("test-user"),
@@ -101,7 +101,7 @@ async def test_room_entity(async_session, test_home_entity):
         user_id="test-user"
     )
     async_session.add(room)
-    
+
     # Create relationship to home
     rel = EntityRelationship(
         id=str(uuid.uuid4()),
@@ -113,7 +113,7 @@ async def test_room_entity(async_session, test_home_entity):
         user_id="test-user"
     )
     async_session.add(rel)
-    
+
     await async_session.commit()
     return room
 
@@ -122,7 +122,7 @@ async def test_room_entity(async_session, test_home_entity):
 async def test_device_entity(async_session, test_home_entity, test_room_entity):
     """Create a test device entity."""
     import uuid
-    
+
     device = Entity(
         id=str(uuid.uuid4()),
         version=Entity.create_version("test-user"),
@@ -141,7 +141,7 @@ async def test_device_entity(async_session, test_home_entity, test_room_entity):
         user_id="test-user"
     )
     async_session.add(device)
-    
+
     # Create relationship to room
     rel = EntityRelationship(
         id=str(uuid.uuid4()),
@@ -153,6 +153,6 @@ async def test_device_entity(async_session, test_home_entity, test_room_entity):
         user_id="test-user"
     )
     async_session.add(rel)
-    
+
     await async_session.commit()
     return device

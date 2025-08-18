@@ -18,24 +18,24 @@ logger = logging.getLogger(__name__)
 
 class FunkyGibbonMCPServer:
     """MCP server exposing graph operations"""
-    
+
     def __init__(self, graph_index: GraphIndex, graph_ops: SQLGraphOperations):
         self.graph = graph_index
         self.graph_ops = graph_ops
         self.tools = {tool["name"]: tool for tool in MCP_TOOLS}
-    
+
     def get_available_tools(self) -> List[Dict[str, Any]]:
         """Get list of available MCP tools"""
         return MCP_TOOLS
-    
+
     async def handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Route tool calls to appropriate handlers.
-        
+
         Args:
             tool_name: Name of the tool to execute
             arguments: Tool arguments
-            
+
         Returns:
             Tool execution result
         """
@@ -44,20 +44,20 @@ class FunkyGibbonMCPServer:
                 "error": f"Unknown tool: {tool_name}",
                 "available_tools": list(self.tools.keys())
             }
-        
+
         try:
             # Route to specific handler
             handler = getattr(self, f"_handle_{tool_name}", None)
             if not handler:
                 return {"error": f"Handler not implemented for tool: {tool_name}"}
-            
+
             result = await handler(**arguments)
             return {"success": True, "result": result}
-            
+
         except Exception as e:
             logger.error(f"Error executing tool {tool_name}: {str(e)}")
             return {"error": str(e)}
-    
+
     async def _handle_get_devices_in_room(self, room_id: str) -> Dict[str, Any]:
         """Get all devices in a specific room"""
         result = await self.graph_ops.get_devices_in_room(room_id)
@@ -65,7 +65,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_find_device_controls(self, device_id: str) -> Dict[str, Any]:
         """Get controls for a device"""
         result = await self.graph_ops.find_device_controls(device_id)
@@ -73,7 +73,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_get_room_connections(self, room_id: str) -> Dict[str, Any]:
         """Find connections between rooms"""
         result = await self.graph_ops.get_room_connections(room_id)
@@ -81,7 +81,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_search_entities(
         self,
         query: str,
@@ -94,7 +94,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_create_entity(
         self,
         entity_type: str,
@@ -116,7 +116,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_create_relationship(
         self,
         from_entity_id: str,
@@ -145,7 +145,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_find_path(
         self,
         from_entity_id: str,
@@ -158,7 +158,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_get_entity_details(
         self,
         entity_id: str,
@@ -182,7 +182,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_find_similar_entities(
         self,
         entity_id: str,
@@ -195,7 +195,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_get_procedures_for_device(self, device_id: str) -> Dict[str, Any]:
         """Get procedures and manuals for a device"""
         result = await self.graph_ops.get_procedures_for_device_tool(device_id)
@@ -203,7 +203,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_get_automations_in_room(self, room_id: str) -> Dict[str, Any]:
         """Get automations affecting a room"""
         result = await self.graph_ops.get_automations_in_room_tool(room_id)
@@ -211,7 +211,7 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
-    
+
     async def _handle_update_entity(
         self,
         entity_id: str,

@@ -44,21 +44,21 @@ async def funkygibbon_server():
     """Start FunkyGibbon server for testing."""
     import tempfile
     import os
-    
+
     # Create a temporary database for testing
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         test_db_path = f.name
-    
+
     print(f"DEBUG: Test database path: {test_db_path}")
-    
+
     # Start the server process using the module approach
     env = os.environ.copy()
     parent_path = funkygibbon_path.parent
     env["PYTHONPATH"] = f"{parent_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
     env["DATABASE_URL"] = f"sqlite+aiosqlite:///{test_db_path}"
-    
+
     print(f"DEBUG: Setting DATABASE_URL={env['DATABASE_URL']}")
-    
+
     process = subprocess.Popen(
         [sys.executable, "-m", "funkygibbon"],
         cwd=str(parent_path),  # Run from parent directory
@@ -67,7 +67,7 @@ async def funkygibbon_server():
         text=True,
         env=env
     )
-    
+
     # Wait for server to start - fail fast
     max_retries = 10  # 5 seconds max
     for i in range(max_retries):
@@ -86,7 +86,7 @@ async def funkygibbon_server():
                 process.terminate()
                 pytest.fail("FunkyGibbon server failed to start in 5 seconds")
             await asyncio.sleep(0.5)
-    
+
     # Run populate_graph_db.py to add test data
     populate_result = subprocess.run(
         [sys.executable, str(funkygibbon_path / "populate_graph_db.py")],
@@ -99,9 +99,9 @@ async def funkygibbon_server():
         print("✅ Test database populated")
     else:
         print(f"⚠️ Failed to populate database: {populate_result.stderr}")
-    
+
     yield "http://localhost:8000"
-    
+
     # Stop the server and capture output
     process.terminate()
     try:
@@ -117,7 +117,7 @@ async def funkygibbon_server():
         process.kill()
         process.wait()
     print("\n✅ FunkyGibbon server stopped")
-    
+
     # Cleanup test database
     try:
         os.unlink(test_db_path)

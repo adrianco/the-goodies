@@ -89,7 +89,7 @@ async def sample_automation(graph_ops):
 
 class TestLocalGraphOperations:
     """Test LocalGraphOperations functionality."""
-    
+
     @pytest.mark.asyncio
     async def test_store_and_get_entity(self, graph_ops):
         """Test storing and retrieving entities."""
@@ -103,16 +103,16 @@ class TestLocalGraphOperations:
             updated_at=datetime.now(UTC),
             user_id="test-user",
         )
-        
+
         # Store entity
         stored = await graph_ops.store_entity(entity)
         assert stored.id == entity.id
-        
+
         # Get entity
         retrieved = await graph_ops.get_entity(entity.id)
         assert retrieved is not None
         assert retrieved.name == entity.name
-    
+
     @pytest.mark.asyncio
     async def test_search_entities(self, graph_ops, sample_device, sample_room):
         """Test searching entities."""
@@ -121,12 +121,12 @@ class TestLocalGraphOperations:
         assert len(results) == 1
         assert results[0].entity.id == sample_device.id
         assert results[0].score > 0
-        
+
         # Search with type filter
         results = await graph_ops.search_entities("Room", entity_types=[EntityType.ROOM])
         assert len(results) == 1
         assert results[0].entity.id == sample_room.id
-    
+
     @pytest.mark.asyncio
     async def test_find_path(self, graph_ops, sample_device, sample_room):
         """Test finding path between entities."""
@@ -143,7 +143,7 @@ class TestLocalGraphOperations:
             user_id="test-user"
         )
         await graph_ops.store_relationship(rel)
-        
+
         # Find path
         path = await graph_ops.find_path(sample_device.id, sample_room.id)
         assert len(path) == 2
@@ -153,7 +153,7 @@ class TestLocalGraphOperations:
 
 class TestMCPTools:
     """Test MCP tool implementations."""
-    
+
     @pytest.mark.asyncio
     async def test_get_devices_in_room(self, graph_ops, sample_device, sample_room):
         """Test getting devices in a room."""
@@ -170,14 +170,14 @@ class TestMCPTools:
             user_id="test-user"
         )
         await graph_ops.store_relationship(rel)
-        
+
         # Get devices in room
         result = await graph_ops.get_devices_in_room(sample_room.id)
         assert result.success
         assert result.result['count'] == 1
         assert len(result.result['devices']) == 1
         assert result.result['devices'][0]['id'] == sample_device.id
-    
+
     @pytest.mark.asyncio
     async def test_find_device_controls(self, graph_ops, sample_device):
         """Test getting device controls."""
@@ -187,7 +187,7 @@ class TestMCPTools:
         assert result.result['device_name'] == sample_device.name
         assert "on_off" in result.result['capabilities']
         assert "brightness" in result.result['capabilities']
-    
+
     @pytest.mark.asyncio
     async def test_search_entities_tool(self, graph_ops, sample_device, sample_room):
         """Test search entities MCP tool."""
@@ -196,7 +196,7 @@ class TestMCPTools:
         assert result.result['count'] == 1
         assert result.result['query'] == "Smart"
         assert result.result['results'][0]['entity']['id'] == sample_device.id
-    
+
     @pytest.mark.asyncio
     async def test_create_entity_tool(self, graph_ops):
         """Test creating entity via MCP tool."""
@@ -208,13 +208,13 @@ class TestMCPTools:
         )
         assert result.success
         assert result.result['entity']['name'] == "New Device"
-        
+
         # Verify entity was created
         entity_id = result.result['entity']['id']
         retrieved = await graph_ops.get_entity(entity_id)
         assert retrieved is not None
         assert retrieved.name == "New Device"
-    
+
     @pytest.mark.asyncio
     async def test_create_relationship_tool(self, graph_ops, sample_device, sample_room):
         """Test creating relationship via MCP tool."""
@@ -228,12 +228,12 @@ class TestMCPTools:
         assert result.success
         assert result.result['relationship']['from_entity_id'] == sample_device.id
         assert result.result['relationship']['to_entity_id'] == sample_room.id
-        
+
         # Verify relationship was created
         rels = await graph_ops.get_relationships(from_id=sample_device.id)
         assert len(rels) == 1
         assert rels[0].to_entity_id == sample_room.id
-    
+
     @pytest.mark.asyncio
     async def test_find_path_tool(self, graph_ops, sample_device, sample_room):
         """Test finding path via MCP tool."""
@@ -250,14 +250,14 @@ class TestMCPTools:
             user_id="test-user"
         )
         await graph_ops.store_relationship(rel)
-        
+
         # Find path
         result = await graph_ops.find_path_tool(sample_device.id, sample_room.id)
         assert result.success
         assert result.result['found']
         assert result.result['length'] == 1
         assert len(result.result['path']) == 2
-    
+
     @pytest.mark.asyncio
     async def test_get_entity_details_tool(self, graph_ops, sample_device):
         """Test getting entity details via MCP tool."""
@@ -267,7 +267,7 @@ class TestMCPTools:
         assert result.result['entity']['name'] == sample_device.name
         assert 'outgoing_relationships' in result.result
         assert 'incoming_relationships' in result.result
-    
+
     @pytest.mark.asyncio
     async def test_update_entity_tool(self, graph_ops, sample_device):
         """Test updating entity via MCP tool."""
@@ -279,12 +279,12 @@ class TestMCPTools:
         assert result.success
         assert result.result['entity']['name'] == "Updated Light"
         assert result.result['previous_version'] == sample_device.version
-        
+
         # Verify new version was created
         updated = await graph_ops.get_entity(sample_device.id)
         assert updated.name == "Updated Light"
         assert updated.version != sample_device.version
-    
+
     @pytest.mark.asyncio
     async def test_get_automations_in_room_tool(self, graph_ops, sample_room, sample_automation):
         """Test getting automations in room via MCP tool."""
@@ -301,13 +301,13 @@ class TestMCPTools:
             user_id="test-user"
         )
         await graph_ops.store_relationship(rel)
-        
+
         # Get automations
         result = await graph_ops.get_automations_in_room_tool(sample_room.id)
         assert result.success
         assert result.result['count'] == 1
         assert result.result['automations'][0]['id'] == sample_automation.id
-    
+
     @pytest.mark.asyncio
     async def test_find_similar_entities_tool(self, graph_ops, sample_device):
         """Test finding similar entities via MCP tool."""
@@ -323,7 +323,7 @@ class TestMCPTools:
             user_id="test-user",
         )
         await graph_ops.store_entity(similar_device)
-        
+
         # Find similar
         result = await graph_ops.find_similar_entities_tool(sample_device.id, limit=5)
         assert result.success
@@ -336,7 +336,7 @@ class TestMCPTools:
 
 class TestSearchResult:
     """Test SearchResult functionality."""
-    
+
     def test_search_result_to_dict(self):
         """Test converting SearchResult to dict."""
         entity = Entity(
@@ -349,10 +349,10 @@ class TestSearchResult:
             updated_at=datetime.now(UTC),
             user_id="test-user",
         )
-        
+
         result = SearchResult(entity=entity, score=1.5)
         result_dict = result.to_dict()
-        
+
         assert 'entity' in result_dict
         assert 'score' in result_dict
         assert result_dict['score'] == 1.5

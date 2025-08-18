@@ -41,7 +41,7 @@ async def sync_engine():
     """Create a SyncEngine instance."""
     # Create a mock session
     mock_session = AsyncMock()
-    
+
     engine = SyncEngine(
         session=mock_session,
         base_url="http://localhost:8000",
@@ -53,7 +53,7 @@ async def sync_engine():
 
 class TestInbetweeniesProtocol:
     """Test the synchronization protocol."""
-    
+
     @pytest.mark.asyncio
     async def test_sync_push(self, sync_protocol):
         """Test pushing changes to server."""
@@ -70,13 +70,13 @@ class TestInbetweeniesProtocol:
                 sync_id=str(uuid.uuid4())
             )
         ]
-        
+
         with patch('httpx.AsyncClient') as mock_client_class:
             # Create mock client instance
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
             mock_client_class.return_value.__aexit__.return_value = None
-            
+
             # Create mock response
             mock_response = Mock()
             mock_response.status_code = 200
@@ -86,14 +86,14 @@ class TestInbetweeniesProtocol:
                 "rejected": 0
             })
             mock_response.raise_for_status = Mock()
-            
+
             # Set the post method to return the response
             mock_client.post = AsyncMock(return_value=mock_response)
-            
+
             result = await sync_protocol.sync_push(changes)
             assert result["success"] is True
             assert result["accepted"] == 1
-    
+
     @pytest.mark.asyncio
     async def test_sync_ack(self, sync_protocol):
         """Test acknowledging sync with server."""
@@ -101,7 +101,7 @@ class TestInbetweeniesProtocol:
         result = await sync_protocol.sync_ack()
         assert result["success"] is True
         assert "message" in result
-    
+
     def test_parse_sync_delta(self, sync_protocol):
         """Test parsing sync delta response."""
         entity_id = str(uuid.uuid4())
@@ -125,12 +125,12 @@ class TestInbetweeniesProtocol:
             ],
             "conflicts": []
         }
-        
+
         changes, conflicts = sync_protocol.parse_sync_delta(response)
         assert len(changes) == 1
         assert len(conflicts) == 0
         assert changes[0].entity_id == entity_id
-    
+
     def test_parse_sync_result(self, sync_protocol):
         """Test parsing sync result."""
         id1, id2 = str(uuid.uuid4()), str(uuid.uuid4())
@@ -151,7 +151,7 @@ class TestInbetweeniesProtocol:
             ],
             "conflicts": []
         }
-        
+
         accepted_ids, conflicts = sync_protocol.parse_sync_result(response)
         assert len(accepted_ids) == 2
         assert id1 in accepted_ids
@@ -161,7 +161,7 @@ class TestInbetweeniesProtocol:
 
 class TestConflictResolver:
     """Test conflict resolution functionality."""
-    
+
     def test_resolve_last_write_wins(self, conflict_resolver):
         """Test last-write-wins conflict resolution."""
         local_data = {
@@ -172,11 +172,11 @@ class TestConflictResolver:
             "name": "Remote Name",
             "updated_at": "2024-01-01T13:00:00Z"
         }
-        
+
         winning_data, reason = conflict_resolver.resolve_conflict(local_data, remote_data)
         assert winning_data == remote_data
         assert reason == "newer_remote"
-    
+
     def test_resolve_client_wins(self, conflict_resolver):
         """Test client-wins conflict resolution (newer local)."""
         local_data = {
@@ -187,11 +187,11 @@ class TestConflictResolver:
             "name": "Remote Name",
             "updated_at": "2024-01-01T13:00:00Z"
         }
-        
+
         winning_data, reason = conflict_resolver.resolve_conflict(local_data, remote_data)
         assert winning_data == local_data
         assert reason == "newer_local"
-    
+
     def test_resolve_server_wins(self, conflict_resolver):
         """Test server-wins conflict resolution."""
         local_data = {
@@ -202,11 +202,11 @@ class TestConflictResolver:
             "name": "Remote Name",
             "updated_at": "2024-01-01T13:00:00Z"  # Newer
         }
-        
+
         winning_data, reason = conflict_resolver.resolve_conflict(local_data, remote_data)
         assert winning_data == remote_data
         assert reason == "newer_remote"
-    
+
     def test_resolve_deletion_conflict(self, conflict_resolver):
         """Test deletion conflict resolution."""
         local_data = {
@@ -219,7 +219,7 @@ class TestConflictResolver:
             "updated_at": "2024-01-01T13:00:00Z",
             "deleted": False
         }
-        
+
         winning_data, reason = conflict_resolver.resolve_conflict(local_data, remote_data)
         assert winning_data == local_data
         assert reason == "local_deleted"
@@ -227,7 +227,7 @@ class TestConflictResolver:
 
 class TestSyncEngine:
     """Test the synchronization engine."""
-    
+
     @pytest.mark.asyncio
     async def test_sync_basic(self, sync_engine):
         """Test basic synchronization."""
@@ -240,17 +240,17 @@ class TestSyncEngine:
         mock_graph_ops.get_entity = AsyncMock(return_value=None)
         mock_graph_ops.search_entities = AsyncMock(return_value=[])
         sync_engine.set_graph_operations(mock_graph_ops)
-        
+
         # Mock metadata repository to return None (no previous sync)
         sync_engine.metadata_repo.get_metadata = AsyncMock(return_value=None)
         sync_engine.metadata_repo.update_sync_time = AsyncMock()
         sync_engine.metadata_repo.create_metadata = AsyncMock()
-        
+
         # Mock the http client
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
-            
+
             # Mock response for sync with proper structure
             mock_response = Mock()
             mock_response.status_code = 200
@@ -267,22 +267,22 @@ class TestSyncEngine:
             mock_response.raise_for_status = Mock()
             mock_client.post = AsyncMock(return_value=mock_response)
             mock_client.get = AsyncMock(return_value=mock_response)
-            
+
             # Mock session methods with proper return values
             sync_engine.session.execute = AsyncMock()
             sync_engine.session.commit = AsyncMock()
             sync_engine.session.rollback = AsyncMock()
-            
+
             # Create a mock result that returns empty list properly
             mock_scalars = Mock()
             mock_scalars.all = Mock(return_value=[])
             mock_result = Mock()
             mock_result.scalars = Mock(return_value=mock_scalars)
             sync_engine.session.execute.return_value = mock_result
-            
+
             result = await sync_engine.sync()
             assert result.success is True
-    
+
     @pytest.mark.asyncio
     async def test_sync_with_conflicts(self, sync_engine):
         """Test synchronization with conflicts."""
@@ -294,13 +294,13 @@ class TestSyncEngine:
         mock_graph_ops.get_entity = AsyncMock(return_value=None)
         mock_graph_ops.search_entities = AsyncMock(return_value=[])
         sync_engine.set_graph_operations(mock_graph_ops)
-        
+
         entity_id = str(uuid.uuid4())
-        
+
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
-            
+
             # Mock response with conflicts
             mock_response = Mock()
             mock_response.status_code = 200
@@ -325,7 +325,7 @@ class TestSyncEngine:
             })
             mock_response.raise_for_status = Mock()
             mock_client.post = AsyncMock(return_value=mock_response)
-            
+
             # Mock session
             sync_engine.session.execute = AsyncMock()
             sync_engine.session.commit = AsyncMock()
@@ -333,11 +333,11 @@ class TestSyncEngine:
             mock_result = Mock()
             mock_result.scalars = Mock(return_value=Mock(all=Mock(return_value=[])))
             sync_engine.session.execute.return_value = mock_result
-            
+
             result = await sync_engine.sync()
             # The test passes if it doesn't raise an exception
             assert result is not None
-    
+
     @pytest.mark.asyncio
     async def test_sync_delta(self, sync_engine):
         """Test delta synchronization."""
@@ -349,19 +349,19 @@ class TestSyncEngine:
         mock_graph_ops.get_entity = AsyncMock(return_value=None)
         mock_graph_ops.search_entities = AsyncMock(return_value=[])
         sync_engine.set_graph_operations(mock_graph_ops)
-        
+
         # Mock metadata repository
         sync_engine.metadata_repo.get_metadata = AsyncMock(return_value=None)
         sync_engine.metadata_repo.update_sync_time = AsyncMock()
         sync_engine.metadata_repo.create_metadata = AsyncMock()
-        
+
         # Set last sync time
         sync_engine.last_sync = datetime.now(UTC) - timedelta(minutes=5)
-        
+
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
-            
+
             # Mock delta sync response
             mock_response = Mock()
             mock_response.status_code = 200
@@ -377,22 +377,22 @@ class TestSyncEngine:
             })
             mock_response.raise_for_status = Mock()
             mock_client.post = AsyncMock(return_value=mock_response)
-            
+
             # Mock session with proper return values
             sync_engine.session.execute = AsyncMock()
             sync_engine.session.commit = AsyncMock()
             sync_engine.session.rollback = AsyncMock()
-            
+
             # Create a mock result that returns empty list properly
             mock_scalars = Mock()
             mock_scalars.all = Mock(return_value=[])
             mock_result = Mock()
             mock_result.scalars = Mock(return_value=mock_scalars)
             sync_engine.session.execute.return_value = mock_result
-            
+
             result = await sync_engine.sync()
             assert result.success is True
-    
+
     @pytest.mark.asyncio
     async def test_sync_error_handling(self, sync_engine):
         """Test error handling during sync."""
@@ -400,32 +400,32 @@ class TestSyncEngine:
         mock_graph_ops = Mock()
         mock_graph_ops.get_entities_by_type = AsyncMock(return_value=[])
         sync_engine.set_graph_operations(mock_graph_ops)
-        
+
         # Mock metadata repository
         sync_engine.metadata_repo.get_metadata = AsyncMock(return_value=None)
         sync_engine.metadata_repo.update_sync_time = AsyncMock()
         sync_engine.metadata_repo.create_metadata = AsyncMock()
-        
+
         with patch('httpx.AsyncClient') as mock_client_class:
             # Make the context manager raise an error
             mock_client_class.side_effect = httpx.ConnectError("Connection failed")
-            
+
             # Mock session with proper return values
             sync_engine.session.execute = AsyncMock()
             sync_engine.session.rollback = AsyncMock()
-            
+
             # Create a mock result that returns empty list properly
             mock_scalars = Mock()
             mock_scalars.all = Mock(return_value=[])
             mock_result = Mock()
             mock_result.scalars = Mock(return_value=mock_scalars)
             sync_engine.session.execute.return_value = mock_result
-            
+
             result = await sync_engine.sync()
             assert result.success is False
             assert len(result.errors) > 0
             assert "Connection failed" in str(result.errors[0])
-    
+
     @pytest.mark.asyncio
     async def test_get_local_changes(self, sync_engine):
         """Test getting local changes for sync."""
@@ -442,15 +442,15 @@ class TestSyncEngine:
             "version": mock_entity.version,
             "updated_at": mock_entity.updated_at.isoformat()
         })
-        
+
         # Mock session execute to return the entity
         mock_result = Mock()
         mock_result.scalars = Mock(return_value=Mock(all=Mock(return_value=[mock_entity])))
         sync_engine.session.execute = AsyncMock(return_value=mock_result)
-        
+
         changes = await sync_engine._get_local_changes(datetime.now(UTC) - timedelta(hours=1))
         assert len(changes) >= 0  # May be 0 if no changes detected
-    
+
     @pytest.mark.asyncio
     async def test_apply_remote_changes(self, sync_engine):
         """Test applying remote changes."""
@@ -458,7 +458,7 @@ class TestSyncEngine:
         mock_graph_ops = Mock()
         mock_graph_ops.store_entity = AsyncMock()
         sync_engine.set_graph_operations(mock_graph_ops)
-        
+
         # Create a test change
         test_change = Change(
             entity_type="device",
@@ -476,20 +476,20 @@ class TestSyncEngine:
             updated_at=datetime.now(UTC),
             sync_id=str(uuid.uuid4())
         )
-        
+
         # Mock session
         sync_engine.session.merge = Mock()
         sync_engine.session.commit = AsyncMock()
-        
+
         result = await sync_engine._apply_single_change(test_change)
-        
+
         # Verify the change was processed
         assert result is True  # Should return True on success
 
 
 class TestSyncIntegration:
     """Test full sync integration scenarios."""
-    
+
     @pytest.mark.asyncio
     async def test_bidirectional_sync(self, sync_engine):
         """Test bidirectional synchronization."""
@@ -501,12 +501,12 @@ class TestSyncIntegration:
         mock_graph_ops.get_entity = AsyncMock(return_value=None)
         mock_graph_ops.search_entities = AsyncMock(return_value=[])
         sync_engine.set_graph_operations(mock_graph_ops)
-        
+
         # Mock metadata repository
         sync_engine.metadata_repo.get_metadata = AsyncMock(return_value=None)
         sync_engine.metadata_repo.update_sync_time = AsyncMock()
         sync_engine.metadata_repo.create_metadata = AsyncMock()
-        
+
         # Create local entity
         local_entity_id = str(uuid.uuid4())
         mock_entity = Mock()
@@ -521,7 +521,7 @@ class TestSyncIntegration:
             "version": mock_entity.version,
             "updated_at": mock_entity.updated_at.isoformat()
         })
-        
+
         # Mock session with proper return values
         mock_scalars = Mock()
         mock_scalars.all = Mock(return_value=[])  # Return empty list to avoid serialization issues
@@ -530,11 +530,11 @@ class TestSyncIntegration:
         sync_engine.session.execute = AsyncMock(return_value=mock_result)
         sync_engine.session.commit = AsyncMock()
         sync_engine.session.rollback = AsyncMock()
-        
+
         with patch('httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
-            
+
             # Mock response with server changes
             server_entity_id = str(uuid.uuid4())
             mock_response = Mock()
@@ -566,9 +566,9 @@ class TestSyncIntegration:
             })
             mock_response.raise_for_status = Mock()
             mock_client.post = AsyncMock(return_value=mock_response)
-            
+
             result = await sync_engine.sync()
-            
+
             assert result.success is True
             # Verify that sync completed without errors
             assert len(result.errors) == 0

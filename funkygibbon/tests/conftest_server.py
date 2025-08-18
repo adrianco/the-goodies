@@ -19,12 +19,12 @@ async def running_server():
     """Start a real FunkyGibbon server for testing."""
     # Get the path to the funkygibbon directory
     funkygibbon_path = Path(__file__).parent.parent
-    
+
     # Set up environment - add parent to PYTHONPATH so the module can be found
     env = os.environ.copy()
     parent_path = funkygibbon_path.parent
     env["PYTHONPATH"] = f"{parent_path}:{env.get('PYTHONPATH', '')}"
-    
+
     # Start the server using the module approach
     process = subprocess.Popen(
         [sys.executable, "-m", "funkygibbon"],
@@ -34,11 +34,11 @@ async def running_server():
         text=True,
         env=env
     )
-    
+
     # Wait for server to start
     max_retries = 30
     server_url = "http://localhost:8000"
-    
+
     for i in range(max_retries):
         try:
             async with httpx.AsyncClient() as client:
@@ -58,9 +58,9 @@ async def running_server():
                 process.terminate()
                 pytest.fail("FunkyGibbon server failed to start")
             await asyncio.sleep(0.5)
-    
+
     yield server_url
-    
+
     # Stop the server
     process.terminate()
     try:

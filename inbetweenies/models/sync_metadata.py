@@ -46,7 +46,7 @@ DEPENDENCIES:
 USAGE:
     # Track sync lifecycle
     metadata = await repo.get_by_client(client_id)
-    
+
     metadata.record_sync_start()
     try:
         # Perform sync...
@@ -64,9 +64,9 @@ from .base import Base, InbetweeniesTimestampMixin
 
 class SyncMetadata(Base, InbetweeniesTimestampMixin):
     """Track overall sync state and history."""
-    
+
     __tablename__ = "sync_metadata"
-    
+
     id = Column(Integer, primary_key=True)
     client_id = Column(String(50), nullable=False, unique=True)
     last_sync_time = Column(DateTime, nullable=True)
@@ -75,15 +75,15 @@ class SyncMetadata(Base, InbetweeniesTimestampMixin):
     sync_failures = Column(Integer, default=0, nullable=False)
     total_syncs = Column(Integer, default=0, nullable=False)
     total_conflicts = Column(Integer, default=0, nullable=False)
-    
+
     # Connection info
     server_url = Column(String(255), nullable=True)
     auth_token = Column(String(500), nullable=True)
-    
+
     # Sync state
     sync_in_progress = Column(Integer, default=0)  # Boolean as int
     next_retry_time = Column(DateTime, nullable=True)
-    
+
     def __init__(self, **kwargs):
         """Initialize with default values."""
         super().__init__(**kwargs)
@@ -95,13 +95,13 @@ class SyncMetadata(Base, InbetweeniesTimestampMixin):
             self.total_conflicts = 0
         if self.sync_in_progress is None:
             self.sync_in_progress = 0
-    
+
     def record_sync_start(self):
         """Record that a sync has started."""
         self.sync_in_progress = 1
         self.last_sync_time = datetime.now(UTC)
         self.updated_at = datetime.now(UTC)
-        
+
     def record_sync_success(self):
         """Record successful sync completion."""
         self.sync_in_progress = 0
@@ -111,7 +111,7 @@ class SyncMetadata(Base, InbetweeniesTimestampMixin):
         self.total_syncs += 1
         self.next_retry_time = None
         self.updated_at = datetime.now(UTC)
-        
+
     def record_sync_failure(self, error: str, next_retry: datetime):
         """Record sync failure."""
         self.sync_in_progress = 0
@@ -120,7 +120,7 @@ class SyncMetadata(Base, InbetweeniesTimestampMixin):
         self.total_syncs += 1
         self.next_retry_time = next_retry
         self.updated_at = datetime.now(UTC)
-    
+
     def to_dict(self):
         """Convert to dictionary for JSON serialization."""
         return {

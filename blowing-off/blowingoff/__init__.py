@@ -39,7 +39,7 @@ DEPENDENCIES:
 
 USAGE:
     from blowingoff import BlowingOffClient, SyncResult
-    
+
     # Create and use client
     client = BlowingOffClient()
     await client.connect(server_url, auth_token)
@@ -48,7 +48,7 @@ USAGE:
 
 __version__ = "0.1.0"
 
-from .client import BlowingOffClient
 from inbetweenies.sync import SyncState, SyncResult
+from .client import BlowingOffClient
 
 __all__ = ["BlowingOffClient", "SyncState", "SyncResult"]

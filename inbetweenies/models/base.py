@@ -53,16 +53,16 @@ Base = declarative_base()
 
 class InbetweeniesTimestampMixin:
     """Minimal sync tracking for HomeKit compatibility."""
-    
+
     @declared_attr
     def created_at(cls):
         return Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))
-    
+
     @declared_attr
     def updated_at(cls):
-        return Column(DateTime, nullable=False, default=lambda: datetime.now(UTC), 
+        return Column(DateTime, nullable=False, default=lambda: datetime.now(UTC),
                      onupdate=lambda: datetime.now(UTC))
-    
+
     @declared_attr
     def sync_id(cls):
         """Unique identifier for sync operations."""

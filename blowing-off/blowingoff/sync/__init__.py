@@ -47,11 +47,11 @@ DEPENDENCIES:
 
 USAGE:
     from blowingoff.sync import SyncEngine
-    
+
     # Create and run sync
     engine = SyncEngine(session, server_url, auth_token)
     result = await engine.sync()
-    
+
     if result.success:
         print(f"Synced {result.synced_entities} entities")
     else:

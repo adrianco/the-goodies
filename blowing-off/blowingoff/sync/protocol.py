@@ -50,15 +50,15 @@ DEPENDENCIES:
 
 USAGE:
     protocol = InbetweeniesProtocol(base_url, auth_token, client_id)
-    
+
     # Request server changes
     response = await protocol.sync_request(last_sync_time)
     changes, conflicts = protocol.parse_sync_delta(response)
-    
+
     # Push local changes
     result = await protocol.sync_push(local_changes)
     applied_ids, new_conflicts = protocol.parse_sync_result(result)
-    
+
     # Acknowledge completion
     await protocol.sync_ack()
 """
@@ -76,7 +76,7 @@ from inbetweenies.sync import (
 
 class InbetweeniesProtocol:
     """Implementation of the Inbetweenies sync protocol."""
-    
+
     def __init__(self, base_url: str, auth_token: str, client_id: str):
         self.base_url = base_url.rstrip("/")
         self.auth_token = auth_token
@@ -85,9 +85,9 @@ class InbetweeniesProtocol:
             "Authorization": f"Bearer {auth_token}",
             "Content-Type": "application/json"
         }
-        
+
     async def sync_request(
-        self, 
+        self,
         last_sync: Optional[datetime],
         entity_types: List[str] = None
     ) -> Dict[str, Any]:
@@ -100,7 +100,7 @@ class InbetweeniesProtocol:
                 filters.since = last_sync
             if entity_types:
                 filters.entity_types = entity_types
-            
+
         # Build sync request
         request = SyncRequest(
             protocol_version="inbetweenies-v2",
@@ -111,7 +111,7 @@ class InbetweeniesProtocol:
             changes=[],
             filters=filters
         )
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.base_url}/api/v1/sync/",
@@ -121,7 +121,7 @@ class InbetweeniesProtocol:
             )
             response.raise_for_status()
             return response.json()
-            
+
     async def sync_push(self, changes: List[Change]) -> Dict[str, Any]:
         """Push local changes to server using new protocol."""
         # Convert changes to SyncChange objects
@@ -140,7 +140,7 @@ class InbetweeniesProtocol:
                     user_id=change.data.get("user_id") or "client-user",
                     parent_versions=change.data.get("parent_versions") or []
                 )
-            
+
             # Create sync change
             operation = change.operation.value if hasattr(change.operation, 'value') else str(change.operation).lower()
             sync_change = SyncChange(
@@ -149,7 +149,7 @@ class InbetweeniesProtocol:
                 relationships=[]
             )
             sync_changes.append(sync_change)
-        
+
         # Build sync request with changes
         request = SyncRequest(
             protocol_version="inbetweenies-v2",
@@ -159,7 +159,7 @@ class InbetweeniesProtocol:
             vector_clock=VectorClock(),
             changes=sync_changes
         )
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.base_url}/api/v1/sync/",
@@ -169,21 +169,21 @@ class InbetweeniesProtocol:
             )
             response.raise_for_status()
             return response.json()
-            
+
     async def sync_ack(self) -> Dict[str, Any]:
         """Acknowledge sync completion - no longer needed in new protocol."""
         # The new protocol doesn't have a separate ack endpoint
         # Success is implied by successful response to sync request
         return {"success": True, "message": "Sync acknowledged", "timestamp": datetime.now().isoformat()}
-            
+
     def parse_sync_delta(self, response: Dict[str, Any]) -> tuple[List[Change], List[Conflict]]:
         """Parse sync delta response from new protocol."""
         changes = []
         conflicts = []
-        
+
         # Create SyncResponse object for validation
         sync_response = SyncResponse(**response)
-        
+
         # Parse changes from response
         for sync_change in sync_response.changes:
             if sync_change.entity:
@@ -198,7 +198,7 @@ class InbetweeniesProtocol:
                     client_sync_id=None  # Server changes don't have client sync ID
                 )
                 changes.append(change)
-            
+
         # Parse conflicts from response
         for conflict_info in sync_response.conflicts:
             conflict = Conflict(
@@ -210,20 +210,20 @@ class InbetweeniesProtocol:
                 resolution=conflict_info.resolution_strategy
             )
             conflicts.append(conflict)
-            
+
         return changes, conflicts
-        
+
     def parse_sync_result(self, response: Dict[str, Any]) -> tuple[List[str], List[Conflict]]:
         """Parse sync result response from new protocol."""
         applied_ids = []
         conflicts = []
-        
+
         # In new protocol, successful sync means all changes were applied
         # Extract entity IDs from the changes we received
         for sync_change in response.get("changes", []):
             if sync_change.get("entity"):
                 applied_ids.append(sync_change["entity"]["id"])
-                
+
         # Parse conflicts using the same format as parse_sync_delta
         for conflict_info in response.get("conflicts", []):
             conflict = Conflict(
@@ -235,5 +235,5 @@ class InbetweeniesProtocol:
                 resolution=conflict_info.get("resolution_strategy", "manual")
             )
             conflicts.append(conflict)
-            
+
         return applied_ids, conflicts

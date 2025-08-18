@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy import select, text
 
 from inbetweenies.models import (
-    Base, Entity, EntityType, SourceType, 
+    Base, Entity, EntityType, SourceType,
     EntityRelationship, RelationshipType,
     Blob, BlobType, BlobStatus
 )
@@ -37,22 +37,22 @@ from inbetweenies.utils.pdf_summarizer import (
 async def async_session():
     """Create a test database session"""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    
+
     async with async_session_maker() as session:
         yield session
         await session.rollback()
-    
+
     await engine.dispose()
 
 
 class TestAppEntityType:
     """Test APP entity type functionality"""
-    
+
     @pytest.mark.asyncio
     async def test_create_app_entity(self, async_session):
         """Test creating an APP entity"""
@@ -71,21 +71,21 @@ class TestAppEntityType:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         async_session.add(app)
         await async_session.commit()
-        
+
         # Verify app was created
         result = await async_session.execute(
             select(Entity).where(Entity.entity_type == EntityType.APP)
         )
         apps = result.scalars().all()
-        
+
         assert len(apps) == 1
         assert apps[0].name == "Test App"
         assert apps[0].content["platform"] == "iOS"
         assert apps[0].content["url_scheme"] == "testapp://"
-    
+
     @pytest.mark.asyncio
     async def test_link_device_to_app(self, async_session):
         """Test linking a device to an app using CONTROLLED_BY_APP relationship"""
@@ -100,7 +100,7 @@ class TestAppEntityType:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         # Create app
         app = Entity(
             id=str(uuid4()),
@@ -112,11 +112,11 @@ class TestAppEntityType:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         async_session.add(device)
         async_session.add(app)
         await async_session.flush()
-        
+
         # Create relationship
         relationship = EntityRelationship(
             id=str(uuid4()),
@@ -128,10 +128,10 @@ class TestAppEntityType:
             properties={"integration": "wifi"},
             user_id="test-user"
         )
-        
+
         async_session.add(relationship)
         await async_session.commit()
-        
+
         # Verify relationship
         result = await async_session.execute(
             select(EntityRelationship).where(
@@ -139,7 +139,7 @@ class TestAppEntityType:
             )
         )
         relationships = result.scalars().all()
-        
+
         assert len(relationships) == 1
         assert relationships[0].from_entity_id == device.id
         assert relationships[0].to_entity_id == app.id
@@ -148,14 +148,14 @@ class TestAppEntityType:
 
 class TestBlobStorage:
     """Test BLOB storage functionality"""
-    
+
     @pytest.mark.asyncio
     async def test_create_blob(self, async_session):
         """Test creating a BLOB entity"""
         # Create test data
         test_data = b"This is test PDF content"
         checksum = hashlib.sha256(test_data).hexdigest()
-        
+
         blob = Blob(
             id=str(uuid4()),
             name="test_document.pdf",
@@ -168,22 +168,22 @@ class TestBlobStorage:
             sync_status=BlobStatus.PENDING_UPLOAD,
             user_id="test-user"
         )
-        
+
         async_session.add(blob)
         await async_session.commit()
-        
+
         # Verify blob was created
         result = await async_session.execute(
             select(Blob).where(Blob.name == "test_document.pdf")
         )
         blobs = result.scalars().all()
-        
+
         assert len(blobs) == 1
         assert blobs[0].size == len(test_data)
         assert blobs[0].checksum == checksum
         assert blobs[0].blob_type == BlobType.PDF
         assert blobs[0].data == test_data
-    
+
     @pytest.mark.asyncio
     async def test_blob_set_data_method(self, async_session):
         """Test the set_data method of Blob"""
@@ -195,19 +195,19 @@ class TestBlobStorage:
             size=0,
             user_id="test-user"
         )
-        
+
         # Set data using the method
         test_data = b"JPEG binary data here"
         blob.set_data(test_data)
-        
+
         assert blob.size == len(test_data)
         assert blob.data == test_data
         assert blob.checksum == hashlib.sha256(test_data).hexdigest()
         assert blob.sync_status == BlobStatus.PENDING_UPLOAD
-        
+
         async_session.add(blob)
         await async_session.commit()
-    
+
     @pytest.mark.asyncio
     async def test_blob_sync_status(self, async_session):
         """Test blob sync status transitions"""
@@ -219,29 +219,29 @@ class TestBlobStorage:
             sync_status=BlobStatus.PENDING_UPLOAD,
             user_id="test-user"
         )
-        
+
         async_session.add(blob)
         await async_session.flush()
-        
+
         # Mark as uploaded
         blob.mark_uploaded("https://server.com/blob/123")
-        
+
         assert blob.sync_status == BlobStatus.UPLOADED
         assert blob.server_url == "https://server.com/blob/123"
         assert blob.last_sync_at is not None
-        
+
         # Mark as downloaded
         blob.mark_downloaded()
-        
+
         assert blob.sync_status == BlobStatus.DOWNLOADED
         assert blob.last_sync_at is not None
-        
+
         await async_session.commit()
 
 
 class TestUserNotes:
     """Test user-provided notes functionality"""
-    
+
     @pytest.mark.asyncio
     async def test_create_user_note(self, async_session):
         """Test creating a NOTE entity with user-provided content"""
@@ -260,21 +260,21 @@ class TestUserNotes:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         async_session.add(note)
         await async_session.commit()
-        
+
         # Verify note was created
         result = await async_session.execute(
             select(Entity).where(Entity.entity_type == EntityType.NOTE)
         )
         notes = result.scalars().all()
-        
+
         assert len(notes) == 1
         assert notes[0].name == "Installation Notes"
         assert notes[0].content["category"] == "user_provided"
         assert len(notes[0].content["device_references"]) == 2
-    
+
     @pytest.mark.asyncio
     async def test_link_note_to_device(self, async_session):
         """Test linking a note to a device"""
@@ -289,7 +289,7 @@ class TestUserNotes:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         # Create note
         note = Entity(
             id=str(uuid4()),
@@ -301,11 +301,11 @@ class TestUserNotes:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         async_session.add(device)
         async_session.add(note)
         await async_session.flush()
-        
+
         # Create relationship
         relationship = EntityRelationship(
             id=str(uuid4()),
@@ -317,10 +317,10 @@ class TestUserNotes:
             properties={"note_type": "user_provided"},
             user_id="test-user"
         )
-        
+
         async_session.add(relationship)
         await async_session.commit()
-        
+
         # Verify relationship
         result = await async_session.execute(
             select(EntityRelationship).where(
@@ -328,7 +328,7 @@ class TestUserNotes:
             )
         )
         relationships = result.scalars().all()
-        
+
         assert len(relationships) == 1
         assert relationships[0].to_entity_id == device.id
         assert relationships[0].relationship_type == RelationshipType.DOCUMENTED_BY
@@ -336,37 +336,37 @@ class TestUserNotes:
 
 class TestPDFSummarization:
     """Test PDF summarization functionality"""
-    
+
     def test_create_manual_summary(self):
         """Test creating a manual summary from PDF data"""
         # Create fake PDF data
         pdf_data = b"PDF content goes here" * 100
         filename = "PAR-42MAAUB_Instruction Book.pdf"
-        
+
         summary = create_manual_summary(pdf_data, filename)
-        
+
         assert summary["original_filename"] == filename
         assert summary["file_size"] == len(pdf_data)
         assert summary["checksum"] == hashlib.sha256(pdf_data).hexdigest()
         assert summary["model_number"] == "PAR-42MAAUB"  # Extracted from filename
         assert summary["document_type"] == "instruction_manual"
         assert "summary" in summary
-    
+
     def test_extract_photo_metadata(self):
         """Test extracting metadata from photo data"""
         # Create fake photo data
         photo_data = b"JPEG binary data" * 50
         filename = "PVFY-Serial_Number.jpeg"
-        
+
         metadata = extract_photo_metadata(photo_data, filename)
-        
+
         assert metadata["original_filename"] == filename
         assert metadata["file_size"] == len(photo_data)
         assert metadata["checksum"] == hashlib.sha256(photo_data).hexdigest()
         assert metadata["photo_type"] == "serial_number"
         assert metadata["format"] == "JPEG"
         assert metadata["mime_type"] == "image/jpeg"
-    
+
     def test_link_manual_to_device(self):
         """Test linking manual metadata to a device"""
         manual_metadata = {
@@ -375,9 +375,9 @@ class TestPDFSummarization:
             "file_size": 1024,
             "checksum": "abc123"
         }
-        
+
         linked = link_manual_to_device(manual_metadata, "Test Device")
-        
+
         assert linked["device_name"] == "Test Device"
         assert linked["relationship_type"] == "DOCUMENTED_BY"
         assert linked["summary"] == "Test summary"
@@ -385,7 +385,7 @@ class TestPDFSummarization:
 
 class TestMitsubishiIntegration:
     """Test Mitsubishi thermostat integration"""
-    
+
     @pytest.mark.asyncio
     async def test_create_mitsubishi_thermostat(self, async_session):
         """Test creating Mitsubishi thermostat entity"""
@@ -407,10 +407,10 @@ class TestMitsubishiIntegration:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         async_session.add(thermostat)
         await async_session.commit()
-        
+
         # Verify thermostat was created
         result = await async_session.execute(
             select(Entity).where(
@@ -418,13 +418,13 @@ class TestMitsubishiIntegration:
             )
         )
         devices = result.scalars().all()
-        
+
         assert len(devices) == 1
         assert devices[0].content["manufacturer"] == "Mitsubishi"
         assert devices[0].content["model"] == "PAR-42MAAUB"
         assert "remote_control" in devices[0].content["capabilities"]
         assert devices[0].content["remote_app"] == "Mitsubishi Comfort"
-    
+
     @pytest.mark.asyncio
     async def test_link_mitsubishi_to_comfort_app(self, async_session):
         """Test linking Mitsubishi thermostat to Comfort app"""
@@ -439,7 +439,7 @@ class TestMitsubishiIntegration:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         # Create Comfort app
         comfort_app = Entity(
             id=str(uuid4()),
@@ -454,11 +454,11 @@ class TestMitsubishiIntegration:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         async_session.add(thermostat)
         async_session.add(comfort_app)
         await async_session.flush()
-        
+
         # Create relationship
         relationship = EntityRelationship(
             id=str(uuid4()),
@@ -473,10 +473,10 @@ class TestMitsubishiIntegration:
             },
             user_id="test-user"
         )
-        
+
         async_session.add(relationship)
         await async_session.commit()
-        
+
         # Verify relationship
         result = await async_session.execute(
             select(EntityRelationship).where(
@@ -484,7 +484,7 @@ class TestMitsubishiIntegration:
             )
         )
         relationships = result.scalars().all()
-        
+
         assert len(relationships) == 1
         assert relationships[0].to_entity_id == comfort_app.id
         assert relationships[0].relationship_type == RelationshipType.CONTROLLED_BY_APP
@@ -493,7 +493,7 @@ class TestMitsubishiIntegration:
 
 class TestPhotoDocumentation:
     """Test photo documentation functionality"""
-    
+
     @pytest.mark.asyncio
     async def test_create_photo_documentation(self, async_session):
         """Test creating photo documentation notes with blob references"""
@@ -513,10 +513,10 @@ class TestPhotoDocumentation:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         async_session.add(photo_note)
         await async_session.commit()
-        
+
         # Verify photo note was created
         result = await async_session.execute(
             select(Entity).where(
@@ -524,12 +524,12 @@ class TestPhotoDocumentation:
             )
         )
         notes = result.scalars().all()
-        
+
         assert len(notes) == 1
         assert notes[0].content["category"] == "photo_documentation"
         assert notes[0].content["has_blob"] is True
         assert len(notes[0].content["blob_references"]) == 2
-    
+
     @pytest.mark.asyncio
     async def test_link_photo_to_device_with_blob(self, async_session):
         """Test linking photo documentation to device with HAS_BLOB relationship"""
@@ -544,7 +544,7 @@ class TestPhotoDocumentation:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         # Create photo note
         photo_note = Entity(
             id=str(uuid4()),
@@ -559,11 +559,11 @@ class TestPhotoDocumentation:
             user_id="test-user",
             parent_versions=[]
         )
-        
+
         async_session.add(device)
         async_session.add(photo_note)
         await async_session.flush()
-        
+
         # Create HAS_BLOB relationship
         relationship = EntityRelationship(
             id=str(uuid4()),
@@ -575,10 +575,10 @@ class TestPhotoDocumentation:
             properties={"blob_type": "photo"},
             user_id="test-user"
         )
-        
+
         async_session.add(relationship)
         await async_session.commit()
-        
+
         # Verify relationship
         result = await async_session.execute(
             select(EntityRelationship).where(
@@ -586,7 +586,7 @@ class TestPhotoDocumentation:
             )
         )
         relationships = result.scalars().all()
-        
+
         assert len(relationships) == 1
         assert relationships[0].from_entity_id == photo_note.id
         assert relationships[0].to_entity_id == device.id

@@ -16,7 +16,7 @@ async def test_graph_ops():
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = LocalGraphStorage(tmpdir)
         ops = LocalGraphOperations(storage)
-        
+
         # Create a test entity
         entity = Entity(
             entity_type=EntityType.HOME,
@@ -24,11 +24,11 @@ async def test_graph_ops():
             content={"test": True},
             source_type=SourceType.MANUAL
         )
-        
+
         # Store it
         stored = await ops.store_entity(entity)
         print(f"Stored entity: {stored.id}")
-        
+
         # Get all entities by type
         print("\nTesting get_entities_by_type...")
         for et in EntityType:
@@ -38,7 +38,7 @@ async def test_graph_ops():
                 print(f"    Found {len(entities)} entities")
             except Exception as e:
                 print(f"    Error: {e}")
-        
+
         print("\nDone!")
 
 if __name__ == "__main__":

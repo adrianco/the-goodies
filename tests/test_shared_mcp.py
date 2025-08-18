@@ -23,21 +23,21 @@ async def test_local_mcp():
     """Test MCP functionality locally without server"""
     print("\n🔧 Testing Local MCP Functionality (Offline)")
     print("=" * 60)
-    
+
     # Create client with local storage in temp directory
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
-    
+
     client = BlowingOffClient(db_path)
-    
+
     # Clear any existing data
     client.clear_graph_data()
-    
+
     # Create test entities using graph operations
     from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
-    
+
     print("\n📝 Creating test graph data...")
-    
+
     # Create a home entity
     home = Entity(
         entity_type=EntityType.HOME,
@@ -49,7 +49,7 @@ async def test_local_mcp():
         source_type=SourceType.MANUAL
     )
     stored_home = await client.graph_operations.store_entity(home)
-    
+
     # Create rooms
     living_room = Entity(
         entity_type=EntityType.ROOM,
@@ -71,7 +71,7 @@ async def test_local_mcp():
     )
     stored_living = await client.graph_operations.store_entity(living_room)
     stored_bedroom = await client.graph_operations.store_entity(bedroom)
-    
+
     # Create devices
     light = Entity(
         entity_type=EntityType.DEVICE,
@@ -95,7 +95,7 @@ async def test_local_mcp():
     )
     stored_light = await client.graph_operations.store_entity(light)
     stored_thermostat = await client.graph_operations.store_entity(thermostat)
-    
+
     # Create relationships
     # Rooms in home
     await client.graph_operations.store_relationship(
@@ -116,7 +116,7 @@ async def test_local_mcp():
             relationship_type=RelationshipType.LOCATED_IN
         )
     )
-    
+
     # Devices in rooms
     await client.graph_operations.store_relationship(
         EntityRelationship(
@@ -136,18 +136,18 @@ async def test_local_mcp():
             relationship_type=RelationshipType.LOCATED_IN
         )
     )
-    
+
     print("✅ Created test entities and relationships")
-    
+
     # Test MCP tools
     print("\n📋 Available MCP Tools:")
     tools = client.get_available_mcp_tools()
     for tool in tools:
         print(f"  - {tool}")
-    
+
     # Test search functionality
     print("\n🔍 Testing MCP search tools...")
-    
+
     # Search for rooms
     result = await client.execute_mcp_tool(
         "search_entities",
@@ -159,7 +159,7 @@ async def test_local_mcp():
         print(f"\nFound {result['result']['count']} rooms:")
         for item in result['result']['results']:
             print(f"  - {item['entity']['name']} (ID: {item['entity']['id']})")
-    
+
     # Get devices in living room
     result = await client.execute_mcp_tool(
         "get_devices_in_room",
@@ -169,7 +169,7 @@ async def test_local_mcp():
         print(f"\nDevices in Living Room: {result['result']['count']}")
         for device in result['result']['devices']:
             print(f"  - {device['name']} ({device['content'].get('manufacturer', 'Unknown')})")
-    
+
     # Search for specific devices
     result = await client.execute_mcp_tool(
         "search_entities",
@@ -179,7 +179,7 @@ async def test_local_mcp():
     )
     if result.get("success"):
         print(f"\nFound {result['result']['count']} smart devices")
-    
+
     print("\n✅ Local MCP test complete!")
 
 
@@ -188,21 +188,21 @@ async def test_graph_operations():
     """Test advanced graph operations"""
     print("\n🎯 Testing Advanced Graph Operations")
     print("=" * 60)
-    
+
     # Create client with temp database
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
-    
+
     client = BlowingOffClient(db_path)
-    
+
     # Clear any existing data
     client.clear_graph_data()
-    
+
     # Create a more complex graph
     from inbetweenies.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
-    
+
     print("\n📝 Creating complex graph structure...")
-    
+
     # Create multiple homes
     home1 = await client.graph_operations.store_entity(
         Entity(
@@ -212,7 +212,7 @@ async def test_graph_operations():
             source_type=SourceType.MANUAL
         )
     )
-    
+
     home2 = await client.graph_operations.store_entity(
         Entity(
             entity_type=EntityType.HOME,
@@ -221,7 +221,7 @@ async def test_graph_operations():
             source_type=SourceType.MANUAL
         )
     )
-    
+
     # Create users
     john = await client.graph_operations.store_entity(
         Entity(
@@ -231,7 +231,7 @@ async def test_graph_operations():
             source_type=SourceType.MANUAL
         )
     )
-    
+
     jane = await client.graph_operations.store_entity(
         Entity(
             entity_type=EntityType.NOTE,
@@ -240,7 +240,7 @@ async def test_graph_operations():
             source_type=SourceType.MANUAL
         )
     )
-    
+
     # Create ownership relationships
     await client.graph_operations.store_relationship(
         EntityRelationship(
@@ -251,7 +251,7 @@ async def test_graph_operations():
             relationship_type=RelationshipType.MANAGES
         )
     )
-    
+
     await client.graph_operations.store_relationship(
         EntityRelationship(
             from_entity_id=jane.id,
@@ -261,12 +261,12 @@ async def test_graph_operations():
             relationship_type=RelationshipType.MANAGES
         )
     )
-    
+
     print("✅ Created complex graph structure")
-    
+
     # Test graph traversal
     print("\n🗺️ Testing graph traversal...")
-    
+
     # Find all homes managed by John
     result = await client.execute_mcp_tool(
         "get_related_entities",
@@ -278,7 +278,7 @@ async def test_graph_operations():
         print(f"\nHomes managed by John: {result['result']['count']}")
         for home in result['result']['entities']:
             print(f"  - {home['name']}")
-    
+
     # Find all users managing the main house
     result = await client.execute_mcp_tool(
         "get_related_entities",
@@ -290,9 +290,9 @@ async def test_graph_operations():
         print(f"\nUsers managing Main House: {result['result']['count']}")
         for user in result['result']['entities']:
             print(f"  - {user['name']} ({user['content'].get('role', 'user')})")
-    
+
     print("\n✅ Graph operations test complete!")
-    
+
     # Cleanup
     await client.disconnect()
 
@@ -301,15 +301,15 @@ async def main():
     """Run all tests"""
     print("🧪 Testing Shared MCP Functionality")
     print("This demonstrates how MCP tools work both server-side and client-side")
-    
+
     # Test 1: Local MCP functionality
     await test_local_mcp()
-    
+
     print("\n" + "-" * 60 + "\n")
-    
+
     # Test 2: Advanced graph operations
     await test_graph_operations()
-    
+
     print("\n✨ All tests complete!")
     print("\nKey takeaways:")
     print("1. MCP tools work locally without server connection")

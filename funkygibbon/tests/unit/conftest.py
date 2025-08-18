@@ -16,12 +16,12 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 async def async_engine():
     """Create test database engine."""
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-    
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     yield engine
-    
+
     await engine.dispose()
 
 
@@ -29,11 +29,11 @@ async def async_engine():
 async def db_session(async_engine):
     """Create test database session."""
     async_session_maker = async_sessionmaker(
-        async_engine, 
-        class_=AsyncSession, 
+        async_engine,
+        class_=AsyncSession,
         expire_on_commit=False
     )
-    
+
     async with async_session_maker() as session:
         yield session
         await session.rollback()

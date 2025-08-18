@@ -22,23 +22,23 @@ class SecurityEventType(Enum):
     AUTH_SUCCESS = "auth.success"
     AUTH_FAILURE = "auth.failure"
     AUTH_LOCKOUT = "auth.lockout"
-    
+
     # Token events
     TOKEN_CREATED = "token.created"
     TOKEN_VERIFIED = "token.verified"
     TOKEN_EXPIRED = "token.expired"
     TOKEN_INVALID = "token.invalid"
     TOKEN_REVOKED = "token.revoked"
-    
+
     # Access control events
     PERMISSION_GRANTED = "permission.granted"
     PERMISSION_DENIED = "permission.denied"
-    
+
     # Guest access events
     GUEST_QR_GENERATED = "guest.qr_generated"
     GUEST_TOKEN_CREATED = "guest.token_created"
     GUEST_ACCESS_GRANTED = "guest.access_granted"
-    
+
     # Suspicious activity
     SUSPICIOUS_PATTERN = "suspicious.pattern"
     RATE_LIMIT_EXCEEDED = "suspicious.rate_limit"
@@ -48,14 +48,14 @@ class SecurityEventType(Enum):
 class AuditLogger:
     """
     Comprehensive audit logger for security events.
-    
+
     Features:
     - Structured logging with event types
     - Automatic suspicious pattern detection
     - Log rotation and archival
     - Query and analysis capabilities
     """
-    
+
     def __init__(
         self,
         log_file: Optional[str] = None,
@@ -65,7 +65,7 @@ class AuditLogger:
     ):
         """
         Initialize audit logger.
-        
+
         Args:
             log_file: Path to audit log file
             max_file_size: Maximum log file size before rotation
@@ -76,22 +76,22 @@ class AuditLogger:
         self.max_file_size = max_file_size
         self.retention_days = retention_days
         self.enable_pattern_detection = enable_pattern_detection
-        
+
         # Setup logger
         self._setup_logger()
-        
+
         # Pattern detection state
         self._failed_attempts = defaultdict(list)
         self._pattern_detection_task = None
-        
+
     def _setup_logger(self):
         """Configure the audit logger."""
         self.logger = logging.getLogger("funkygibbon.audit")
         self.logger.setLevel(logging.INFO)
-        
+
         # Remove existing handlers
         self.logger.handlers.clear()
-        
+
         # Console handler for development
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
@@ -100,11 +100,11 @@ class AuditLogger:
         )
         console_handler.setFormatter(console_formatter)
         self.logger.addHandler(console_handler)
-        
+
         # File handler with rotation
         if self.log_file:
             from logging.handlers import RotatingFileHandler
-            
+
             file_handler = RotatingFileHandler(
                 self.log_file,
                 maxBytes=self.max_file_size,
@@ -112,20 +112,20 @@ class AuditLogger:
                 encoding='utf-8'
             )
             file_handler.setLevel(logging.INFO)
-            
+
             # JSON formatter for structured logs
             file_formatter = logging.Formatter('%(message)s')
             file_handler.setFormatter(file_formatter)
-            
+
             self.logger.addHandler(file_handler)
-    
+
     async def start_pattern_detection(self):
         """Start background pattern detection task."""
         if self.enable_pattern_detection:
             self._pattern_detection_task = asyncio.create_task(
                 self._pattern_detection_loop()
             )
-    
+
     async def stop_pattern_detection(self):
         """Stop background pattern detection task."""
         if self._pattern_detection_task:
@@ -134,7 +134,7 @@ class AuditLogger:
                 await self._pattern_detection_task
             except asyncio.CancelledError:
                 pass
-    
+
     async def _pattern_detection_loop(self):
         """Background task to detect suspicious patterns."""
         while True:
@@ -145,26 +145,26 @@ class AuditLogger:
                 break
             except Exception as e:
                 self.logger.error(f"Pattern detection error: {e}")
-    
+
     def _detect_suspicious_patterns(self):
         """Detect and log suspicious patterns."""
         current_time = datetime.now(timezone.utc)
         cutoff_time = current_time.timestamp() - 300  # 5 minutes
-        
+
         for identifier, attempts in list(self._failed_attempts.items()):
             # Filter recent attempts
             recent_attempts = [
                 (timestamp, details) for timestamp, details in attempts
                 if timestamp > cutoff_time
             ]
-            
+
             # Update stored attempts
             if recent_attempts:
                 self._failed_attempts[identifier] = recent_attempts
             else:
                 del self._failed_attempts[identifier]
                 continue
-            
+
             # Check for suspicious patterns
             if len(recent_attempts) >= 10:
                 # Many failed attempts from same source
@@ -177,7 +177,7 @@ class AuditLogger:
                         "time_window": "5_minutes"
                     }
                 )
-            
+
             # Check for credential stuffing pattern
             unique_passwords = set(
                 details.get("password_hash", "")[:8]  # First 8 chars of hash
@@ -193,7 +193,7 @@ class AuditLogger:
                         "time_window": "5_minutes"
                     }
                 )
-    
+
     def log_event(
         self,
         event_type: SecurityEventType,
@@ -205,7 +205,7 @@ class AuditLogger:
     ):
         """
         Log a security event.
-        
+
         Args:
             event_type: Type of security event
             identifier: Request identifier (e.g., IP address)
@@ -224,16 +224,16 @@ class AuditLogger:
             "details": details or {},
             "request_info": request_info or {}
         }
-        
+
         # Log as JSON
         self.logger.info(json.dumps(event))
-        
+
         # Track failed authentication attempts for pattern detection
         if event_type == SecurityEventType.AUTH_FAILURE and identifier:
             self._failed_attempts[identifier].append(
                 (datetime.now(timezone.utc).timestamp(), details or {})
             )
-    
+
     def log_auth_attempt(
         self,
         success: bool,
@@ -245,7 +245,7 @@ class AuditLogger:
     ):
         """
         Log authentication attempt.
-        
+
         Args:
             success: Whether authentication succeeded
             identifier: Request identifier
@@ -258,11 +258,11 @@ class AuditLogger:
             SecurityEventType.AUTH_SUCCESS if success
             else SecurityEventType.AUTH_FAILURE
         )
-        
+
         details = {}
         if reason:
             details["reason"] = reason
-        
+
         self.log_event(
             event_type=event_type,
             identifier=identifier,
@@ -271,7 +271,7 @@ class AuditLogger:
             details=details,
             request_info=request_info
         )
-    
+
     def log_permission_check(
         self,
         granted: bool,
@@ -284,7 +284,7 @@ class AuditLogger:
     ):
         """
         Log permission check.
-        
+
         Args:
             granted: Whether permission was granted
             identifier: Request identifier
@@ -298,7 +298,7 @@ class AuditLogger:
             SecurityEventType.PERMISSION_GRANTED if granted
             else SecurityEventType.PERMISSION_DENIED
         )
-        
+
         self.log_event(
             event_type=event_type,
             identifier=identifier,
@@ -310,7 +310,7 @@ class AuditLogger:
             },
             request_info=request_info
         )
-    
+
     def log_token_event(
         self,
         event_type: SecurityEventType,
@@ -323,7 +323,7 @@ class AuditLogger:
     ):
         """
         Log token-related event.
-        
+
         Args:
             event_type: Token event type
             identifier: Request identifier
@@ -336,7 +336,7 @@ class AuditLogger:
         event_details = details or {}
         if token_type:
             event_details["token_type"] = token_type
-        
+
         self.log_event(
             event_type=event_type,
             identifier=identifier,
@@ -345,7 +345,7 @@ class AuditLogger:
             details=event_details,
             request_info=request_info
         )
-    
+
     def query_logs(
         self,
         event_types: Optional[List[SecurityEventType]] = None,
@@ -357,7 +357,7 @@ class AuditLogger:
     ) -> List[Dict[str, Any]]:
         """
         Query audit logs.
-        
+
         Args:
             event_types: Filter by event types
             identifier: Filter by identifier
@@ -365,14 +365,14 @@ class AuditLogger:
             start_time: Start time for query
             end_time: End time for query
             limit: Maximum results to return
-            
+
         Returns:
             List of matching log entries
         """
         # In production, this would query from a database
         # For now, return empty list as this is a placeholder
         return []
-    
+
     def generate_report(
         self,
         start_time: datetime,
@@ -380,11 +380,11 @@ class AuditLogger:
     ) -> Dict[str, Any]:
         """
         Generate security report for time period.
-        
+
         Args:
             start_time: Report start time
             end_time: Report end time
-            
+
         Returns:
             Security report with statistics and patterns
         """
@@ -416,10 +416,10 @@ audit_logger = AuditLogger(
 def get_request_info(request) -> Dict[str, Any]:
     """
     Extract request information for audit logging.
-    
+
     Args:
         request: FastAPI request object
-        
+
     Returns:
         Dictionary with request information
     """

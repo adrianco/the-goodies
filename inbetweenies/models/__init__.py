@@ -13,7 +13,7 @@ CORE MODELS:
 - SyncMetadata: Client synchronization state tracking
 
 ENTITY TYPES:
-HOME, ROOM, DEVICE, ZONE, DOOR, WINDOW, PROCEDURE, MANUAL, NOTE, 
+HOME, ROOM, DEVICE, ZONE, DOOR, WINDOW, PROCEDURE, MANUAL, NOTE,
 SCHEDULE, AUTOMATION - comprehensive smart home entity coverage
 
 RELATIONSHIP TYPES:

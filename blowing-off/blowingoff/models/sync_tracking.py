@@ -39,7 +39,7 @@ USAGE:
     await repo.create(id="test-1", name="Test Entity")  # Creates pending record
     await repo.update("test-1", name="Updated")         # Marks as pending
     await repo.mark_synced("test-1", datetime.now())    # Marks as synced
-    
+
     # Query sync status
     pending_entities = await repo.get_pending()
     conflict_entities = await repo.get_conflicts()
@@ -51,51 +51,51 @@ from inbetweenies.models import Base
 
 class ClientSyncTracking(Base):
     """Track sync status for individual entities."""
-    
+
     __tablename__ = "client_sync_tracking"
-    
+
     id = Column(Integer, primary_key=True)
     entity_id = Column(String(36), nullable=False)  # References the actual entity
     entity_type = Column(String(50), nullable=False)  # home, room, accessory, user
-    
+
     # Sync status
     sync_status = Column(String(20), nullable=False, default="pending")  # pending, synced, conflict
     operation = Column(String(10), nullable=False, default="update")  # create, update, delete
-    
+
     # Timestamps
     entity_updated_at = Column(DateTime, nullable=False)  # When entity was last modified
-    last_sync_at = Column(DateTime, nullable=True)  # When last synced to server  
+    last_sync_at = Column(DateTime, nullable=True)  # When last synced to server
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))
-    
+
     # Conflict tracking
     conflict_reason = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0, nullable=False)
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if self.retry_count is None:
             self.retry_count = 0
-    
+
     def mark_pending(self, operation: str = "update"):
         """Mark entity as having pending changes."""
         self.sync_status = "pending"
         self.operation = operation
         self.conflict_reason = None
         self.entity_updated_at = datetime.now(UTC)
-        
+
     def mark_synced(self):
         """Mark entity as successfully synced."""
         self.sync_status = "synced"
         self.last_sync_at = datetime.now(UTC)
         self.conflict_reason = None
         self.retry_count = 0
-        
+
     def mark_conflict(self, reason: str):
         """Mark entity as having sync conflict."""
         self.sync_status = "conflict"
         self.conflict_reason = reason
         self.retry_count += 1
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {

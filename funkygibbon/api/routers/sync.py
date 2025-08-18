@@ -83,27 +83,27 @@ async def sync_entities(
 ):
     """
     Sync entities using Inbetweenies v2 protocol.
-    
+
     Processes sync changes and returns server changes and conflicts.
     """
     from inbetweenies.sync.protocol import SyncStats, ConflictInfo, VectorClock, SyncChange, EntityChange
-    
+
     # Import graph repository for entity storage
     from ...repositories.graph import GraphRepository
     from ...models import Entity as GraphEntity, EntityRelationship
     from ...models import EntityType as GraphEntityType, SourceType
-    
+
     # Process incoming changes
     applied_changes = 0
     conflicts = []
-    
+
     # Use graph repository for all entity types
     graph_repo = GraphRepository(db)
-    
+
     for sync_change in request.changes:
         if sync_change.entity:
             entity = sync_change.entity
-            
+
             try:
                 # Convert to graph entity
                 graph_entity = GraphEntity(
@@ -116,7 +116,7 @@ async def sync_entities(
                     user_id=entity.user_id if hasattr(entity, 'user_id') else "sync",
                     parent_versions=entity.parent_versions if hasattr(entity, 'parent_versions') else []
                 )
-                
+
                 if sync_change.change_type == "delete":
                     # Handle deletion (graph doesn't delete, it marks as deleted)
                     # For now, skip deletes
@@ -124,7 +124,7 @@ async def sync_entities(
                 else:
                     # Check for existing entity
                     existing = await graph_repo.get_entity(entity.id)
-                    
+
                     if existing:
                         # Check for conflict
                         if existing.version != entity.version:
@@ -146,22 +146,22 @@ async def sync_entities(
                         # New entity
                         await graph_repo.store_entity(graph_entity)
                         applied_changes += 1
-                    
+
             except Exception as e:
                 print(f"Error processing change for {entity.entity_type} {entity.id}: {e}")
-    
+
     await db.commit()
-    
+
     # Get server changes to send back
     server_changes = []
-    
+
     # If this is a full sync or delta sync, return entities
     if request.sync_type in ["full", "delta"]:
         # Get all entities or entities since last sync
         since = None
         if request.filters and hasattr(request.filters, 'since'):
             since = request.filters.since
-            
+
         # Get entities from graph
         for entity_type in GraphEntityType:
             try:
@@ -171,7 +171,7 @@ async def sync_entities(
                     if since and hasattr(entity, 'updated_at') and entity.updated_at:
                         if entity.updated_at <= since:
                             continue
-                    
+
                     # Convert to sync change
                     entity_change = EntityChange(
                         id=entity.id,
@@ -182,7 +182,7 @@ async def sync_entities(
                         source_type=entity.source_type.value,
                         parent_versions=entity.parent_versions
                     )
-                    
+
                     server_changes.append(SyncChange(
                         change_type="update",
                         entity=entity_change,
@@ -190,7 +190,7 @@ async def sync_entities(
                     ))
             except Exception as e:
                 print(f"Error getting entities for type {entity_type}: {e}")
-    
+
     # Return server changes
     return SyncResponse(
         protocol_version="inbetweenies-v2",

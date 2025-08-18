@@ -69,12 +69,12 @@ _graph_index: Optional[GraphIndex] = None
 async def get_graph_index(db: AsyncSession = Depends(get_db)) -> GraphIndex:
     """Get or create the graph index"""
     global _graph_index
-    
+
     if _graph_index is None:
         _graph_index = GraphIndex()
         repo = GraphRepository(db)
         await _graph_index.load_from_storage(repo)
-    
+
     return _graph_index
 
 
@@ -86,7 +86,7 @@ async def create_entity(
 ):
     """Create a new entity in the graph"""
     repo = GraphRepository(db)
-    
+
     # Create entity
     entity = Entity(
         id=str(uuid4()),
@@ -98,14 +98,14 @@ async def create_entity(
         user_id=entity_data.user_id,
         parent_versions=[]
     )
-    
+
     # Store in database
     stored = await repo.store_entity(entity)
     await db.commit()
-    
+
     # Update in-memory index
     graph._add_entity(stored)
-    
+
     return {"entity": stored.to_dict()}
 
 
@@ -118,22 +118,22 @@ async def get_entity(
 ):
     """Get an entity by ID"""
     repo = GraphRepository(db)
-    
+
     entity = await repo.get_entity(entity_id, version)
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
-    
+
     result = {"entity": entity.to_dict()}
-    
+
     if include_relationships:
         outgoing = await repo.get_relationships(from_id=entity_id)
         incoming = await repo.get_relationships(to_id=entity_id)
-        
+
         result["relationships"] = {
             "outgoing": [rel.to_dict() for rel in outgoing],
             "incoming": [rel.to_dict() for rel in incoming]
         }
-    
+
     return result
 
 
@@ -146,7 +146,7 @@ async def list_entities(
 ):
     """List entities with optional filtering"""
     repo = GraphRepository(db)
-    
+
     if entity_type:
         entities = await repo.get_entities_by_type(entity_type)
     else:
@@ -156,10 +156,10 @@ async def list_entities(
             type_entities = await repo.get_entities_by_type(et)
             all_entities.extend(type_entities)
         entities = all_entities
-    
+
     # Apply pagination
     paginated = entities[offset:offset + limit]
-    
+
     return {
         "entities": [e.to_dict() for e in paginated],
         "total": len(entities),
@@ -177,29 +177,29 @@ async def update_entity(
 ):
     """Update an entity (creates new version)"""
     repo = GraphRepository(db)
-    
+
     # Get current entity
     current = await repo.get_entity(entity_id)
     if not current:
         raise HTTPException(status_code=404, detail="Entity not found")
-    
+
     # Prepare changes
     changes = {}
     if update_data.name is not None:
         changes["name"] = update_data.name
     if update_data.content is not None:
         changes["content"] = update_data.content
-    
+
     # Create new version
     new_entity = current.create_new_version(update_data.user_id, changes)
-    
+
     # Store new version
     stored = await repo.store_entity(new_entity)
     await db.commit()
-    
+
     # Update in-memory index
     graph._add_entity(stored)
-    
+
     return {
         "entity": stored.to_dict(),
         "previous_version": current.version
@@ -213,11 +213,11 @@ async def get_entity_versions(
 ):
     """Get all versions of an entity"""
     repo = GraphRepository(db)
-    
+
     versions = await repo.get_entity_versions(entity_id)
     if not versions:
         raise HTTPException(status_code=404, detail="Entity not found")
-    
+
     return {
         "entity_id": entity_id,
         "versions": [v.to_dict() for v in versions],
@@ -233,14 +233,14 @@ async def create_relationship(
 ):
     """Create a relationship between entities"""
     repo = GraphRepository(db)
-    
+
     # Validate entities exist
     from_entity = await repo.get_entity(rel_data.source_id)
     to_entity = await repo.get_entity(rel_data.target_id)
-    
+
     if not from_entity or not to_entity:
         raise HTTPException(status_code=404, detail="One or both entities not found")
-    
+
     # Create relationship
     relationship = EntityRelationship(
         id=str(uuid4()),
@@ -252,7 +252,7 @@ async def create_relationship(
         properties=rel_data.properties,
         user_id=rel_data.user_id
     )
-    
+
     # Validate relationship type
     # TODO: Enable validation once server restart picks up the new method from Inbetweenies
     # if not relationship.is_valid_for_entities(from_entity, to_entity):
@@ -261,14 +261,14 @@ async def create_relationship(
     #         detail=f"Relationship {rel_data.relationship_type} not valid between "
     #                f"{from_entity.entity_type} and {to_entity.entity_type}"
     #     )
-    
+
     # Store relationship
     stored = await repo.store_relationship(relationship)
     await db.commit()
-    
+
     # Update in-memory index
     graph._add_relationship(stored)
-    
+
     return {"relationship": stored.to_dict()}
 
 
@@ -281,13 +281,13 @@ async def list_relationships(
 ):
     """List relationships with optional filtering"""
     repo = GraphRepository(db)
-    
+
     relationships = await repo.get_relationships(
         from_id=from_entity_id,
         to_id=to_entity_id,
         rel_type=relationship_type
     )
-    
+
     return {
         "relationships": [rel.to_dict() for rel in relationships],
         "count": len(relationships)
@@ -301,13 +301,13 @@ async def search_graph(
 ):
     """Search entities by content"""
     search_engine = SearchEngine(graph)
-    
+
     results = search_engine.search_entities(
         query=search_query.query,
         entity_types=search_query.entity_types,
         limit=search_query.limit
     )
-    
+
     return {
         "query": search_query.query,
         "results": [result.to_dict() for result in results],
@@ -326,7 +326,7 @@ async def find_path(
         path_query.to_entity_id,
         path_query.max_depth
     )
-    
+
     if not path:
         return {
             "from": path_query.from_entity_id,
@@ -334,7 +334,7 @@ async def find_path(
             "path": [],
             "found": False
         }
-    
+
     # Get entity details for path
     path_entities = []
     for entity_id in path:
@@ -345,7 +345,7 @@ async def find_path(
                 "name": entity.name,
                 "type": entity.entity_type.value
             })
-    
+
     return {
         "from": path_query.from_entity_id,
         "to": path_query.to_entity_id,
@@ -370,7 +370,7 @@ async def get_connected_entities(
         direction=direction,
         max_depth=max_depth
     )
-    
+
     return {
         "entity_id": entity_id,
         "connected": [
@@ -395,9 +395,9 @@ async def find_similar_entities(
 ):
     """Find entities similar to the given entity"""
     search_engine = SearchEngine(graph)
-    
+
     results = search_engine.find_similar(entity_id, threshold, limit)
-    
+
     return {
         "reference_entity_id": entity_id,
         "similar_entities": [result.to_dict() for result in results],

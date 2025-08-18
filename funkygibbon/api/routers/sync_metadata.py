@@ -27,7 +27,7 @@ async def create_sync_metadata(
         select(SyncMetadata).where(SyncMetadata.client_id == client_id)
     )
     metadata = result.scalar_one_or_none()
-    
+
     if metadata:
         # Update existing
         metadata.server_url = server_url
@@ -41,7 +41,7 @@ async def create_sync_metadata(
             auth_token=auth_token
         )
         db.add(metadata)
-    
+
     await db.commit()
     return metadata.to_dict()
 
@@ -56,10 +56,10 @@ async def get_sync_metadata(
         select(SyncMetadata).where(SyncMetadata.client_id == client_id)
     )
     metadata = result.scalar_one_or_none()
-    
+
     if not metadata:
         raise HTTPException(status_code=404, detail="Sync metadata not found")
-    
+
     return metadata.to_dict()
 
 
@@ -86,13 +86,13 @@ async def record_sync_start(
         select(SyncMetadata).where(SyncMetadata.client_id == client_id)
     )
     metadata = result.scalar_one_or_none()
-    
+
     if not metadata:
         raise HTTPException(status_code=404, detail="Sync metadata not found")
-    
+
     metadata.record_sync_start()
     await db.commit()
-    
+
     return {"status": "sync_started", "client_id": client_id}
 
 
@@ -106,13 +106,13 @@ async def record_sync_success(
         select(SyncMetadata).where(SyncMetadata.client_id == client_id)
     )
     metadata = result.scalar_one_or_none()
-    
+
     if not metadata:
         raise HTTPException(status_code=404, detail="Sync metadata not found")
-    
+
     metadata.record_sync_success()
     await db.commit()
-    
+
     return {"status": "sync_success", "client_id": client_id}
 
 
@@ -128,10 +128,10 @@ async def record_sync_failure(
         select(SyncMetadata).where(SyncMetadata.client_id == client_id)
     )
     metadata = result.scalar_one_or_none()
-    
+
     if not metadata:
         raise HTTPException(status_code=404, detail="Sync metadata not found")
-    
+
     if next_retry:
         next_retry_time = datetime.fromisoformat(next_retry.replace('Z', '+00:00'))
     else:
@@ -139,10 +139,10 @@ async def record_sync_failure(
         import math
         backoff_seconds = 30 * (2 ** min(metadata.sync_failures, 6))  # Cap at 30 * 2^6 = 1920 seconds
         next_retry_time = datetime.now(UTC).replace(second=0, microsecond=0) + timedelta(seconds=backoff_seconds)
-    
+
     metadata.record_sync_failure(error, next_retry_time)
     await db.commit()
-    
+
     return {
         "status": "sync_failure",
         "client_id": client_id,
@@ -160,7 +160,7 @@ async def get_sync_status(
         select(SyncMetadata).where(SyncMetadata.client_id == client_id)
     )
     metadata = result.scalar_one_or_none()
-    
+
     if not metadata:
         return {
             "client_id": client_id,
@@ -172,7 +172,7 @@ async def get_sync_status(
             "sync_in_progress": False,
             "last_error": None
         }
-    
+
     return {
         "client_id": client_id,
         "last_sync": metadata.last_sync_time.isoformat() if metadata.last_sync_time else None,
@@ -196,11 +196,11 @@ async def delete_sync_metadata(
         select(SyncMetadata).where(SyncMetadata.client_id == client_id)
     )
     metadata = result.scalar_one_or_none()
-    
+
     if not metadata:
         raise HTTPException(status_code=404, detail="Sync metadata not found")
-    
+
     await db.delete(metadata)
     await db.commit()
-    
+
     return {"status": "deleted", "client_id": client_id}

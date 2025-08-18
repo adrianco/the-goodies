@@ -11,7 +11,7 @@ from inbetweenies.models import Base
 class ConflictResolution:
     """Represents the result of conflict resolution between local and remote entities."""
     winner: Dict[str, Any]
-    loser: Dict[str, Any] 
+    loser: Dict[str, Any]
     reason: str
     timestamp_diff_ms: int
 

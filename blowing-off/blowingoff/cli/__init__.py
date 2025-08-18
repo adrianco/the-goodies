@@ -38,7 +38,7 @@ DEPENDENCIES:
 USAGE:
     # After pip install
     blowingoff --help
-    
+
     # Or programmatically
     from blowingoff.cli import cli
     cli()
