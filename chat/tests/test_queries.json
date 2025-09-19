@@ -1,0 +1,187 @@
+{
+  "simple_queries": [
+    {
+      "id": "q1",
+      "query": "Show all devices",
+      "expected_tool": "list_entities",
+      "expected_params": {"entity_type": "DEVICE"},
+      "category": "list"
+    },
+    {
+      "id": "q2",
+      "query": "List all rooms",
+      "expected_tool": "list_entities",
+      "expected_params": {"entity_type": "ROOM"},
+      "category": "list"
+    },
+    {
+      "id": "q3",
+      "query": "Find all lights",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "light"},
+      "category": "search"
+    },
+    {
+      "id": "q4",
+      "query": "Show all smart locks",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "lock"},
+      "category": "search"
+    },
+    {
+      "id": "q5",
+      "query": "List temperature sensors",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "temperature sensor"},
+      "category": "search"
+    }
+  ],
+  "room_queries": [
+    {
+      "id": "r1",
+      "query": "What's in the living room?",
+      "expected_tool": "get_devices_in_room",
+      "expected_params": {"room_id": "*living room*"},
+      "category": "room"
+    },
+    {
+      "id": "r2",
+      "query": "Show devices in the bedroom",
+      "expected_tool": "get_devices_in_room",
+      "expected_params": {"room_id": "*bedroom*"},
+      "category": "room"
+    },
+    {
+      "id": "r3",
+      "query": "List kitchen appliances",
+      "expected_tool": "get_devices_in_room",
+      "expected_params": {"room_id": "*kitchen*"},
+      "category": "room"
+    },
+    {
+      "id": "r4",
+      "query": "What devices are in the garage?",
+      "expected_tool": "get_devices_in_room",
+      "expected_params": {"room_id": "*garage*"},
+      "category": "room"
+    },
+    {
+      "id": "r5",
+      "query": "Show all devices in the master bedroom",
+      "expected_tool": "get_devices_in_room",
+      "expected_params": {"room_id": "*master bedroom*"},
+      "category": "room"
+    }
+  ],
+  "search_queries": [
+    {
+      "id": "s1",
+      "query": "Find devices with smart in the name",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "smart"},
+      "category": "search"
+    },
+    {
+      "id": "s2",
+      "query": "Search for motion detectors",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "motion"},
+      "category": "search"
+    },
+    {
+      "id": "s3",
+      "query": "Look for Philips devices",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "Philips"},
+      "category": "search"
+    },
+    {
+      "id": "s4",
+      "query": "Find all thermostats",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "thermostat"},
+      "category": "search"
+    },
+    {
+      "id": "s5",
+      "query": "Search for security cameras",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "camera"},
+      "category": "search"
+    }
+  ],
+  "relationship_queries": [
+    {
+      "id": "rel1",
+      "query": "What controls the garage door?",
+      "expected_tool": "find_device_controls",
+      "expected_params": {"device_name": "garage door"},
+      "category": "relationship"
+    },
+    {
+      "id": "rel2",
+      "query": "Which hub manages the lights?",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "hub light"},
+      "category": "relationship"
+    },
+    {
+      "id": "rel3",
+      "query": "Find devices similar to the bedroom light",
+      "expected_tool": "find_similar_entities",
+      "expected_params": {"name": "bedroom light"},
+      "category": "similarity"
+    },
+    {
+      "id": "rel4",
+      "query": "What's connected to the smart hub?",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "hub"},
+      "category": "relationship"
+    },
+    {
+      "id": "rel5",
+      "query": "Show devices like the thermostat",
+      "expected_tool": "find_similar_entities",
+      "expected_params": {"name": "thermostat"},
+      "category": "similarity"
+    }
+  ],
+  "complex_queries": [
+    {
+      "id": "c1",
+      "query": "How many smart lights are in the house?",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "light"},
+      "category": "count"
+    },
+    {
+      "id": "c2",
+      "query": "Which rooms have motion sensors?",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "motion sensor"},
+      "category": "location"
+    },
+    {
+      "id": "c3",
+      "query": "List all battery-powered devices",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "battery"},
+      "category": "search"
+    },
+    {
+      "id": "c4",
+      "query": "Find outdoor security devices",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "outdoor security"},
+      "category": "search"
+    },
+    {
+      "id": "c5",
+      "query": "Show energy monitoring devices",
+      "expected_tool": "search_entities",
+      "expected_params": {"query": "energy monitor"},
+      "category": "search"
+    }
+  ]
+}
