@@ -127,7 +127,14 @@ class TinyLlamaMCPChat:
 
         # Pattern matching for different query types
         if "list" in query_lower or "show" in query_lower:
-            if "device" in query_lower:
+            # Check for specific entity types mentioned
+            if "thermostat" in query_lower:
+                return {"tool": "search_entities", "params": {"query": "thermostat"}}
+            elif "light" in query_lower:
+                return {"tool": "search_entities", "params": {"query": "light"}}
+            elif "sensor" in query_lower:
+                return {"tool": "search_entities", "params": {"query": "sensor"}}
+            elif "device" in query_lower:
                 return {"tool": "search_entities", "params": {"query": "device"}}
             elif "room" in query_lower:
                 return {"tool": "search_entities", "params": {"query": "room"}}
@@ -137,14 +144,20 @@ class TinyLlamaMCPChat:
                 # Default to searching all entities
                 return {"tool": "search_entities", "params": {"query": "*"}}
 
-        elif "search" in query_lower or "find" in query_lower:
+        elif "search" in query_lower or "find" in query_lower or "look for" in query_lower:
             # Extract search term
             for word in ["search for ", "find ", "look for "]:
                 if word in query_lower:
                     search_term = query_lower.split(word)[-1].strip()
                     return {"tool": "search_entities", "params": {"query": search_term}}
+            # If no specific word follows, check for common entities
+            if "light" in query_lower:
+                return {"tool": "search_entities", "params": {"query": "light"}}
+            elif "sensor" in query_lower:
+                return {"tool": "search_entities", "params": {"query": "sensor"}}
 
-        elif "what's in" in query_lower or "what is in" in query_lower or "devices in" in query_lower:
+        elif ("what's in" in query_lower or "what is in" in query_lower or
+              "devices in" in query_lower or "what devices are in" in query_lower):
             # Extract room name from query and search for it
             room_name = None
             if "kitchen" in query_lower:
@@ -167,9 +180,9 @@ class TinyLlamaMCPChat:
                 # Try to find any room mentioned
                 return {"tool": "search_entities", "params": {"query": "room"}}
 
-        elif "control" in query_lower:
+        elif "control" in query_lower or "climate" in query_lower or "temperature" in query_lower:
             # Search for control relationships
-            if "thermostat" in query_lower:
+            if "thermostat" in query_lower or "climate" in query_lower or "temperature" in query_lower:
                 return {"tool": "search_entities", "params": {"query": "thermostat"}}
             else:
                 return {"tool": "search_entities", "params": {"query": "device"}}

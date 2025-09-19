@@ -578,3 +578,66 @@ Summary
 
 
 ./claude-flow swarm "a sample implementation of a chat interface has been copied into the chat directory, with three different model options. It is not well integrated with this repo. Write a plan to create a better integrated and more functional chat interface and design a set of tests against the current test dataset that evaluate the chat implementation and compare the models. Push the plans to github, then implemennt and run the chat based tests" --claude
+
+
+create a Behavior Driven Development based test plan for the chat interface, coded using Pytest structured as 
+  Given, When, Then examples that explore the test data set
+
+● I'll create a comprehensive BDD test plan for the chat interface using Pytest with Given-When-Then structure
+  that explores the test dataset.
+
+Bash(python -m pytest chat/test_bdd_chat.py -v --tb=short)
+  ⎿  Error: ============================= test session starts ==============================
+     platform linux -- Python 3.12.1, pytest-8.4.2, pluggy-1.6.0 -- /home/codespace/.python/current/bin/python
+     cachedir: .pytest_cache
+     hypothesis profile 'default'
+     rootdir: /workspaces/the-goodies
+     configfile: pytest.ini
+     plugins: hypothesis-6.139.2, anyio-4.10.0, asyncio-1.2.0, cov-7.0.0
+     asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, 
+     asyncio_default_test_loop_scope=function
+     collecting ... collected 19 items
+
+     chat/test_bdd_chat.py::TestRoomQueries::test_list_all_rooms PASSED       [  5%]
+     chat/test_bdd_chat.py::TestRoomQueries::test_search_specific_room PASSED [ 10%]
+     chat/test_bdd_chat.py::TestRoomQueries::test_room_area_comparison PASSED [ 15%]
+     chat/test_bdd_chat.py::TestDeviceQueries::test_list_all_devices PASSED   [ 21%]
+     chat/test_bdd_chat.py::TestDeviceQueries::test_search_lights PASSED      [ 26%]
+     chat/test_bdd_chat.py::TestDeviceQueries::test_device_capabilities PASSED [ 31%]
+     chat/test_bdd_chat.py::TestRoomDeviceRelationships::test_devices_in_kitchen PASSED [ 36%]
+     chat/test_bdd_chat.py::TestRoomDeviceRelationships::test_devices_in_living_room FAILED [ 42%]
+     chat/test_bdd_chat.py::TestRoomDeviceRelationships::test_multi_room_thermostat PASSED [ 47%]
+     chat/test_bdd_chat.py::TestAutomationQueries::test_list_automations PASSED [ 52%]
+     chat/test_bdd_chat.py::TestAutomationQueries::test_movie_time_scene PASSED [ 57%]
+     chat/test_bdd_chat.py::TestAutomationQueries::test_automation_triggers PASSED [ 63%]
+     chat/test_bdd_chat.py::TestComplexQueries::test_climate_control_system FAILED [ 68%]
+     chat/test_bdd_chat.py::TestComplexQueries::test_entity_count_summary PASSED [ 73%]
+     chat/test_bdd_chat.py::TestErrorHandling::test_unknown_room_query PASSED [ 78%]
+     chat/test_bdd_chat.py::TestErrorHandling::test_mcp_tool_error PASSED     [ 84%]
+     chat/test_bdd_chat.py::TestNaturalLanguageParsing::test_parse_list_queries PASSED [ 89%]
+     chat/test_bdd_chat.py::TestNaturalLanguageParsing::test_parse_search_queries FAILED [ 94%]
+     chat/test_bdd_chat.py::TestNaturalLanguageParsing::test_parse_room_queries PASSED [100%]
+
+     =================================== FAILURES ===================================
+     ___________ TestRoomDeviceRelationships.test_devices_in_living_room ____________
+     chat/test_bdd_chat.py:488: in test_devices_in_living_room
+         assert tool_info is not None
+     E   assert None is not None
+     ________________ TestComplexQueries.test_climate_control_system ________________
+     chat/test_bdd_chat.py:633: in test_climate_control_system
+         assert 'thermostat' in tool_info['params']['query']
+     E   AssertionError: assert 'thermostat' in '*'
+     _____________ TestNaturalLanguageParsing.test_parse_search_queries _____________
+     chat/test_bdd_chat.py:782: in test_parse_search_queries
+         assert tool_info is not None
+     E   assert None is not None
+     =========================== short test summary info ============================
+     FAILED chat/test_bdd_chat.py::TestRoomDeviceRelationships::test_devices_in_living_room - assert None is not None
+     FAILED chat/test_bdd_chat.py::TestComplexQueries::test_climate_control_system - AssertionError: assert 
+     'thermostat' in '*'
+     FAILED chat/test_bdd_chat.py::TestNaturalLanguageParsing::test_parse_search_queries - assert None is not None
+     ========================= 3 failed, 16 passed in 2.74s =========================
+
+● Good news! 16 out of 19 tests passed. Let me fix the 3 failing tests by  11:26 AM  claude-opus-4-1-20250805
+  updating the query parsing logic in the chat interface:
+
