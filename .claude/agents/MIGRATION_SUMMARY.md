@@ -1,3 +1,10 @@
+---
+name: Migration Summary
+type: documentation
+category: migration
+description: Complete migration plan for converting command-based system to intelligent agent-based system
+---
+
 # Claude Flow Commands to Agent System Migration Summary
 
 ## Executive Summary

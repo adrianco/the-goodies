@@ -5,7 +5,7 @@
     "CLAUDE_FLOW_HOOKS_ENABLED": "true",
     "CLAUDE_FLOW_TELEMETRY_ENABLED": "true",
     "CLAUDE_FLOW_REMOTE_EXECUTION": "true",
-    "CLAUDE_FLOW_GITHUB_INTEGRATION": "true"
+    "CLAUDE_FLOW_CHECKPOINTS_ENABLED": "true"
   },
   "permissions": {
     "allow": [
@@ -20,7 +20,11 @@
       "Bash(git commit *)",
       "Bash(git push)",
       "Bash(git config *)",
-      "Bash(gh *)",
+      "Bash(git tag *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
+      "Bash(git stash *)",
+      "Bash(jq *)",
       "Bash(node *)",
       "Bash(which *)",
       "Bash(pwd)",

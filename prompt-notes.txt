@@ -575,3 +575,6 @@ Summary
 
 
 > fix points 1, 2 and 3 above
+
+
+./claude-flow swarm "a sample implementation of a chat interface has been copied into the chat directory, with three different model options. It is not well integrated with this repo. Write a plan to create a better integrated and more functional chat interface and design a set of tests against the current test dataset that evaluate the chat implementation and compare the models. Push the plans to github, then implemennt and run the chat based tests" --claude
