@@ -225,6 +225,74 @@ python chat/compare_models.py
 
 ## BDD Testing
 
+### What is BDD (Behavior-Driven Development)?
+
+BDD is a testing methodology that focuses on describing the behavior of software from the user's perspective. It bridges the gap between technical and non-technical team members by using natural language to describe test scenarios.
+
+#### Key Concepts:
+
+**Given-When-Then Structure:**
+- **GIVEN**: The initial context or state (preconditions)
+- **WHEN**: An action or event occurs
+- **THEN**: The expected outcome or behavior
+
+**Example BDD Test:**
+```python
+@pytest.mark.asyncio
+async def test_list_all_rooms(self):
+    """
+    GIVEN a smart home with 6 rooms
+    WHEN user asks to list all rooms
+    THEN chat should return all room names with their types
+    """
+```
+
+#### Benefits of BDD Testing:
+1. **Clear Communication**: Tests are written in plain language that everyone understands
+2. **User-Focused**: Tests describe actual user scenarios and expected behaviors
+3. **Living Documentation**: Tests serve as executable documentation of system behavior
+4. **Early Bug Detection**: Behavioral issues are caught before they reach production
+5. **Regression Prevention**: Ensures new changes don't break existing functionality
+
+#### BDD vs Traditional Testing:
+
+**Traditional Unit Test:**
+```python
+def test_search_entities():
+    result = search_entities("room")
+    assert len(result) == 6
+    assert result[0]["entity_type"] == "ROOM"
+```
+
+**BDD Test:**
+```python
+"""
+GIVEN a smart home with multiple rooms
+WHEN user searches for rooms
+THEN the system should return all available rooms with their details
+"""
+```
+
+The BDD approach is more readable and focuses on the **why** and **what** rather than just the **how**.
+
+### BDD Test Organization in This Project
+
+Our BDD tests are organized into logical test classes that represent different aspects of the chat interface:
+
+1. **TestRoomQueries**: Tests related to querying and listing rooms
+2. **TestDeviceQueries**: Tests for device discovery and information
+3. **TestRoomDeviceRelationships**: Tests for relationships between rooms and devices
+4. **TestAutomationQueries**: Tests for automation and scene queries
+5. **TestComplexQueries**: Tests for multi-entity and complex queries
+6. **TestErrorHandling**: Tests for handling invalid queries and errors
+7. **TestNaturalLanguageParsing**: Tests for query interpretation
+
+Each test follows the Given-When-Then pattern and includes:
+- **Docstring**: Describes the scenario in natural language
+- **Setup (Given)**: Prepares test data and initial state
+- **Action (When)**: Executes the user query or action
+- **Assertion (Then)**: Verifies the expected behavior
+
 ### Running BDD Tests with Mock Data
 The default BDD tests use mock data for fast, reliable testing:
 ```bash
@@ -281,6 +349,51 @@ pytest chat/test_bdd_hybrid.py::TestRoomQueries::test_list_all_rooms -v --integr
 python chat/test_bdd_hybrid.py --integration --verbose
 ```
 
+### Writing Your Own BDD Tests
+
+To add new BDD test scenarios for the chat interface:
+
+```python
+import pytest
+from unittest.mock import AsyncMock
+
+class TestYourFeature:
+    """Test class for your feature area"""
+
+    @pytest.mark.asyncio
+    async def test_your_scenario(self, chat_instance):
+        """
+        GIVEN [initial context/state]
+        WHEN [action occurs]
+        THEN [expected outcome]
+        """
+        # Given - Setup test data
+        chat = chat_instance
+        mock_data = {
+            'success': True,
+            'result': {'results': [...]}
+        }
+        chat.client.execute_mcp_tool.return_value = mock_data
+
+        # When - Execute the action
+        response = await chat.process_query("your test query")
+
+        # Then - Verify the outcome
+        assert response is not None
+        assert "expected text" in response.lower()
+        chat.client.execute_mcp_tool.assert_called_with(
+            "expected_tool",
+            expected_param="value"
+        )
+```
+
+**Best Practices for BDD Tests:**
+1. Keep scenarios focused on one behavior
+2. Use descriptive test names that explain the scenario
+3. Make assertions clear and specific
+4. Test both happy paths and error cases
+5. Group related tests in the same class
+
 #### Test Coverage
 
 The BDD test suites cover:
@@ -316,6 +429,37 @@ chat/test_bdd_integration.py::TestDeviceQueriesIntegration::test_find_device_con
 ...
 ============================== 17 passed in 3.45s ==============================
 ```
+
+### Understanding BDD Test Results
+
+#### Successful Test Output:
+```
+chat/test_bdd_chat.py::TestRoomQueries::test_list_all_rooms PASSED       [  5%]
+```
+- **Test File**: `test_bdd_chat.py`
+- **Test Class**: `TestRoomQueries` (grouping related tests)
+- **Test Method**: `test_list_all_rooms` (specific scenario)
+- **Result**: `PASSED` (behavior matches expectation)
+- **Progress**: `[5%]` (percentage of tests completed)
+
+#### Failed Test Output:
+```
+FAILED chat/test_bdd_chat.py::TestRoomQueries::test_list_all_rooms
+    assert 'living' in response.lower()
+    AssertionError: assert 'living' in 'no rooms found'
+```
+This tells you:
+- The test scenario that failed
+- The specific assertion that didn't pass
+- The actual vs expected values
+
+#### Test Summary:
+```
+============================== 19 passed in 1.20s ==============================
+```
+- Total tests run: 19
+- All passed (green)
+- Execution time: 1.20 seconds
 
 #### Troubleshooting Integration Tests
 
