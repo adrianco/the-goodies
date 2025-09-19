@@ -223,6 +223,116 @@ Compare TinyLlama with Phi-3 (if available):
 python chat/compare_models.py
 ```
 
+## BDD Testing
+
+### Running BDD Tests with Mock Data
+The default BDD tests use mock data for fast, reliable testing:
+```bash
+# Run all BDD tests with mock data
+pytest chat/test_bdd_chat.py -v
+
+# Run specific test class
+pytest chat/test_bdd_chat.py::TestRoomQueries -v
+
+# Run single test
+pytest chat/test_bdd_chat.py::TestRoomQueries::test_list_all_rooms -v
+```
+
+### Running BDD Tests Against Real Server
+You can run the same BDD tests against the actual running chat application:
+
+#### Prerequisites
+1. FunkyGibbon server must be running:
+```bash
+./start_funkygibbon.sh
+```
+
+2. Server must have test data loaded:
+```bash
+cd funkygibbon && python populate_graph_db.py && cd ..
+```
+
+#### Integration Test Commands
+
+**Option 1: Dedicated Integration Tests**
+```bash
+# Run integration tests against real server
+pytest chat/test_bdd_integration.py -v -m integration
+
+# Run specific integration test
+pytest chat/test_bdd_integration.py::TestRoomQueriesIntegration::test_list_all_rooms -v
+
+# Run with custom server URL
+pytest chat/test_bdd_integration.py -v -m integration --server-url http://localhost:8000 --server-password admin
+```
+
+**Option 2: Hybrid Tests (Mock or Real)**
+```bash
+# Run with mock data (default)
+pytest chat/test_bdd_hybrid.py -v
+
+# Run against real server with --integration flag
+pytest chat/test_bdd_hybrid.py -v --integration
+
+# Run specific test against real server
+pytest chat/test_bdd_hybrid.py::TestRoomQueries::test_list_all_rooms -v --integration
+
+# Direct execution with arguments
+python chat/test_bdd_hybrid.py --integration --verbose
+```
+
+#### Test Coverage
+
+The BDD test suites cover:
+- **Room Queries**: List rooms, search specific rooms, room connections
+- **Device Queries**: List devices, search lights, device capabilities
+- **Room-Device Relationships**: Devices in specific rooms
+- **Automation Queries**: List automations, room automations
+- **MCP Tool Testing**: Direct tool execution validation
+- **Natural Language Parsing**: Query interpretation
+- **Error Handling**: Invalid queries and tool errors
+
+#### Integration Test Features
+
+1. **Server Health Check**: Tests skip if server is unavailable
+2. **Real Data Validation**: Tests adapt to actual database content
+3. **MCP Tool Verification**: Validates all 12 MCP tools work correctly
+4. **Flexible Configuration**: Supports custom server URLs and passwords
+5. **Hybrid Mode**: Same tests can run with mock or real data
+
+#### Expected Integration Test Output
+
+```
+$ pytest chat/test_bdd_integration.py -v --integration
+============================= test session starts ==============================
+collecting ... collected 17 items
+
+chat/test_bdd_integration.py::TestRoomQueriesIntegration::test_list_all_rooms PASSED
+chat/test_bdd_integration.py::TestRoomQueriesIntegration::test_search_specific_room PASSED
+chat/test_bdd_integration.py::TestRoomQueriesIntegration::test_get_room_connections PASSED
+chat/test_bdd_integration.py::TestDeviceQueriesIntegration::test_list_all_devices PASSED
+chat/test_bdd_integration.py::TestDeviceQueriesIntegration::test_search_lights PASSED
+chat/test_bdd_integration.py::TestDeviceQueriesIntegration::test_find_device_controls PASSED
+...
+============================== 17 passed in 3.45s ==============================
+```
+
+#### Troubleshooting Integration Tests
+
+**Issue: Tests skipped with "FunkyGibbon server not available"**
+- Ensure server is running: `./start_funkygibbon.sh`
+- Check server health: `curl http://localhost:8000/health`
+- Verify password: Default is "admin" in dev mode
+
+**Issue: Tests fail with empty results**
+- Load test data: `cd funkygibbon && python populate_graph_db.py`
+- Verify data exists: `oook stats`
+
+**Issue: Connection refused errors**
+- Check server port: Default is 8000
+- Verify no firewall blocking localhost connections
+- Try explicit URL: `--server-url http://127.0.0.1:8000`
+
 ## API Integration
 
 The chat interface uses the blowing-off client to execute MCP tools. The flow is:
