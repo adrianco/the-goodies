@@ -33,3 +33,7 @@ aiohttp>=3.9.0
 python-dotenv>=1.0.0
 click>=8.1.0
 rich>=13.0.0
+
+# Chat Interface & LLM Support
+llama-cpp-python>=0.3.0
+diskcache>=5.6.0
