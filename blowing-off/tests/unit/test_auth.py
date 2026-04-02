@@ -179,9 +179,18 @@ class TestAuthManager:
         mock_response = AsyncMock()
         mock_response.status = 401
 
-        with patch('aiohttp.ClientSession') as mock_session:
-            mock_session.return_value.__aenter__.return_value.post.return_value.__aenter__.return_value = mock_response
+        # Create proper async context manager mock
+        mock_post = AsyncMock()
+        mock_post.__aenter__.return_value = mock_response
+        mock_post.__aexit__.return_value = None
 
+        # Create session mock
+        mock_session_inst = AsyncMock()
+        mock_session_inst.__aenter__.return_value = mock_session_inst
+        # Make post a regular Mock (not AsyncMock) that returns the async context manager
+        mock_session_inst.post = Mock(return_value=mock_post)
+
+        with patch('aiohttp.ClientSession', return_value=mock_session_inst):
             result = await auth_manager.login_admin("wrong_password")
 
             assert result == False
@@ -190,9 +199,17 @@ class TestAuthManager:
     @pytest.mark.asyncio
     async def test_login_admin_network_error(self, auth_manager):
         """Test admin login with network error."""
-        with patch('aiohttp.ClientSession') as mock_session:
-            mock_session.return_value.__aenter__.return_value.post.side_effect = aiohttp.ClientError()
+        # Create a mock async context manager that raises on enter
+        mock_post = AsyncMock()
+        mock_post.__aenter__.side_effect = aiohttp.ClientError()
 
+        # Create session mock
+        mock_session_inst = AsyncMock()
+        mock_session_inst.__aenter__.return_value = mock_session_inst
+        # Make post a regular Mock (not AsyncMock) that returns the async context manager
+        mock_session_inst.post = Mock(return_value=mock_post)
+
+        with patch('aiohttp.ClientSession', return_value=mock_session_inst):
             result = await auth_manager.login_admin("admin_password")
 
             assert result == False
