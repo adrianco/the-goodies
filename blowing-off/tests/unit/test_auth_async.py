@@ -83,10 +83,17 @@ class TestAuthManagerAsync:
     @pytest.mark.asyncio
     async def test_login_admin_network_error(self, auth_manager):
         """Test admin login with network error."""
-        mock_session = MagicMock()
-        mock_session.__aenter__.return_value.post.side_effect = aiohttp.ClientError()
+        # Create proper async context manager mock that raises on enter
+        mock_post = AsyncMock()
+        mock_post.__aenter__.side_effect = aiohttp.ClientError()
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
+        # Create session mock
+        mock_session_inst = AsyncMock()
+        mock_session_inst.__aenter__.return_value = mock_session_inst
+        # Make post a regular Mock (not AsyncMock) that returns the async context manager
+        mock_session_inst.post = MagicMock(return_value=mock_post)
+
+        with patch('aiohttp.ClientSession', return_value=mock_session_inst):
             result = await auth_manager.login_admin("admin_password")
 
             assert result is False
@@ -220,10 +227,17 @@ class TestAuthManagerAsync:
         auth_manager.token = "old-token"
         auth_manager.role = "admin"
 
-        mock_session = MagicMock()
-        mock_session.__aenter__.return_value.post.side_effect = aiohttp.ClientError()
+        # Create proper async context manager mock that raises on enter
+        mock_post = AsyncMock()
+        mock_post.__aenter__.side_effect = aiohttp.ClientError()
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
+        # Create session mock
+        mock_session_inst = AsyncMock()
+        mock_session_inst.__aenter__.return_value = mock_session_inst
+        # Make post a regular Mock (not AsyncMock) that returns the async context manager
+        mock_session_inst.post = MagicMock(return_value=mock_post)
+
+        with patch('aiohttp.ClientSession', return_value=mock_session_inst):
             result = await auth_manager.refresh_token()
 
             assert result is False
@@ -278,10 +292,17 @@ class TestAuthManagerAsync:
         auth_manager.role = "admin"
         auth_manager.token = "admin-token"
 
-        mock_session = MagicMock()
-        mock_session.__aenter__.return_value.post.side_effect = aiohttp.ClientError()
+        # Create proper async context manager mock that raises on enter
+        mock_post = AsyncMock()
+        mock_post.__aenter__.side_effect = aiohttp.ClientError()
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
+        # Create session mock
+        mock_session_inst = AsyncMock()
+        mock_session_inst.__aenter__.return_value = mock_session_inst
+        # Make post a regular Mock (not AsyncMock) that returns the async context manager
+        mock_session_inst.post = MagicMock(return_value=mock_post)
+
+        with patch('aiohttp.ClientSession', return_value=mock_session_inst):
             result = await auth_manager.generate_guest_qr()
 
             assert result is None

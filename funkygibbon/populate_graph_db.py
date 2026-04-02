@@ -27,7 +27,8 @@ from sqlalchemy import text
 from inbetweenies.models import Base, Entity, EntityType, SourceType, EntityRelationship, RelationshipType, Blob, BlobType, BlobStatus
 
 # Default database URL - can be overridden by environment variable
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./funkygibbon.db")
+# Use 'or' to handle empty string case
+DATABASE_URL = os.environ.get("DATABASE_URL") or "sqlite+aiosqlite:///./funkygibbon.db"
 
 
 class GraphPopulator:
