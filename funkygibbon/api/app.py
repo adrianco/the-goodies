@@ -71,7 +71,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..database import init_db
-from .routers import sync_metadata, graph, mcp, auth
+from .routers import sync_metadata, graph, mcp, auth, backup
 from . import sync as enhanced_sync
 from ..auth import auth_rate_limiter, audit_logger
 
@@ -122,6 +122,7 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(auth.router, prefix=f"{settings.api_prefix}", tags=["authentication"])
+    app.include_router(backup.router, prefix=f"{settings.api_prefix}", tags=["backup"])
     app.include_router(enhanced_sync.router, tags=["sync"])
     app.include_router(sync_metadata.router, prefix=f"{settings.api_prefix}/sync-metadata", tags=["sync-metadata"])
     # Graph and MCP routers (primary functionality)
