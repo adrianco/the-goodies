@@ -17,6 +17,7 @@ duplicate work.
 from __future__ import annotations
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -24,16 +25,25 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-LIVE_DB = Path("/Users/rolandcanyon/the-goodies/funkygibbon.db")
-LOCAL_DIR = Path("/Users/rolandcanyon/the-goodies/backups")
-ICLOUD_DIR = Path(
-    "/Users/rolandcanyon/Library/Mobile Documents/com~apple~CloudDocs/Documents/FunkyGibbon-Backups"
-)
-STATE_FILE = LOCAL_DIR / ".last-backup.json"
-LOG_FILE = Path("/Users/rolandcanyon/the-goodies/logs/backup-mirror.log")
+# All paths and retention values are configurable via env vars so the script
+# can be pointed at iCloud Drive, Dropbox, a mounted NAS, another machine over
+# SSHFS, etc. Defaults match a typical local funkygibbon checkout.
+LIVE_DB = Path(os.environ.get("FUNKYGIBBON_DB", "./funkygibbon.db")).expanduser().resolve()
+LOCAL_DIR = Path(os.environ.get("FUNKYGIBBON_BACKUP_DIR", "./backups")).expanduser().resolve()
+# Off-machine mirror. Unset or empty → local-only. Typical values:
+#   iCloud:  ~/Library/Mobile Documents/com~apple~CloudDocs/Documents/FunkyGibbon-Backups
+#   Dropbox: ~/Dropbox/FunkyGibbon-Backups
+#   Google Drive (Desktop): ~/Google\ Drive/My\ Drive/FunkyGibbon-Backups
+_mirror = os.environ.get("FUNKYGIBBON_BACKUP_MIRROR_DIR", "").strip()
+MIRROR_DIR = Path(_mirror).expanduser().resolve() if _mirror else None
 
-RETAIN_DAYS = 30
-RETAIN_MAX = 50
+STATE_FILE = LOCAL_DIR / ".last-backup.json"
+LOG_FILE = Path(
+    os.environ.get("FUNKYGIBBON_BACKUP_LOG", str(LOCAL_DIR.parent / "logs" / "backup-mirror.log"))
+).expanduser()
+
+RETAIN_DAYS = int(os.environ.get("FUNKYGIBBON_BACKUP_RETENTION_DAYS", "30"))
+RETAIN_MAX = int(os.environ.get("FUNKYGIBBON_BACKUP_MAX_COUNT", "50"))
 
 
 def log(msg: str) -> None:
@@ -90,13 +100,19 @@ def write_metadata(db_file: Path, digest: str) -> None:
     db_file.with_suffix(".json").write_text(json.dumps(meta, indent=2))
 
 
+def _mirrors() -> list[Path]:
+    """Iterator over the configured backup destinations. MIRROR_DIR is
+    optional — when unset we only write to LOCAL_DIR."""
+    return [LOCAL_DIR] + ([MIRROR_DIR] if MIRROR_DIR else [])
+
+
 def touch_latest_metadata(digest: str) -> int:
     """On an unchanged run, refresh the sidecar metadata of the most recent
     backup in each mirror with a `last_verified_unchanged_at` timestamp. This
     leaves evidence that the checker ran without creating a new snapshot."""
     now = datetime.now(timezone.utc).isoformat()
     touched = 0
-    for directory in (LOCAL_DIR, ICLOUD_DIR):
+    for directory in _mirrors():
         try:
             latest = max(
                 directory.glob("scheduled_*.db"),
@@ -180,9 +196,8 @@ def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     name = f"scheduled_{stamp}.db"
     local_path = LOCAL_DIR / name
-    icloud_path = ICLOUD_DIR / name
 
-    # Snapshot once to local, copy file to iCloud (fast + identical bytes).
+    # Snapshot once to local, then copy bytes to each mirror (fast + identical).
     try:
         snapshot(LIVE_DB, local_path)
         write_metadata(local_path, digest)
@@ -190,22 +205,21 @@ def main() -> int:
         log(f"ERROR: local snapshot failed: {e}")
         return 2
 
-    try:
-        ICLOUD_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(local_path, icloud_path)
-        shutil.copy2(local_path.with_suffix(".json"), icloud_path.with_suffix(".json"))
-    except Exception as e:
-        # Local snapshot is fine; iCloud is best-effort (offline, sync paused, etc.)
-        log(f"WARN: iCloud copy failed (local snapshot still saved): {e}")
+    if MIRROR_DIR is not None:
+        mirror_path = MIRROR_DIR / name
+        try:
+            MIRROR_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_path, mirror_path)
+            shutil.copy2(local_path.with_suffix(".json"), mirror_path.with_suffix(".json"))
+        except Exception as e:
+            # Local snapshot is fine; the mirror is best-effort (sync paused,
+            # network drive offline, cloud client not running, etc.)
+            log(f"WARN: mirror copy to {MIRROR_DIR} failed (local snapshot still saved): {e}")
 
     save_last_hash(digest, datetime.now(timezone.utc).isoformat())
 
-    n_local = prune(LOCAL_DIR)
-    n_icloud = prune(ICLOUD_DIR)
-    log(
-        f"snapshot {name} sha256={digest[:12]}… "
-        f"(pruned local={n_local} icloud={n_icloud})"
-    )
+    pruned = {d.name: prune(d) for d in _mirrors()}
+    log(f"snapshot {name} sha256={digest[:12]}… (pruned {pruned})")
     return 0
 
 
