@@ -74,6 +74,7 @@ from ..database import init_db
 from .routers import sync_metadata, graph, mcp, auth, backup
 from . import sync as enhanced_sync
 from ..auth import auth_rate_limiter, audit_logger
+from ..backup_scheduler import init_scheduler, shutdown_scheduler
 
 
 @asynccontextmanager
@@ -91,10 +92,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     await audit_logger.start_pattern_detection()
     print("Audit logger started")
 
+    # Start backup scheduler
+    scheduler = init_scheduler()
+    scheduler.start()
+    print("Backup scheduler started")
+
     yield
 
     # Shutdown
     print("Shutting down")
+
+    # Stop backup scheduler
+    shutdown_scheduler()
+    print("Backup scheduler stopped")
 
     # Stop background tasks
     await auth_rate_limiter.stop_cleanup_task()

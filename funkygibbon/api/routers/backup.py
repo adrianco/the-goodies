@@ -2,7 +2,8 @@
 Backup and Restore API endpoints.
 
 Provides endpoints for creating, listing, and restoring database backups.
-All endpoints require admin authentication.
+All endpoints require admin authentication. Also includes endpoints for
+managing the automated backup scheduler.
 """
 
 from fastapi import APIRouter, HTTPException, Depends, status
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
 from ...backup import BackupService
+from ...backup_scheduler import get_scheduler
 from ...auth import TokenManager, require_admin
 
 import os
@@ -61,6 +63,23 @@ class RestoreBackupResponse(BaseModel):
     message: str
     backup_id: str
     warning: Optional[str] = None
+
+
+class SchedulerStatusResponse(BaseModel):
+    """Backup scheduler status information."""
+    enabled: bool
+    running: bool
+    interval_hours: int
+    retention_days: int
+    max_count: int
+    next_backup: Optional[str] = None
+    next_cleanup: Optional[str] = None
+
+
+class TriggerBackupResponse(BaseModel):
+    """Response after manually triggering a backup."""
+    backup_id: str
+    message: str
 
 
 # Helper function to verify admin token
@@ -262,4 +281,86 @@ async def delete_backup(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete backup: {str(e)}"
+        )
+
+
+# Scheduler Management Endpoints
+
+@router.get("/scheduler/status", response_model=SchedulerStatusResponse)
+async def get_scheduler_status(
+    token_data: Dict = Depends(verify_admin_token)
+):
+    """
+    Get the current status of the backup scheduler.
+
+    Returns information about scheduler configuration, running state,
+    and next scheduled backup times.
+
+    **Authentication:** Requires admin token
+
+    **Returns:**
+    Scheduler status and configuration
+    """
+    try:
+        scheduler = get_scheduler()
+        status_info = scheduler.get_status()
+        return SchedulerStatusResponse(**status_info)
+
+    except RuntimeError as e:
+        # Scheduler not initialized
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get scheduler status: {str(e)}"
+        )
+
+
+@router.post("/scheduler/trigger", response_model=TriggerBackupResponse, status_code=status.HTTP_201_CREATED)
+async def trigger_backup_now(
+    token_data: Dict = Depends(verify_admin_token)
+):
+    """
+    Manually trigger a backup immediately.
+
+    Creates a backup outside of the normal schedule. Useful for
+    creating a backup before risky operations.
+
+    **Authentication:** Requires admin token
+
+    **Returns:**
+    Information about the created backup
+    """
+    try:
+        scheduler = get_scheduler()
+        backup_id = scheduler.trigger_backup_now()
+
+        return TriggerBackupResponse(
+            backup_id=backup_id,
+            message="Backup triggered successfully"
+        )
+
+    except RuntimeError as e:
+        # Scheduler not initialized - fall back to direct backup service
+        try:
+            backup_id = await backup_service.create_backup(
+                description="Manually triggered backup"
+            )
+            return TriggerBackupResponse(
+                backup_id=backup_id,
+                message="Backup created successfully (scheduler not available)"
+            )
+        except Exception as backup_error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create backup: {str(backup_error)}"
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger backup: {str(e)}"
         )

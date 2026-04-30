@@ -3,17 +3,20 @@ Tests for backup and restore functionality.
 
 Covers both the BackupService class and the backup API endpoints,
 ensuring that database backups including BLOBs are created and
-restored correctly.
+restored correctly. Also tests the automated backup scheduler.
 """
 
 import pytest
 import json
 import shutil
+import time
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
+from unittest.mock import patch, MagicMock
 
 from funkygibbon.backup import BackupService
+from funkygibbon.backup_scheduler import BackupScheduler
 from funkygibbon.database import get_db_context, init_db, engine
 from funkygibbon.config import settings
 
@@ -279,6 +282,197 @@ class TestBackupService:
         assert len(info1["checksum"]) == 64  # SHA-256 produces 64 hex characters
 
 
+class TestBackupScheduler:
+    """Tests for the BackupScheduler class."""
+
+    @pytest.fixture
+    def scheduler_backup_dir(self, tmp_path):
+        """Create a temporary backup directory for scheduler testing (non-async)."""
+        backup_dir = tmp_path / "scheduler_test_backups"
+        backup_dir.mkdir()
+        yield backup_dir
+        # Cleanup
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+
+    @pytest.fixture
+    def scheduler(self, scheduler_backup_dir):
+        """Create a BackupScheduler instance for testing."""
+        backup_service = BackupService(backup_dir=scheduler_backup_dir)
+        # Create scheduler with short interval for testing
+        scheduler = BackupScheduler(
+            backup_service=backup_service,
+            enabled=True,
+            interval_hours=1,
+            retention_days=7,
+            max_count=5
+        )
+        yield scheduler
+        # Cleanup
+        if scheduler.is_running():
+            scheduler.stop()
+
+    def test_scheduler_initialization(self, scheduler):
+        """Test scheduler is initialized with correct configuration."""
+        assert scheduler.enabled is True
+        assert scheduler.interval_hours == 1
+        assert scheduler.retention_days == 7
+        assert scheduler.max_count == 5
+        assert scheduler.is_running() is False
+
+    @pytest.mark.asyncio
+    async def test_scheduler_start_stop(self, scheduler, sample_database):
+        """Test starting and stopping the scheduler."""
+        # Start scheduler
+        scheduler.start()
+        assert scheduler.is_running() is True
+
+        # Stop scheduler
+        scheduler.stop()
+        assert scheduler.is_running() is False
+
+    def test_scheduler_status(self, scheduler):
+        """Test getting scheduler status."""
+        status = scheduler.get_status()
+
+        assert "enabled" in status
+        assert "running" in status
+        assert "interval_hours" in status
+        assert "retention_days" in status
+        assert "max_count" in status
+        assert status["enabled"] is True
+        assert status["interval_hours"] == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_backup_trigger(self, scheduler, sample_database):
+        """Test manually triggering a backup."""
+        # Trigger backup
+        backup_id = scheduler.trigger_backup_now()
+
+        # Verify backup was created
+        assert backup_id is not None
+        assert len(backup_id) == 15
+
+        # Verify backup exists
+        backup_info = await scheduler.backup_service.get_backup_info(backup_id)
+        assert backup_info is not None
+        assert backup_info["integrity_ok"] is True
+
+    def test_scheduled_backup_creation(self, scheduler):
+        """Test that scheduled backups are created."""
+        # Start scheduler
+        scheduler.start()
+
+        # Wait a moment for initial backup to complete
+        time.sleep(2)
+
+        # Check that at least one backup was created (using sync loop)
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        backups = loop.run_until_complete(scheduler.backup_service.list_backups())
+        loop.close()
+
+        assert len(backups) >= 1
+
+        # Stop scheduler
+        scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_backup_cleanup_by_age(self, scheduler, sample_database):
+        """Test cleanup of old backups based on retention days."""
+        # Create multiple backups with different ages
+        old_backup_id = await scheduler.backup_service.create_backup(description="Old backup")
+
+        # Modify metadata to make it appear old
+        metadata_file = scheduler.backup_service.backup_dir / f"funkygibbon_backup_{old_backup_id}.json"
+        with open(metadata_file, 'r') as f:
+            metadata = json.load(f)
+
+        # Set creation date to 8 days ago (beyond 7-day retention)
+        old_date = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+        metadata["created_at"] = old_date
+
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+
+        # Create a recent backup
+        recent_backup_id = await scheduler.backup_service.create_backup(description="Recent backup")
+
+        # Run cleanup
+        result = scheduler._run_cleanup()
+
+        # Verify old backup was deleted
+        old_backup_info = await scheduler.backup_service.get_backup_info(old_backup_id)
+        assert old_backup_info is None
+
+        # Verify recent backup still exists
+        recent_backup_info = await scheduler.backup_service.get_backup_info(recent_backup_id)
+        assert recent_backup_info is not None
+
+        # Verify cleanup stats
+        assert result["deleted_count"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_backup_cleanup_by_count(self, scheduler, sample_database):
+        """Test cleanup when exceeding max backup count."""
+        # Create more backups than max_count
+        backup_ids = []
+        for i in range(7):  # max_count is 5
+            backup_id = await scheduler.backup_service.create_backup(
+                description=f"Backup {i}"
+            )
+            backup_ids.append(backup_id)
+            time.sleep(0.1)  # Small delay to ensure different timestamps
+
+        # Run cleanup
+        result = scheduler._run_cleanup()
+
+        # Should have deleted 2 backups (7 - 5 = 2)
+        assert result["deleted_count"] == 2
+        assert result["remaining_count"] == 5
+
+        # Verify most recent 5 backups still exist
+        remaining_backups = await scheduler.backup_service.list_backups()
+        assert len(remaining_backups) == 5
+
+    def test_scheduler_disabled(self, scheduler_backup_dir):
+        """Test that disabled scheduler doesn't start."""
+        backup_service = BackupService(backup_dir=scheduler_backup_dir)
+        scheduler = BackupScheduler(
+            backup_service=backup_service,
+            enabled=False
+        )
+
+        # Try to start
+        scheduler.start()
+
+        # Should not be running
+        assert scheduler.is_running() is False
+
+    @pytest.mark.asyncio
+    async def test_scheduler_idempotent_start(self, scheduler, sample_database):
+        """Test that starting an already running scheduler is safe."""
+        scheduler.start()
+        assert scheduler.is_running() is True
+
+        # Start again
+        scheduler.start()
+        assert scheduler.is_running() is True
+
+        scheduler.stop()
+
+    def test_scheduler_idempotent_stop(self, scheduler):
+        """Test that stopping an already stopped scheduler is safe."""
+        # Stop without starting
+        scheduler.stop()
+        assert scheduler.is_running() is False
+
+        # Stop again
+        scheduler.stop()
+        assert scheduler.is_running() is False
+
+
 @pytest.mark.integration
 class TestBackupAPI:
     """Integration tests for backup API endpoints."""
@@ -376,3 +570,47 @@ class TestBackupAPI:
         # Verify backup is deleted
         info = await backup_service.get_backup_info(backup_id)
         assert info is None
+
+    @pytest.mark.asyncio
+    async def test_get_scheduler_status_endpoint(self, client, auth_token):
+        """Test GET /api/v1/backup/scheduler/status endpoint."""
+        response = client.get(
+            "/api/v1/backup/scheduler/status",
+            headers={"Authorization": f"Bearer {auth_token}"}
+        )
+
+        # Should return scheduler status (may be running or not)
+        assert response.status_code in [200, 503]
+
+        if response.status_code == 200:
+            data = response.json()
+            assert "enabled" in data
+            assert "running" in data
+            assert "interval_hours" in data
+            assert "retention_days" in data
+            assert "max_count" in data
+
+    @pytest.mark.asyncio
+    async def test_trigger_backup_endpoint(self, client, auth_token, sample_database):
+        """Test POST /api/v1/backup/scheduler/trigger endpoint."""
+        response = client.post(
+            "/api/v1/backup/scheduler/trigger",
+            headers={"Authorization": f"Bearer {auth_token}"}
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert "backup_id" in data
+        assert "message" in data
+        assert len(data["backup_id"]) == 15
+
+    @pytest.mark.asyncio
+    async def test_scheduler_endpoints_without_auth_fail(self, client):
+        """Test that scheduler endpoints require authentication."""
+        # Test status endpoint
+        response = client.get("/api/v1/backup/scheduler/status")
+        assert response.status_code == 403
+
+        # Test trigger endpoint
+        response = client.post("/api/v1/backup/scheduler/trigger")
+        assert response.status_code == 403
