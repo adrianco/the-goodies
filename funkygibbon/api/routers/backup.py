@@ -13,7 +13,8 @@ from typing import List, Optional, Dict, Any
 
 from ...backup import BackupService
 from ...backup_scheduler import get_scheduler
-from ...auth import TokenManager, require_admin
+from ...auth import TokenManager
+from .auth import require_admin
 
 import os
 
