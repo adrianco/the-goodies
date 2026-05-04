@@ -56,9 +56,24 @@ console = Console()
 class MCPClient:
     """Client for interacting with FunkyGibbon MCP server"""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, auth_token: Optional[str] = None):
         self.base_url = base_url.rstrip('/')
-        self.client = httpx.Client(timeout=30.0)
+        headers = {}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        elif not auth_token:
+            # Auto-login as admin with default password
+            try:
+                resp = httpx.post(
+                    f"{base_url.rstrip('/')}/api/v1/auth/admin/login",
+                    json={"password": "admin"},
+                    timeout=10.0,
+                )
+                if resp.status_code == 200:
+                    headers["Authorization"] = f"Bearer {resp.json()['access_token']}"
+            except Exception:
+                pass
+        self.client = httpx.Client(timeout=30.0, headers=headers)
 
     def list_tools(self) -> List[Dict[str, Any]]:
         """List available MCP tools"""
@@ -125,15 +140,17 @@ class MCPClient:
 @click.group()
 @click.option('--server-url', '-s', default='http://localhost:8000',
               help='FunkyGibbon server URL')
+@click.option('--auth-token', '-t', default=None, envvar='FUNKYGIBBON_TOKEN',
+              help='Bearer token (auto-logins as admin if not provided)')
 @click.pass_context
-def cli(ctx, server_url):
+def cli(ctx, server_url, auth_token):
     """Oook - CLI for testing FunkyGibbon MCP server
 
     This tool provides direct access to MCP tools and graph operations
     for development and testing purposes.
     """
     ctx.ensure_object(dict)
-    ctx.obj['client'] = MCPClient(server_url)
+    ctx.obj['client'] = MCPClient(server_url, auth_token=auth_token)
 
 
 @cli.command()

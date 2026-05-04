@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
+    # Backup Scheduler
+    backup_schedule_enabled: bool = Field(default=True, validation_alias="BACKUP_SCHEDULE_ENABLED")
+    backup_schedule_interval_hours: int = Field(default=24, validation_alias="BACKUP_SCHEDULE_INTERVAL_HOURS")
+    backup_retention_days: int = Field(default=30, validation_alias="BACKUP_RETENTION_DAYS")
+    backup_max_count: int = Field(default=10, validation_alias="BACKUP_MAX_COUNT")
+
 
 # Global settings instance
 settings = Settings()
