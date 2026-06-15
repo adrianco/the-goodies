@@ -59,21 +59,21 @@ class TestConflictResolver:
         assert "local has newer timestamp" in resolution.reason
         assert resolution.timestamp_diff_ms < 0
 
-    def test_resolve_with_same_timestamp_sync_id_tiebreaker(self):
-        """Test resolution using sync_id when timestamps are equal."""
+    def test_resolve_with_same_timestamp_version_tiebreaker(self):
+        """Within 1s the greater version string wins (canonical, PROTOCOL.md §7)."""
         base_time = datetime.now(timezone.utc)
 
         local = {
             "id": "test-entity",
             "updated_at": base_time,
-            "sync_id": "aaa-sync",
+            "version": "2026-06-15T10:00:00+00:00-000001-alice",
             "content": {"value": 100}
         }
 
         remote = {
             "id": "test-entity",
             "updated_at": base_time,
-            "sync_id": "bbb-sync",  # Higher lexicographically
+            "version": "2026-06-15T10:00:00+00:00-000002-alice",  # greater
             "content": {"value": 200}
         }
 
@@ -81,7 +81,7 @@ class TestConflictResolver:
 
         assert resolution.winner == remote
         assert resolution.loser == local
-        assert "sync_id" in resolution.reason
+        assert "version" in resolution.reason
         assert abs(resolution.timestamp_diff_ms) < 1000
 
     def test_resolve_with_string_timestamps(self):
@@ -155,21 +155,21 @@ class TestConflictResolver:
         assert "remote has newer timestamp" in resolution.reason
         assert resolution.timestamp_diff_ms == 1800000  # 30 minutes in milliseconds
 
-    def test_resolve_with_none_sync_id(self):
-        """Test resolution when sync_id is None or missing."""
+    def test_resolve_with_missing_version(self):
+        """Within 1s and both versions absent/empty, local wins deterministically."""
         base_time = datetime.now(timezone.utc)
 
         local = {
             "id": "test-entity",
             "updated_at": base_time,
-            "sync_id": None,
+            "version": None,
             "content": {"value": 100}
         }
 
         remote = {
             "id": "test-entity",
             "updated_at": base_time,
-            # Missing sync_id
+            # Missing version
             "content": {"value": 200}
         }
 
@@ -178,7 +178,7 @@ class TestConflictResolver:
         # With both None/missing, local wins (empty string comparison)
         assert resolution.winner == local
         assert resolution.loser == remote
-        assert "sync_id" in resolution.reason
+        assert "version" in resolution.reason
 
     def test_resolve_with_mixed_timestamp_types(self):
         """Test resolution with mixed datetime and string timestamps."""

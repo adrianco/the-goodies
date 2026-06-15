@@ -91,3 +91,6 @@ class SyncResponse(BaseModel):
     vector_clock: VectorClock = Field(default_factory=VectorClock)
     cursor: Optional[str] = None
     sync_stats: SyncStats = Field(default_factory=SyncStats)
+    # UTC ISO-8601 server clock at response time. The client persists this and
+    # sends it back as filters.since on the next delta sync (PROTOCOL.md §4).
+    server_time: Optional[str] = None

@@ -86,9 +86,8 @@ class VersionManager:
         self.db_session = db_session
 
     def create_version(self, entity: Entity, parent_versions: List[str]) -> str:
-        """Create new version with parent tracking"""
-        timestamp = datetime.now(timezone.utc).isoformat()
-        return f"{timestamp}Z-{entity.user_id}"
+        """Create a new version string (canonical format, see PROTOCOL.md §2)."""
+        return Entity.create_version(entity.user_id)
 
     async def get_version_history(self, entity_id: str) -> List[Entity]:
         """Get complete version history for entity"""

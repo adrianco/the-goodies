@@ -58,8 +58,12 @@ class TestVersionManager:
 
         version = version_manager.create_version(sample_entity, [])
 
-        assert version.endswith(f"Z-{sample_entity.user_id}")
+        # Canonical format {utc-iso8601}-{counter:06d}-{user_id}: no doubled Z,
+        # ends with the user id, and parses back to a UTC timestamp (PROTOCOL.md §2).
+        assert "Z-" not in version
+        assert version.endswith(f"-{sample_entity.user_id}")
         assert "T" in version  # ISO format timestamp
+        assert Entity.version_timestamp(version) is not None
 
     @pytest.mark.asyncio
     async def test_merge_versions(self, async_session):
