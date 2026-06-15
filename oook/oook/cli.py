@@ -39,7 +39,9 @@ comprehensive interface to smart home system capabilities.
 """
 
 import json
+import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import click
@@ -52,13 +54,25 @@ from rich.panel import Panel
 
 console = Console()
 
+# Where `funkygibbon setup-auth` writes oook's server URL + bearer token.
+CONFIG_PATH = Path(os.path.expanduser("~/.oook/config.json"))
+
+
+def load_config() -> Dict[str, Any]:
+    """Read ~/.oook/config.json if present (written by `funkygibbon setup-auth`)."""
+    try:
+        return json.loads(CONFIG_PATH.read_text())
+    except (FileNotFoundError, ValueError):
+        return {}
+
 
 class MCPClient:
     """Client for interacting with FunkyGibbon MCP server"""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, auth_token: Optional[str] = None):
         self.base_url = base_url.rstrip('/')
-        self.client = httpx.Client(timeout=30.0)
+        headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+        self.client = httpx.Client(timeout=30.0, headers=headers)
 
     def list_tools(self) -> List[Dict[str, Any]]:
         """List available MCP tools"""
@@ -123,17 +137,30 @@ class MCPClient:
 
 
 @click.group()
-@click.option('--server-url', '-s', default='http://localhost:8000',
-              help='FunkyGibbon server URL')
+@click.option('--server-url', '-s', default=None,
+              help='FunkyGibbon server URL (default: config or http://localhost:8000)')
+@click.option('--auth-token', '-T', default=None,
+              help='Bearer token (default: $FUNKYGIBBON_AUTH_TOKEN or ~/.oook/config.json)')
 @click.pass_context
-def cli(ctx, server_url):
+def cli(ctx, server_url, auth_token):
     """Oook - CLI for testing FunkyGibbon MCP server
 
     This tool provides direct access to MCP tools and graph operations
     for development and testing purposes.
+
+    The server now requires authentication. Run `funkygibbon setup-auth` on the
+    server to mint a token and write ~/.oook/config.json, or pass --auth-token /
+    set $FUNKYGIBBON_AUTH_TOKEN.
     """
+    config = load_config()
+    # Precedence: explicit flag > environment > config file > built-in default.
+    server_url = server_url or os.environ.get('FUNKYGIBBON_SERVER_URL') \
+        or config.get('server_url') or 'http://localhost:8000'
+    auth_token = auth_token or os.environ.get('FUNKYGIBBON_AUTH_TOKEN') \
+        or config.get('auth_token')
+
     ctx.ensure_object(dict)
-    ctx.obj['client'] = MCPClient(server_url)
+    ctx.obj['client'] = MCPClient(server_url, auth_token=auth_token)
 
 
 @cli.command()

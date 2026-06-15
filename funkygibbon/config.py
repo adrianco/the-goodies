@@ -53,7 +53,11 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_file_encoding="utf-8"
+        env_file_encoding="utf-8",
+        # The .env also carries auth keys (JWT_SECRET, ADMIN_PASSWORD_HASH,
+        # FUNKYGIBBON_TEST_MODE, ...) consumed directly via os.getenv elsewhere.
+        # Ignore anything that is not a Settings field instead of erroring.
+        extra="ignore",
     )
 
     # Database
