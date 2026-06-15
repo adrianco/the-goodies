@@ -27,12 +27,16 @@ identical code.
 ## One command
 
 The server runs as the standard macOS launchd LaunchAgent (`com.funkygibbon`),
-so the script stops/starts it for you — you normally pass only `--tag`:
+so the script stops/starts it for you, and `--tag` defaults to the latest
+release — so usually you just run:
 
 ```bash
-scripts/upgrade.sh --tag vX.Y.Z --dry-run     # preview, change nothing
-scripts/upgrade.sh --tag vX.Y.Z               # do it
+scripts/upgrade.sh --dry-run     # preview the latest release, change nothing
+scripts/upgrade.sh               # upgrade to the latest release
 ```
+
+Pin a specific release with `--tag vX.Y.Z` (e.g. to put both installs on the
+exact same code).
 
 If this install configures auth for the first time (rather than via the launchd
 start script), add one of:
