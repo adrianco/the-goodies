@@ -4,7 +4,16 @@
 
 The Goodies is a modern smart home knowledge graph data store layer built around the **Model Context Protocol (MCP)** architecture. The system provides a unified interface for managing smart home devices, relationships, and automations through a graph-based data model.
 
-**Current Status**: ✅ **Production Ready** - All tests passing (225/225), comprehensive MCP functionality, full client-server synchronization, and enterprise-grade security features.
+**Current status**: a working single-house reference implementation — authenticated
+data endpoints, a protocol-correct sync engine (see
+[`inbetweenies/PROTOCOL.md`](inbetweenies/PROTOCOL.md)), 12 MCP tools, backup/restore,
+and data-migration + upgrade tooling. The Python **blowing-off** client also runs
+as an MCP server, mirroring the TypeScript port (*KittenKong*). CI runs the test
+suites on Linux and macOS. Released tags: see the GitHub releases (latest `v0.2.2`).
+
+> ⚠️ Authentication is enforced: every data endpoint (`/graph`, `/mcp`, `/sync`,
+> `/sync-metadata`, `/backup`) requires a bearer token. Only `/health` and
+> `/api/v1/auth/*` are public. Configure it with `funkygibbon setup-auth`.
 
 **Related Projects**: adrianco/consciousness is an early prototype of the backend server that will be rewritten from scratch later. adrianco/c11s-house-ios is a native Swift iOS app that is the front end for the system. This repo is the knowledge graph protocol that interfaces the app to the backend, and includes the **Blowing-Off** Python client (a reference implementation, and now also an MCP server). The maintained port of the client is **KittenKong** (TypeScript, rolandcanyon-cmd/the-goodies-typescript). An earlier Swift port (adrianco/the-goodies-swift / *WildThing*) is untested and has been abandoned.
 
@@ -182,23 +191,20 @@ blowing-off execute get_devices_in_room -a room_id="room-123"
 
 The system has comprehensive test coverage:
 
-- **Unit Tests**: 150+ passing
-- **Integration Tests**: 40+ passing  
-- **Security Tests**: 21 passing
-- **Performance Tests**: 10 passing
-- **E2E Tests**: 10 passing
-- **UGC Tests**: 14 passing
-- **Total**: 225 tests passing (60% coverage)
+The maintained suites are `funkygibbon/tests`, `inbetweenies/tests`, and
+`blowing-off/tests` (all synchronous), plus `tests/` for cross-cutting cases. CI
+runs them on Linux and macOS across Python 3.11/3.12. (Windows is intentionally
+excluded — see the parked SQLite-on-Windows issue.)
 
 ```bash
-# Run all tests
-python -m pytest -v
+# Maintained suites
+PYTHONPATH=inbetweenies:funkygibbon python -m pytest funkygibbon/tests inbetweenies/tests
 
-# Run with coverage
+# Client (blowing-off) unit tests
+PYTHONPATH=inbetweenies:blowing-off python -m pytest blowing-off/tests/unit
+
+# With coverage
 python -m pytest --cov=funkygibbon --cov=blowingoff --cov=inbetweenies --cov-report=term-missing
-
-# Run security tests only
-python -m pytest tests/auth/ -v
 ```
 
 ## 📁 Project Structure
@@ -222,10 +228,15 @@ the-goodies/
 ├── inbetweenies/        # Shared protocol (Python)
 │   ├── models/          # Entity and relationship models
 │   ├── mcp/             # MCP tool implementations
-│   └── sync/            # Synchronization protocol
-└── plans/               # Documentation and plans
-    └── archive/         # Archived documentation
+│   ├── sync/            # Synchronization protocol
+│   └── PROTOCOL.md      # Authoritative inbetweenies-v2 spec
+├── scripts/             # upgrade.sh and helpers
+├── UPGRADE.md           # Install upgrade runbook
+└── archive/             # Superseded / historical docs (see archive/README.md)
 ```
+
+> blowing-off also ships an MCP **server** (`blowingoff/mcp/server.py`) and
+> funkygibbon includes `migrate` and `setup_auth` tools.
 
 ## 🌟 Key Features
 
@@ -236,7 +247,9 @@ the-goodies/
 - ✅ **Conflict Resolution** - Multiple strategies available
 - ✅ **Search & Discovery** - Full-text entity search
 - ✅ **CLI Interface** - Both server and client CLIs
-- ✅ **Production Ready** - 225 tests passing (including 14 UGC tests), 60% coverage
+- ✅ **MCP Server Client** - blowing-off runs as an MCP server (`python -m blowingoff.mcp.server`)
+- ✅ **Authentication** - bearer-token auth on all data endpoints; `funkygibbon setup-auth`
+- ✅ **Backup / Restore** - with an automated scheduler
 - ✅ **User Generated Content** - Support for PDFs, photos, and user notes
 - ✅ **BLOB Storage** - Binary data storage with sync capabilities
 - ✅ **Device-App Integration** - Link devices to their control apps
@@ -444,20 +457,21 @@ curl -X POST http://localhost:8000/api/v1/auth/guest/generate-qr \
 
 ## 📚 Documentation
 
-- [Human Testing Guide](plans/HUMAN_TESTING.md) - Step-by-step testing
-- [Architecture Documentation](architecture/) - System design
-- [API Documentation](architecture/api/) - REST endpoints
-- [Phase Summaries](funkygibbon/) - Implementation history
+- [Protocol spec](inbetweenies/PROTOCOL.md) — authoritative inbetweenies-v2 sync protocol
+- [UPGRADE.md](UPGRADE.md) — install upgrade runbook
+- [funkygibbon/README.md](funkygibbon/README.md) — server
+- [blowing-off/README.md](blowing-off/README.md) — client + MCP server
+- [archive/](archive/) — superseded / historical design docs
 
-## 🎯 Status: Production Ready
+## 🎯 Status
 
-The system is fully functional with:
-- 225/225 tests passing (including UGC features)
-- Complete MCP tool suite working
-- Client-server synchronization operational
-- Full human testing scenarios verified
-- User Generated Content support (PDFs, photos, notes)
-- BLOB storage with sync capabilities
-- Zero remaining issues
+A working single-house reference implementation:
+- Authenticated data endpoints (bearer token), `funkygibbon setup-auth`
+- Protocol-correct sync (canonical versions, server_time watermark, one conflict
+  resolver, tombstone deletes)
+- 12 MCP tools; blowing-off also runs as an MCP server
+- Backup/restore + scheduler; data-migration and upgrade tooling
+- User Generated Content (PDFs, photos, notes) with BLOB storage
+- CI green on Linux/macOS
 
 Ready for deployment and use! 🚀

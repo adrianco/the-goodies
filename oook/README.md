@@ -23,6 +23,20 @@ Or install dependencies directly:
 pip install click httpx rich
 ```
 
+## Authentication
+
+The server requires a bearer token on all data endpoints. oook resolves the token
+(and server URL) in order: the `--auth-token` / `--server-url` flags, the
+`FUNKYGIBBON_AUTH_TOKEN` / `FUNKYGIBBON_SERVER_URL` environment variables, then
+`~/.oook/config.json`. Running `funkygibbon setup-auth` on the server writes that
+config file, so after setup `oook` works with no extra flags.
+
+```bash
+oook --auth-token "$TOKEN" tools          # explicit token
+FUNKYGIBBON_AUTH_TOKEN=$TOKEN oook tools  # via environment
+oook tools                                # using ~/.oook/config.json
+```
+
 ## Usage
 
 ### Basic Commands

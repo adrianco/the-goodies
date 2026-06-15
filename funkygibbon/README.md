@@ -1,146 +1,64 @@
-# FunkyGibbon - Simplified Smart Home Backend
+# FunkyGibbon
 
-A lightweight Python backend for The Goodies smart home knowledge graph system, designed for single-house deployments with SQLite storage and last-write-wins conflict resolution.
+The Python backend server for The Goodies — a single-house smart-home **knowledge
+graph**. FastAPI + async SQLAlchemy over SQLite, serving a generic
+**Entity / Relationship** graph (not a HomeKit Home/Room/Accessory model) with
+immutable versioning, the inbetweenies-v2 sync protocol, 12 MCP tools, and
+backup/restore.
 
-## Features
+> The old HomeKit-style REST API documentation has been retired to
+> [`../archive/funkygibbon-README-homekit-api.md`](../archive/funkygibbon-README-homekit-api.md).
 
-- **Simple Scale**: Designed for 1 house, ~300 entities, 3-5 users
-- **SQLite Storage**: Single file database with optimizations
-- **Last-Write-Wins**: Simple timestamp-based conflict resolution
-- **REST API**: FastAPI-based endpoints for all entities
-- **Type Safety**: Full Python 3.11+ type hints
-- **Async/Await**: Modern async architecture throughout
+## Run
 
-## Quick Start
-
-1. Install dependencies:
 ```bash
-cd funkygibbon
-pip install -r requirements.txt
-# or with poetry
-poetry install
+pip install -r funkygibbon/requirements.txt
+python -m funkygibbon                 # serves on http://localhost:8000
 ```
 
-2. Populate the database and run the server:
+API docs at `/docs`. Health at `/health`.
+
+## Authentication
+
+All data endpoints require a bearer token — only `/health` and `/api/v1/auth/*`
+are public. Configure auth (and mint a client token) with:
+
 ```bash
-# Option A: Run everything from project root (recommended)
-cd ..  # go to project root
-python funkygibbon/populate_db.py  # Creates DB in project root
-python -m funkygibbon              # Uses DB in project root
-
-# Option B: Move database after population
-cd funkygibbon
-python populate_db.py              # Creates DB in funkygibbon/
-mv funkygibbon.db ..               # Move to project root
-cd ..
-python -m funkygibbon              # Uses DB in project root
+python -m funkygibbon.setup_auth --admin-password 'strong-pw'   # or --test-mode
 ```
 
-3. Access the API:
-- Root: http://localhost:8000
-- API Docs: http://localhost:8000/docs
-- Health: http://localhost:8000/health
+- `--admin-password` stores an argon2 hash; `--test-mode` enables an explicit,
+  opt-in test password (`FUNKYGIBBON_TEST_MODE`). There is **no** silent default
+  password, and the server fails closed if no JWT secret is configured.
+- See [`../UPGRADE.md`](../UPGRADE.md) for the full auth/migration story.
 
-## API Endpoints
+## Endpoints (all under `/api/v1`, bearer token required except auth/health)
 
-### Homes (HomeKit HMHome)
-- `POST /api/v1/homes/` - Create home
-- `GET /api/v1/homes/{id}` - Get home
-- `GET /api/v1/homes/` - List homes
-- `PUT /api/v1/homes/{id}` - Update home
-- `DELETE /api/v1/homes/{id}` - Delete home
+- **`/graph/*`** — entities & relationships: create/get/list/update, versions,
+  search, path-finding, connected/similar, statistics.
+- **`/mcp/*`** — list and execute the 12 MCP tools.
+- **`/sync/`** — the inbetweenies-v2 sync endpoint (see
+  [`../inbetweenies/PROTOCOL.md`](../inbetweenies/PROTOCOL.md)).
+- **`/sync-metadata/*`** — per-client sync metadata.
+- **`/backup/*`** — create/list/restore/delete backups; scheduler status/trigger.
+- **`/auth/*`** — admin login, guest QR, token refresh (public where appropriate).
 
-### Rooms (HomeKit HMRoom)
-- `POST /api/v1/rooms/` - Create room
-- `GET /api/v1/rooms/{id}` - Get room
-- `GET /api/v1/rooms/?home_id={id}` - List rooms
-- `PUT /api/v1/rooms/{id}` - Update room
-- `DELETE /api/v1/rooms/{id}` - Delete room
+## Tooling
 
-### Accessories (HomeKit HMAccessory)
-- `POST /api/v1/accessories/` - Create accessory
-- `GET /api/v1/accessories/{id}` - Get accessory
-- `GET /api/v1/accessories/?home_id={id}` - List accessories
-- `PUT /api/v1/accessories/{id}` - Update accessory
-- `DELETE /api/v1/accessories/{id}` - Delete accessory
+- `python -m funkygibbon.migrate` — one-time data migration to the canonical
+  protocol shape (version strings, inline photos → blobs). Dry-run by default.
+- `python -m funkygibbon.setup_auth` — configure auth / mint client tokens.
+- `scripts/upgrade.sh` + [`../UPGRADE.md`](../UPGRADE.md) — orchestrated install upgrade.
 
-### Services (HomeKit HMService)
-- `POST /api/v1/services/` - Create service
-- `GET /api/v1/services/{id}` - Get service
-- `GET /api/v1/services/?accessory_id={id}` - List services
-- `DELETE /api/v1/services/{id}` - Delete service
+## Data model
 
-### Characteristics (HomeKit HMCharacteristic)
-- `GET /api/v1/characteristics/{id}` - Get characteristic
-- `PUT /api/v1/characteristics/{id}/value` - Update value
+Generic `Entity` (composite key `(id, version)`, immutable, `parent_versions`
+DAG) and `EntityRelationship`. Entity types: home, room, device, zone, door,
+window, procedure, manual, note, schedule, automation, app. Deletes are
+**tombstones** (a new version with `content.deleted = true`).
 
-### Users (HomeKit HMUser)
-- `POST /api/v1/users/` - Create user
-- `GET /api/v1/users/{id}` - Get user
-- `GET /api/v1/users/?home_id={id}` - List users
-- `PUT /api/v1/users/{id}` - Update user
-- `DELETE /api/v1/users/{id}` - Delete user
+## Tests
 
-### Sync (Inbetweenies Protocol)
-- `POST /api/v1/sync/request` - Request sync delta from server
-- `POST /api/v1/sync/push` - Push changes to server
-- `POST /api/v1/sync/ack` - Acknowledge sync completion
-
-## Configuration
-
-Environment variables:
-- `DATABASE_URL` - SQLite connection string (default: `sqlite+aiosqlite:///./funkygibbon.db`)
-- `API_HOST` - API host (default: `0.0.0.0`)
-- `API_PORT` - API port (default: `8000`)
-- `SECRET_KEY` - Secret key for security
-- `LOG_LEVEL` - Logging level (default: `INFO`)
-
-## Testing
-
-Run tests:
 ```bash
-pytest tests/
-# or specific test
-python -m funkygibbon.tests.test_basic
+PYTHONPATH=inbetweenies:funkygibbon python -m pytest funkygibbon/tests
 ```
-
-## Architecture
-
-```
-funkygibbon/
-├── api/            # FastAPI endpoints
-│   └── routers/    # API route handlers
-├── repositories/   # Data access layer
-├── sync/           # Sync protocol implementation
-├── tests/          # Test suite
-└── __main__.py     # Server entry point
-
-inbetweenies/       # Shared models package
-├── models/         # HomeKit-compatible SQLAlchemy models
-├── sync/           # Sync protocol utilities
-└── __init__.py
-```
-
-## Conflict Resolution
-
-Uses last-write-wins strategy:
-1. Compare `updated_at` timestamps
-2. Newer timestamp wins
-3. If equal (within 1s), higher `sync_id` wins
-4. All conflicts are logged for review
-
-## Performance
-
-Optimized for:
-- 300 entities max
-- Sub-second response times
-- Concurrent read/write operations
-- Batch sync operations
-
-## Next Steps
-
-1. Add CLI for management
-2. Implement service layer
-3. Add WebSocket support for real-time updates
-4. Create Swift/WildThing integration
-5. Add monitoring and metrics

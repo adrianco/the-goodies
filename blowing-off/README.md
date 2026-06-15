@@ -1,15 +1,21 @@
-# Blowing-Off: Python Test Client
+# Blowing-Off: Python Client
 
-Blowing-Off is a Python test client for The Goodies smart home system. It implements the same functionality as the eventual Swift/WildThing code, serving as a validation tool and reference implementation.
+Blowing-Off is the Python client for The Goodies smart home system — a reference
+implementation of the inbetweenies-v2 protocol. The maintained port is
+**KittenKong** (TypeScript, `rolandcanyon-cmd/the-goodies-typescript`); the
+earlier Swift port (*WildThing*) is abandoned.
 
 ## Features
 
-- **Local SQLite Storage**: Uses shared Inbetweenies models
-- **Inbetweenies Protocol**: Full bidirectional sync implementation
-- **Offline Support**: Queue changes and sync when reconnected
-- **Conflict Resolution**: Last-write-wins with timestamp comparison
-- **CLI Interface**: Command-line tools for testing and management
-- **HomeKit Compatible**: Works with simplified HomeKit-style models
+- **Local SQLite cache** of the Entity/Relationship knowledge graph (shared
+  inbetweenies models)
+- **Inbetweenies-v2 sync** — bidirectional, with a `server_time` delta watermark,
+  the canonical conflict resolver (last-write-wins + version tiebreak), and
+  tombstone deletes
+- **MCP server** — exposes the 12 knowledge-graph tools to MCP clients
+  (`python -m blowingoff.mcp.server`), mirroring KittenKong
+- **CLI interface** for connecting, syncing, and running tools
+- **Offline support** — queue changes and sync when reconnected
 
 ## Installation
 
@@ -45,6 +51,30 @@ blowing-off sync
 
 # Background sync daemon
 blowing-off sync-daemon --interval 30
+```
+
+## MCP Server
+
+Blowing-Off also runs as a stdio **MCP server**, exposing the 12 knowledge-graph
+tools (search_entities, get_entity_details, create_entity, update_entity,
+create_relationship, get_devices_in_room, find_device_controls,
+get_room_connections, find_path, find_similar_entities, get_procedures_for_device,
+get_automations_in_room) to any MCP client. On startup it connects to FunkyGibbon,
+syncs the graph into the local cache, and keeps it fresh in the background.
+
+```bash
+python -m blowingoff.mcp.server      # or the `blowingoff-mcp` console script
+```
+
+Configuration (environment): `FUNKYGIBBON_URL`, `FUNKYGIBBON_AUTH_TOKEN`
+(preferred) or `FUNKYGIBBON_PASSWORD`, `SYNC_INTERVAL_SECONDS`, `BLOWINGOFF_DB`.
+Example Claude Code `mcpServers` entry:
+
+```json
+"blowingoff": {
+  "command": "python", "args": ["-m", "blowingoff.mcp.server"],
+  "env": {"FUNKYGIBBON_URL": "http://localhost:8000", "FUNKYGIBBON_AUTH_TOKEN": "<token>"}
+}
 ```
 
 ### 3. View Data
