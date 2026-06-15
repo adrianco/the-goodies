@@ -4,18 +4,21 @@
 
 The Goodies is a modern smart home knowledge graph data store layer built around the **Model Context Protocol (MCP)** architecture. The system provides a unified interface for managing smart home devices, relationships, and automations through a graph-based data model.
 
-**Current status**: a working single-house reference implementation — authenticated
-data endpoints, a protocol-correct sync engine (see
-[`inbetweenies/PROTOCOL.md`](inbetweenies/PROTOCOL.md)), 12 MCP tools, backup/restore,
-and data-migration + upgrade tooling. The Python **blowing-off** client also runs
-as an MCP server, mirroring the TypeScript port (*KittenKong*). CI runs the test
-suites on Linux and macOS. Released tags: see the GitHub releases (latest `v0.2.2`).
+**Current status**: **installed and running in a real house since March 2026.**
+A working single-house reference implementation — authenticated data endpoints, a
+protocol-correct sync engine (see [`inbetweenies/PROTOCOL.md`](inbetweenies/PROTOCOL.md)),
+12 MCP tools, backup/restore, and data-migration + upgrade tooling. The Python
+**blowing-off** client also runs as an MCP server, mirroring the TypeScript port
+(*KittenKong*). CI runs the test suites on Linux and macOS. Released tags: see the
+GitHub releases (latest `v0.2.2`).
 
 > ⚠️ Authentication is enforced: every data endpoint (`/graph`, `/mcp`, `/sync`,
 > `/sync-metadata`, `/backup`) requires a bearer token. Only `/health` and
 > `/api/v1/auth/*` are public. Configure it with `funkygibbon setup-auth`.
 
 **Related Projects**: adrianco/consciousness is an early prototype of the backend server that will be rewritten from scratch later. adrianco/c11s-house-ios is a native Swift iOS app that is the front end for the system. This repo is the knowledge graph protocol that interfaces the app to the backend, and includes the **Blowing-Off** Python client (a reference implementation, and now also an MCP server). The maintained port of the client is **KittenKong** (TypeScript, rolandcanyon-cmd/the-goodies-typescript). An earlier Swift port (adrianco/the-goodies-swift / *WildThing*) is untested and has been abandoned.
+
+**About the names**: the project and its components are named after [**The Goodies**](https://en.wikipedia.org/wiki/The_Goodies_(TV_series)), the 1970s British comedy series — and its songs and episodes. *FunkyGibbon* (the server) and *Inbetweenies* (the protocol) are both Goodies singles ("The Funky Gibbon", "The Inbetweenies"); *KittenKong* (the TypeScript client) is one of the show's best-known episodes; *Wild Thing* and the rest follow the same theme.
 
 ## 🏗️ Architecture
 
@@ -465,7 +468,8 @@ curl -X POST http://localhost:8000/api/v1/auth/guest/generate-qr \
 
 ## 🎯 Status
 
-A working single-house reference implementation:
+A working single-house reference implementation — **installed and running in a
+real house since March 2026**, with a second install at another house:
 - Authenticated data endpoints (bearer token), `funkygibbon setup-auth`
 - Protocol-correct sync (canonical versions, server_time watermark, one conflict
   resolver, tombstone deletes)
