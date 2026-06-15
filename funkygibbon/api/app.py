@@ -66,12 +66,13 @@ response = client.get("/health")
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..database import init_db
 from .routers import sync_metadata, graph, mcp, auth
+from .routers.auth import require_auth
 from . import sync as enhanced_sync
 from ..auth import auth_rate_limiter, audit_logger
 
@@ -120,13 +121,18 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Include routers
+    # Auth router stays public (login / guest verify handle their own checks).
     app.include_router(auth.router, prefix=f"{settings.api_prefix}", tags=["authentication"])
-    app.include_router(enhanced_sync.router, tags=["sync"])
-    app.include_router(sync_metadata.router, prefix=f"{settings.api_prefix}/sync-metadata", tags=["sync-metadata"])
+
+    # All data routers require a valid bearer token. Applied at include time so
+    # every current and future endpoint on these routers is protected by default
+    # (fail-safe: you can't add an endpoint here and forget to guard it).
+    protected = [Depends(require_auth)]
+    app.include_router(enhanced_sync.router, tags=["sync"], dependencies=protected)
+    app.include_router(sync_metadata.router, prefix=f"{settings.api_prefix}/sync-metadata", tags=["sync-metadata"], dependencies=protected)
     # Graph and MCP routers (primary functionality)
-    app.include_router(graph.router, prefix=f"{settings.api_prefix}", tags=["graph"])
-    app.include_router(mcp.router, prefix=f"{settings.api_prefix}", tags=["mcp"])
+    app.include_router(graph.router, prefix=f"{settings.api_prefix}", tags=["graph"], dependencies=protected)
+    app.include_router(mcp.router, prefix=f"{settings.api_prefix}", tags=["mcp"], dependencies=protected)
 
     @app.get("/")
     async def root():
