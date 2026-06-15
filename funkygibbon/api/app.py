@@ -71,10 +71,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..database import init_db
-from .routers import sync_metadata, graph, mcp, auth
+from .routers import sync_metadata, graph, mcp, auth, backup
 from .routers.auth import require_auth
 from . import sync as enhanced_sync
 from ..auth import auth_rate_limiter, audit_logger
+from ..backup_scheduler import init_scheduler, shutdown_scheduler
 
 
 @asynccontextmanager
@@ -92,10 +93,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     await audit_logger.start_pattern_detection()
     print("Audit logger started")
 
+    # Start backup scheduler
+    scheduler = init_scheduler()
+    scheduler.start()
+    print("Backup scheduler started")
+
     yield
 
     # Shutdown
     print("Shutting down")
+
+    # Stop backup scheduler
+    shutdown_scheduler()
+    print("Backup scheduler stopped")
 
     # Stop background tasks
     await auth_rate_limiter.stop_cleanup_task()
@@ -123,6 +133,8 @@ def create_app() -> FastAPI:
 
     # Auth router stays public (login / guest verify handle their own checks).
     app.include_router(auth.router, prefix=f"{settings.api_prefix}", tags=["authentication"])
+    # Backup router guards each endpoint with an admin-token dependency of its own.
+    app.include_router(backup.router, prefix=f"{settings.api_prefix}", tags=["backup"])
 
     # All data routers require a valid bearer token. Applied at include time so
     # every current and future endpoint on these routers is protected by default
