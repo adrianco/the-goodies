@@ -1,8 +1,11 @@
 # Inbetweenies v2 — Sync Protocol Specification
 
 > **Status:** this is the authoritative spec for the `inbetweenies-v2` sync
-> protocol used between the **FunkyGibbon** server and clients (**Blowing-Off**
-> Python, the Swift and TypeScript ports). It is written from the real code, and
+> protocol used between the **FunkyGibbon** server and clients. The maintained
+> clients are **Blowing-Off** (Python, this repo) and **KittenKong** (the
+> TypeScript port, `rolandcanyon-cmd/the-goodies-typescript`) — KittenKong is the
+> reference port. (An earlier Swift port, *WildThing*, is untested and
+> abandoned; do not treat it as a conformance reference.) It is written from the real code, and
 > supersedes `inbetweenies/README.md`, which describes an **obsolete** model
 > (Home/Room/Accessory/Service/Characteristic). The real model is a generic
 > **Entity / Relationship knowledge graph**.
