@@ -26,9 +26,12 @@ def pytest_configure(config):
         "markers", "unit: marks tests as unit tests"
     )
 
-# Add FunkyGibbon to path
-funkygibbon_path = Path(__file__).parent.parent.parent / "funkygibbon"
-sys.path.insert(0, str(funkygibbon_path))
+# Put the repo ROOT on the path so `funkygibbon` / `inbetweenies` import as
+# packages. Inserting the funkygibbon dir itself would expose funkygibbon/mcp as
+# a top-level `mcp` and shadow the installed MCP SDK (mcp.server, mcp.types).
+repo_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(repo_root))
+funkygibbon_path = repo_root / "funkygibbon"  # used by the server fixture below
 
 
 @pytest.fixture(scope="session")
