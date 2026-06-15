@@ -1,5 +1,12 @@
 # WildThing Swift Package - Detailed Architecture Specification
 
+> **⚠ ABANDONED (2026-06-15).** The WildThing Swift port was never tested and is
+> no longer maintained. The live, maintained ports of the client are
+> **Blowing-Off** (Python, this repo — now also an MCP server) and **KittenKong**
+> (TypeScript, `rolandcanyon-cmd/the-goodies-typescript`). This document is kept
+> for historical reference only; it is not a conformance reference for the
+> `inbetweenies-v2` protocol (see `inbetweenies/PROTOCOL.md`).
+
 ## Overview
 
 WildThing is a Swift Package that provides a local-first MCP server for smart home knowledge graph operations. It's designed to run on iOS, macOS, watchOS, and tvOS devices, offering offline-capable home automation data management with optional cloud synchronization.
