@@ -59,3 +59,9 @@ app = create_app()
 
 __version__ = "0.1.0"
 __author__ = "The Goodies Team"
+
+# Load a local .env into the process environment before any submodule reads
+# os.getenv at import time (e.g. the auth router resolving JWT_SECRET). Real
+# environment variables take precedence; this only fills in what is unset.
+from .env_loader import load_env_file as _load_env_file  # noqa: E402
+_load_env_file()
