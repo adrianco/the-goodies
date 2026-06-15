@@ -263,3 +263,6 @@ hive-mind-prompt-*.txt
 # Model files (large binary files)
 chat/models/
 *.gguf
+
+# Database backups created by the backup service
+backups/
