@@ -32,7 +32,7 @@ REVISION HISTORY:
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
@@ -131,8 +131,10 @@ class SyncEngine:
                 if await self._resolve_conflict(conflict):
                     resolved_count += 1
 
-            # Update sync metadata
-            await self.metadata_repo.update_sync_time(datetime.now(), self.client_id)
+            # Persist the SERVER's clock as our delta watermark (PROTOCOL.md §4),
+            # never the client's local time. We send this back as `since` next sync.
+            watermark = self._parse_server_time(sync_response.get("server_time"))
+            await self.metadata_repo.update_sync_time(watermark, self.client_id)
 
             # Calculate duration
             duration = (datetime.now() - start_time).total_seconds()
@@ -194,36 +196,46 @@ class SyncEngine:
             self._pending_sync_entities = set()
         self._pending_sync_entities.add(entity_id)
 
+    @staticmethod
+    def _parse_server_time(server_time: Optional[str]) -> datetime:
+        """Parse the response's server_time into a UTC-aware datetime.
+
+        Falls back to 'now' (UTC) only if the server omitted it (older server)."""
+        if server_time:
+            try:
+                parsed = datetime.fromisoformat(server_time.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc)
+            except ValueError:
+                pass
+        return datetime.now(timezone.utc)
+
     async def _apply_single_change(self, change: Change) -> bool:
-        """Apply a single change from server."""
+        """Apply a single change from the server.
+
+        Creates, updates and deletes are all stored as entity versions — a delete
+        is a tombstone version (content.deleted=true), so applying it is the same
+        store operation as any other version (PROTOCOL.md §8). The local graph's
+        active views filter out tombstoned entities.
+        """
         if not self.graph_operations:
             return False
 
         try:
-            if change.operation == SyncOperation.DELETE:
-                # Delete entity
-                # Note: Graph operations might not have a delete method yet
-                return False  # Skip deletes for now
-            else:
-                # Create/Update entity
-                entity_data = change.data
-
-                # Convert to Entity object
-                entity = Entity(
-                    id=entity_data.get('id'),
-                    version=entity_data.get('version', ''),
-                    entity_type=EntityType(entity_data.get('entity_type', 'unknown')),
-                    name=entity_data.get('name', ''),
-                    content=entity_data.get('content', {}),
-                    source_type=SourceType(entity_data.get('source_type', SourceType.IMPORTED)),
-                    parent_versions=entity_data.get('parent_versions', []),
-                    user_id=entity_data.get('user_id', 'sync')
-                )
-
-                # Store entity
-                print(f"DEBUG: Applying change for entity {entity.id}: version={entity.version}, content={entity.content}")
-                await self.graph_operations.store_entity(entity)
-                return True
+            entity_data = change.data
+            entity = Entity(
+                id=entity_data.get('id'),
+                version=entity_data.get('version', ''),
+                entity_type=EntityType(entity_data.get('entity_type', 'unknown')),
+                name=entity_data.get('name', ''),
+                content=entity_data.get('content', {}),
+                source_type=SourceType(entity_data.get('source_type', SourceType.IMPORTED)),
+                parent_versions=entity_data.get('parent_versions', []),
+                user_id=entity_data.get('user_id', 'sync')
+            )
+            await self.graph_operations.store_entity(entity)
+            return True
 
         except Exception as e:
             print(f"Error applying change: {e}")
@@ -250,9 +262,14 @@ class SyncEngine:
         return response
 
     async def _resolve_conflict(self, conflict: Conflict) -> bool:
-        """Resolve a sync conflict."""
-        # For now, we'll use last-write-wins
-        # In a real implementation, this could be more sophisticated
+        """Acknowledge a conflict the server already resolved.
+
+        Conflict resolution is server-authoritative: the server runs the single
+        canonical algorithm (inbetweenies.sync.ConflictResolver — LWW + version
+        tiebreak, PROTOCOL.md §7) and sends the winning version in `changes`, which
+        we have already applied. The `conflicts` list is informational, so there is
+        nothing to resolve locally; we just count it as handled.
+        """
         return True
 
     def _convert_datetime_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:

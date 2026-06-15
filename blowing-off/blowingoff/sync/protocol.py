@@ -65,8 +65,9 @@ USAGE:
 
 import json
 from typing import Dict, List, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import httpx
+from inbetweenies.models import Entity
 from inbetweenies.sync import Change, Conflict, SyncOperation
 from inbetweenies.sync import (
     VectorClock, EntityChange, SyncChange,
@@ -188,12 +189,17 @@ class InbetweeniesProtocol:
         for sync_change in sync_response.changes:
             if sync_change.entity:
                 # Convert to internal Change format
+                # Derive updated_at from the version (the wire EntityChange has no
+                # updated_at; the version encodes the UTC edit time). Falls back to
+                # now() only if the version can't be parsed.
+                updated_at = (Entity.version_timestamp(sync_change.entity.version)
+                              or datetime.now(timezone.utc))
                 change = Change(
                     entity_type=sync_change.entity.entity_type,
                     entity_id=sync_change.entity.id,
                     operation=SyncOperation(sync_change.change_type.lower()),
                     data=sync_change.entity.model_dump(),
-                    updated_at=datetime.now(),  # Use current time as updated_at
+                    updated_at=updated_at,
                     sync_id=sync_change.entity.version,
                     client_sync_id=None  # Server changes don't have client sync ID
                 )
