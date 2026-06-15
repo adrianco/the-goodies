@@ -1,8 +1,17 @@
 # Inbetweenies - Shared Models and Sync Protocol
 
+> ⚠️ **The model description below is OBSOLETE.** It documents an old
+> HomeKit-style model (Home/Room/Accessory/Service/Characteristic) that the code
+> no longer uses. The real model is a generic **Entity / Relationship knowledge
+> graph**, and the authoritative wire/sync protocol is now in
+> **[PROTOCOL.md](PROTOCOL.md)** — read that for anything implementation- or
+> port-related. This README is kept only for historical context.
+
 ## Overview
 
-Inbetweenies is the shared package containing HomeKit-compatible models and synchronization utilities used by both the FunkyGibbon server and Blowing-Off client. It ensures consistency across the system.
+Inbetweenies is the shared package containing the synchronization protocol and
+shared models used by both the FunkyGibbon server and Blowing-Off client. See
+**[PROTOCOL.md](PROTOCOL.md)** for the authoritative spec.
 
 ## Structure
 
