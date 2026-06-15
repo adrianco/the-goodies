@@ -128,6 +128,14 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Set a real admin password (argon2-hashed into .env).")
     mode.add_argument("--test-mode", action="store_true",
                       help="Enable explicit, opt-in test mode (a known test password).")
+    mode.add_argument("--client-token-only", action="store_true",
+                      help="Mint a client token from an EXISTING JWT secret and write "
+                           "client configs, without changing any auth config. Use when "
+                           "the server's secret lives outside .env (e.g. a launchd start "
+                           "script): pass --jwt-secret or set JWT_SECRET.")
+    p.add_argument("--jwt-secret", metavar="SECRET",
+                   help="Existing JWT signing secret to mint the client token against "
+                        "(with --client-token-only). Falls back to $JWT_SECRET / .env.")
     p.add_argument("--test-password", metavar="PASS", default="admin",
                    help="Password accepted in test mode (default: admin).")
     p.add_argument("--server-url", default="http://localhost:8000",
@@ -158,11 +166,40 @@ def run(argv: Optional[list] = None) -> int:
     current = read_env(env_path)
     pm = PasswordManager()
 
+    insecure = {"", "development-secret-key", "dev-secret-key-change-in-production"}
+
+    # client-token-only: mint a token from an existing secret, touch no auth config.
+    if args.client_token_only:
+        secret = (args.jwt_secret or os.getenv("JWT_SECRET")
+                  or current.get("JWT_SECRET", "")).strip()
+        if secret in insecure:
+            print("error: no usable JWT secret — pass --jwt-secret or set JWT_SECRET "
+                  "to the secret the server actually signs with.", file=sys.stderr)
+            return 1
+        token = TokenManager(secret_key=secret).create_token(
+            user_id="local-client", role="admin",
+            permissions=["read", "write", "delete", "configure"],
+            expires_delta=timedelta(days=args.token_days),
+        )
+        print("FunkyGibbon client-token setup")
+        print(f"  client token: minted ({args.token_days}d) against the existing secret")
+        if args.print_token:
+            print(f"  TOKEN: {token}")
+        if not args.no_client_config:
+            print("client configs:")
+            write_json_config(Path(args.oook_config),
+                              {"server_url": args.server_url, "auth_token": token},
+                              args.dry_run)
+            write_json_config(Path(args.blowingoff_config),
+                              {"server_url": args.server_url, "auth_token": token,
+                               "client_id": "local", "db_path": "blowingoff.db"},
+                              args.dry_run)
+        return 0
+
     updates: Dict[str, str] = {}
 
     # 1. JWT secret -------------------------------------------------------- #
     secret = current.get("JWT_SECRET", "").strip()
-    insecure = {"", "development-secret-key", "dev-secret-key-change-in-production"}
     if args.rotate_secret or secret in insecure:
         secret = secrets.token_urlsafe(48)
         updates["JWT_SECRET"] = secret

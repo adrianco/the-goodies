@@ -26,40 +26,71 @@ identical code.
 
 ## One command
 
-```bash
-# First-time auth with a real admin password (recommended):
-scripts/upgrade.sh --tag vX.Y.Z \
-  --admin-password 'choose-a-strong-password' \
-  --stop-cmd  "launchctl unload ~/Library/LaunchAgents/funkygibbon.plist" \
-  --start-cmd "launchctl load   ~/Library/LaunchAgents/funkygibbon.plist"
+The server runs as the standard macOS launchd LaunchAgent (`com.funkygibbon`),
+so the script stops/starts it for you — you normally pass only `--tag`:
 
-# …or trusted local/dev use with explicit test mode instead:
-scripts/upgrade.sh --tag vX.Y.Z --test-mode --test-password 'admin' \
-  --stop-cmd "…" --start-cmd "…"
+```bash
+scripts/upgrade.sh --tag vX.Y.Z --dry-run     # preview, change nothing
+scripts/upgrade.sh --tag vX.Y.Z               # do it
 ```
 
-Add `--dry-run` first to see exactly what it will do without changing anything.
-If you omit `--stop-cmd`/`--start-cmd` the script pauses and asks you to stop and
-start the service yourself at the right moments.
+If this install configures auth for the first time (rather than via the launchd
+start script), add one of:
+
+```bash
+  --admin-password 'choose-a-strong-password'   # a real admin password
+  --test-mode --test-password 'admin'           # explicit local/dev test mode
+```
+
+Override the service control only for a non-standard setup:
+
+```bash
+  --launchd-label com.something          # different LaunchAgent label
+  --launchd-plist /path/to/agent.plist   # explicit plist path
+  --stop-cmd "…" --start-cmd "…"         # non-launchd
+```
+
+The standard agent is loaded from `~/Library/LaunchAgents/com.funkygibbon.plist`
+(created by the house-agent bootstrap, `RunAtLoad`+`KeepAlive`). The script
+**unloads** it before migrating so KeepAlive doesn't respawn the old server
+mid-upgrade, then **loads** it to bring the new one back.
 
 ## What the script does (in order)
 
 1. **Pre-flight** — verifies a clean tree and that the tag exists.
-2. **Stop** the server.
+2. **Stop** the server — `launchctl unload` the LaunchAgent (so KeepAlive won't
+   respawn the old server while the database is migrated).
 3. **Back up** the database file (plus `-wal`/`-shm`) to
    `…/funkygibbon.db.backup-upgrade-<timestamp>`.
 4. **Checkout** the release tag.
 5. **Install** dependencies from `funkygibbon/requirements.txt`.
 6. **Migrate** data — `python -m funkygibbon.migrate --apply` (idempotent; safe
    to re-run; verifies counts before committing).
-7. **Set up auth** — `python -m funkygibbon.setup_auth …` generates/persists a
-   `JWT_SECRET`, sets the admin credential (or test mode), mints a long-lived
-   client token, and writes `~/.oook/config.json` and `./.blowingoff.json`.
-8. **Start** the server.
+7. **Set up auth** — only if you passed `--admin-password`/`--test-mode`:
+   `python -m funkygibbon.setup_auth …` generates/persists a `JWT_SECRET`, sets
+   the admin credential (or test mode), mints a long-lived client token, and
+   writes `~/.oook/config.json` and `./.blowingoff.json`. Skipped by default.
+8. **Start** the server — `launchctl load` the LaunchAgent.
 9. **Verify** — unauthenticated `/api/v1/graph/statistics` returns 401/403 and
    `/health` returns 200.
 
 Every step is idempotent; re-running the whole script is safe.
+
+> **Note for installs configured by the house-agent bootstrap:** auth is set in
+> the launchd start script's environment (`start_funkygibbon.sh` exports
+> `JWT_SECRET` and `ADMIN_PASSWORD_HASH`), not in `.env`. Leave the auth flags
+> off — the server keeps its existing credentials. Local clients then need a
+> bearer token signed with **that** `JWT_SECRET`. Pass `--mint-client-token` to
+> the upgrade (it reads the secret from `start_funkygibbon.sh` and writes the
+> client configs), or do it directly:
+>
+> ```bash
+> JWT=$(grep -m1 JWT_SECRET= start_funkygibbon.sh | cut -d'"' -f2)
+> python -m funkygibbon.setup_auth --client-token-only --jwt-secret "$JWT"
+> ```
+>
+> This mints a token against the existing secret and writes `~/.oook/config.json`
+> + `./.blowingoff.json` without changing any server auth config.
 
 ## Doing it by hand (fallback)
 

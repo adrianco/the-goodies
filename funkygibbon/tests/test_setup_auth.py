@@ -74,3 +74,31 @@ def test_dry_run_writes_nothing(tmp_path):
     env = tmp_path / ".env"
     setup_auth.run(["--env-file", str(env), "--no-client-config", "--test-mode", "--dry-run"])
     assert not env.exists()
+
+
+def test_client_token_only_mints_from_existing_secret_without_touching_env(tmp_path):
+    import json
+    env = tmp_path / ".env"
+    env.write_text("JWT_SECRET=server-secret-xyz\nADMIN_PASSWORD_HASH=$argon2id$abc\n")
+    before = env.read_text()
+    oook, bo = tmp_path / "oook.json", tmp_path / ".bo.json"
+
+    rc = setup_auth.run([
+        "--client-token-only", "--jwt-secret", "server-secret-xyz",
+        "--env-file", str(env), "--oook-config", str(oook), "--blowingoff-config", str(bo),
+    ])
+    assert rc == 0
+    assert env.read_text() == before  # auth config untouched
+
+    token = json.loads(oook.read_text())["auth_token"]
+    assert json.loads(bo.read_text())["auth_token"] == token
+    payload = TokenManager(secret_key="server-secret-xyz").verify_token(token)
+    assert payload and payload["role"] == "admin"
+
+
+def test_client_token_only_rejects_missing_or_insecure_secret(tmp_path, monkeypatch):
+    monkeypatch.delenv("JWT_SECRET", raising=False)  # not from the ambient env
+    env = tmp_path / ".env"  # no JWT_SECRET
+    rc = setup_auth.run(["--client-token-only", "--env-file", str(env),
+                         "--no-client-config"])
+    assert rc == 1
