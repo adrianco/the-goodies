@@ -20,7 +20,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Windows is intentionally excluded: SQLite-on-Windows has known file
+        # locking / WAL issues that the project does not target (see issue #7,
+        # parked). The deployment target is Linux/macOS house servers.
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12"]
         
     steps:
@@ -40,20 +43,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-py${{ matrix.python-version }}-pip-
 
-      - name: Install dependencies (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-cov pytest-asyncio pytest-mock
-          
+
           # Install project dependencies
           export PYTHONPATH=${{ github.workspace }}:$PYTHONPATH
-          
+
           # Install funkygibbon dependencies
           if [ -f "funkygibbon/requirements.txt" ]; then
             pip install -r funkygibbon/requirements.txt
           fi
-          
+
           # Install other components
           for component in inbetweenies oook blowing-off; do
             if [ -d "$component" ]; then
@@ -61,43 +63,12 @@ jobs:
             fi
           done
 
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest pytest-cov pytest-asyncio pytest-mock
-          
-          # Install funkygibbon dependencies
-          if (Test-Path "funkygibbon/requirements.txt") {
-            pip install -r funkygibbon/requirements.txt
-          }
-          
-          # Install other components
-          foreach ($component in @("inbetweenies", "oook", "blowing-off")) {
-            if (Test-Path $component) {
-              Push-Location $component
-              pip install -e .
-              Pop-Location
-            }
-          }
-
-      - name: Run tests (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Run tests
         run: |
           export PYTHONPATH=${{ github.workspace }}:$PYTHONPATH
           export ADMIN_PASSWORD_HASH=""
           export JWT_SECRET="development-secret"
           python -m pytest -v --cov=funkygibbon --cov=blowing-off --cov=inbetweenies --cov=oook --cov-report=xml --cov-report=term-missing || true
-
-      - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $env:PYTHONPATH = "${{ github.workspace }};$env:PYTHONPATH"
-          $env:ADMIN_PASSWORD_HASH = ""
-          $env:JWT_SECRET = "development-secret"
-          python -m pytest -v --cov=funkygibbon --cov=blowing-off --cov=inbetweenies --cov=oook --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
