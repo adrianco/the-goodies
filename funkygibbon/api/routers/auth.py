@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from datetime import timedelta
 import json
+import logging
 import os
 
 from ...auth import (
@@ -23,13 +24,44 @@ from ...auth import (
 router = APIRouter(prefix="/auth", tags=["authentication"])
 security = HTTPBearer()
 
-# Initialize managers (in production, these would be singleton instances)
+_logger = logging.getLogger("funkygibbon.auth")
+
+# --- Auth modes (explicit — replaces the old silent `password == "admin"` backdoor) ---
+# FUNKYGIBBON_TEST_MODE makes a *configured* test password grant admin, with a loud
+# banner; without it the server fails closed unless real secrets are configured
+# (e.g. via `funkygibbon setup-auth`).
+TEST_MODE = os.getenv("FUNKYGIBBON_TEST_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+TEST_PASSWORD = os.getenv("FUNKYGIBBON_TEST_PASSWORD", "admin")
+_INSECURE_SECRETS = {"", "development-secret-key", "dev-secret-key-change-in-production"}
+
+
+def _resolve_jwt_secret() -> str:
+    """JWT signing secret, or fail closed — no hardcoded fallback. A real secret
+    must be configured unless FUNKYGIBBON_TEST_MODE is explicitly enabled."""
+    secret = (os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY") or "").strip()
+    if secret in _INSECURE_SECRETS:
+        if TEST_MODE:
+            return "funkygibbon-TEST-MODE-secret-NOT-for-production"
+        raise RuntimeError(
+            "No JWT signing secret configured. Run `funkygibbon setup-auth` to set "
+            "JWT_SECRET, or set FUNKYGIBBON_TEST_MODE=true for trusted local/dev use."
+        )
+    return secret
+
+
+if TEST_MODE:
+    _logger.warning(
+        "⚠ FUNKYGIBBON_TEST_MODE ENABLED — a known test password grants admin and a "
+        "non-production JWT secret is in use. DO NOT use this in production."
+    )
+
+# Initialize managers (singletons for this process)
 password_manager = PasswordManager()
-token_manager = TokenManager(secret_key=os.getenv("JWT_SECRET", "development-secret-key"))
+token_manager = TokenManager(secret_key=_resolve_jwt_secret())
 qr_manager = QRCodeManager()
 
-# Load admin password hash from config
-# In production, this would come from a configuration file
+# Admin password hash (argon2). Empty + TEST_MODE → the configured test password is
+# accepted; empty + not TEST_MODE → admin login fails closed.
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
 
 
@@ -196,9 +228,19 @@ async def admin_login(
     request_info = get_request_info(request)
 
     try:
+        if not ADMIN_PASSWORD_HASH and not TEST_MODE:
+            # Fail closed: no admin hash configured and not in explicit test mode.
+            audit_logger.log_auth_attempt(
+                success=False, identifier=client_ip,
+                reason="admin auth not configured", request_info=request_info
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Admin authentication is not configured. Run `funkygibbon setup-auth`.",
+            )
         if not ADMIN_PASSWORD_HASH:
-            # For development/testing when no password is set
-            if login_request.password == "admin":
+            # TEST_MODE only: a *configured* test password grants admin (banner logged at startup).
+            if login_request.password == TEST_PASSWORD:
                 # Log successful authentication
                 audit_logger.log_auth_attempt(
                     success=True,

@@ -25,6 +25,12 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from datetime import datetime, UTC
 
+# Tests run in explicit auth test-mode (a configured test password is accepted and
+# a non-production JWT secret is used). Set before importing funkygibbon so the
+# auth router resolves its mode at import time.
+import os
+os.environ.setdefault("FUNKYGIBBON_TEST_MODE", "true")
+
 from funkygibbon.database import Base
 from funkygibbon.models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
 

@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 import asyncio
 from functools import wraps
 
+from fastapi import HTTPException
+
 
 class RateLimiter:
     """
@@ -222,7 +224,6 @@ def rate_limit_decorator(get_identifier):
             allowed, retry_after = auth_rate_limiter.check_rate_limit(identifier)
 
             if not allowed:
-                from fastapi import HTTPException
                 raise HTTPException(
                     status_code=429,
                     detail=f"Too many attempts. Try again in {retry_after} seconds.",
