@@ -8,16 +8,15 @@ between FunkyGibbon server and clients.
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from funkygibbon.database import get_db
-from funkygibbon.sync.versioning import VersionManager
-from funkygibbon.sync.conflict_resolution import ConflictResolver, ConflictStrategy
-from funkygibbon.sync.delta import DeltaSyncEngine
-from inbetweenies.models import Entity, EntityRelationship, EntityType
+from inbetweenies.models import Entity, EntityRelationship, EntityType, SourceType
 from inbetweenies.sync import (
     VectorClock, EntityChange, RelationshipChange, SyncChange,
-    SyncFilters, SyncRequest, ConflictInfo, SyncStats, SyncResponse
+    SyncFilters, SyncRequest, ConflictInfo, SyncStats, SyncResponse,
+    ConflictResolver,
 )
 
 
@@ -25,214 +24,198 @@ from inbetweenies.sync import (
 router = APIRouter(prefix="/api/v1/sync", tags=["sync"])
 
 
+def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize a datetime to timezone-aware UTC (None passes through)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class SyncHandler:
-    """Handle sync protocol requests"""
+    """Handle sync protocol requests (inbetweenies-v2, see PROTOCOL.md).
+
+    Entities are immutable and versioned: every change is a new version row, a
+    delete is a tombstone version (``content.deleted = true``). Delta sync is
+    stateless — the client supplies ``filters.since`` (the ``server_time`` it
+    persisted from the previous response) and the server returns the current
+    state of everything with ``updated_at`` strictly greater than it.
+    """
 
     def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
-        self.version_manager = VersionManager(db_session)
-        self.conflict_resolver = ConflictResolver()
-        self.delta_engine = DeltaSyncEngine(db_session)
 
     async def handle_sync_request(self, request: SyncRequest) -> SyncResponse:
-        """Process sync request and return changes"""
+        """Process sync request and return changes."""
         start_time = datetime.now(timezone.utc)
 
-        # Validate protocol version
         if request.protocol_version != "inbetweenies-v2":
             raise HTTPException(status_code=400, detail="Unsupported protocol version")
 
-        # Process incoming changes
-        conflicts = []
+        # --- Apply incoming (client -> server) changes ---
+        conflicts: List[ConflictInfo] = []
         entities_synced = 0
         relationships_synced = 0
 
         for change in request.changes:
             if change.change_type == "create":
-                await self._handle_create(change)
+                await self._apply_incoming(change, conflicts)
                 entities_synced += 1
             elif change.change_type == "update":
-                conflict = await self._handle_update(change)
-                if conflict:
-                    conflicts.append(conflict)
+                await self._apply_incoming(change, conflicts)
                 entities_synced += 1
             elif change.change_type == "delete":
                 await self._handle_delete(change)
                 entities_synced += 1
-
-            # Process relationships
             relationships_synced += len(change.relationships)
 
-        # Get changes to send back based on sync type
-        response_changes = []
+        # server_time is the watermark the client persists and sends back as the
+        # next `since`. Capture it now; everything applied above is <= it.
+        server_time = datetime.now(timezone.utc)
+
+        # --- Compute outgoing (server -> client) changes ---
+        latest = await self._latest_entities()
+        entities = list(latest.values())
 
         if request.sync_type == "delta":
-            # Get last sync time for device
-            last_sync = self.delta_engine.get_last_sync_time(request.device_id)
-            if not last_sync:
-                # First sync, use full sync
-                last_sync = datetime.min.replace(tzinfo=timezone.utc)
+            since = _to_utc(request.filters.since) if (request.filters and request.filters.since) else None
+            if since is not None:
+                # Strictly greater than `since` (exclusive lower bound, §4).
+                entities = [e for e in entities
+                            if (_to_utc(e.updated_at) or datetime.min.replace(tzinfo=timezone.utc)) > since]
 
-            # Calculate delta
-            entity_types = None
-            if request.filters and request.filters.entity_types:
-                entity_types = [EntityType(et) for et in request.filters.entity_types]
+        # Filters (apply to both full and delta).
+        if request.filters:
+            if request.filters.entity_types:
+                wanted = {EntityType(et) for et in request.filters.entity_types}
+                entities = [e for e in entities if e.entity_type in wanted]
+            if request.filters.modified_by:
+                wanted_users = set(request.filters.modified_by)
+                entities = [e for e in entities if e.user_id in wanted_users]
 
-            delta = await self.delta_engine.calculate_delta(last_sync, entity_types)
+        response_changes = []
+        for entity in entities:
+            deleted = bool((entity.content or {}).get("deleted"))
+            response_changes.append(SyncChange(
+                change_type="delete" if deleted else "update",
+                entity=self._entity_to_change(entity),
+            ))
 
-            # Convert delta to changes
-            for entity in delta.added_entities:
-                response_changes.append(SyncChange(
-                    change_type="create",
-                    entity=self._entity_to_change(entity)
-                ))
-
-            for entity in delta.modified_entities:
-                response_changes.append(SyncChange(
-                    change_type="update",
-                    entity=self._entity_to_change(entity)
-                ))
-
-        elif request.sync_type == "full":
-            # Return all entities
-            entities = await self._get_all_entities(request.filters)
-            for entity in entities:
-                response_changes.append(SyncChange(
-                    change_type="create",
-                    entity=self._entity_to_change(entity)
-                ))
-
-        # Update sync time
-        self.delta_engine.update_last_sync_time(request.device_id, datetime.now(timezone.utc))
-
-        # Calculate duration
         duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
 
-        # Build response
         return SyncResponse(
             sync_type=request.sync_type,
             changes=response_changes,
             conflicts=conflicts,
-            vector_clock=request.vector_clock,  # Echo back for now
+            vector_clock=request.vector_clock,  # RESERVED — echoed, never read
+            server_time=server_time.isoformat(),
             sync_stats=SyncStats(
                 entities_synced=entities_synced,
                 relationships_synced=relationships_synced,
                 conflicts_resolved=len(conflicts),
-                duration_ms=duration_ms
-            )
+                duration_ms=duration_ms,
+            ),
         )
 
-    async def _handle_create(self, change: SyncChange):
-        """Handle entity creation"""
-        if not change.entity:
-            return
+    async def _latest_entities(self) -> Dict[str, Entity]:
+        """Return the latest (lexically greatest version) row per entity id."""
+        result = await self.db_session.execute(select(Entity))
+        latest: Dict[str, Entity] = {}
+        for entity in result.scalars().all():
+            current = latest.get(entity.id)
+            if current is None or entity.version > current.version:
+                latest[entity.id] = entity
+        return latest
 
-        # Check if entity already exists - get latest version
-        from sqlalchemy import select
-        stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
-        result = await self.db_session.execute(stmt)
-        existing = result.scalar_one_or_none()
-        if existing:
-            # Already exists, this is a conflict
-            # For now, skip creation
-            return
+    async def _insert_version(self, change: SyncChange, *, deleted: bool = False) -> None:
+        """Insert a new immutable version row (idempotent on (id, version))."""
+        existing_row = await self.db_session.get(
+            Entity, (change.entity.id, change.entity.version)
+        )
+        if existing_row is not None:
+            return  # already applied this exact version
 
-        # Create new entity
-        from inbetweenies.models import SourceType as ST
+        content = dict(change.entity.content or {})
+        if deleted:
+            content["deleted"] = True
+        now = datetime.now(timezone.utc)
         entity = Entity(
             id=change.entity.id,
             version=change.entity.version,
             entity_type=EntityType(change.entity.entity_type),
             name=change.entity.name,
-            content=change.entity.content,
-            source_type=ST(change.entity.source_type),
+            content=content,
+            source_type=SourceType(change.entity.source_type),
             user_id=change.entity.user_id,
-            parent_versions=change.entity.parent_versions
+            parent_versions=change.entity.parent_versions or [],
+            created_at=now,
+            updated_at=now,
         )
-
         self.db_session.add(entity)
         await self.db_session.commit()
 
-    async def _handle_update(self, change: SyncChange) -> Optional[ConflictInfo]:
-        """Handle entity update"""
-        if not change.entity:
-            return None
-
-        # Get existing entity - need to get the latest version
-        from sqlalchemy import select
-        stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
-        result = await self.db_session.execute(stmt)
-        existing = result.scalar_one_or_none()
-        if not existing:
-            # Doesn't exist, create it
-            await self._handle_create(change)
-            return None
-
-        # Check for conflict
-        if existing.version != change.entity.parent_versions[0] if change.entity.parent_versions else None:
-            # Version conflict
-            from inbetweenies.models import SourceType as ST
-            remote_entity = Entity(
-                id=change.entity.id,
-                version=change.entity.version,
-                entity_type=EntityType(change.entity.entity_type),
-                name=change.entity.name,
-                content=change.entity.content,
-                source_type=ST(change.entity.source_type),
-                user_id=change.entity.user_id,
-                parent_versions=change.entity.parent_versions
-            )
-
-            # Resolve conflict
-            resolution = self.conflict_resolver.resolve_conflict(
-                existing, remote_entity, ConflictStrategy.MERGE
-            )
-
-            if resolution.resolved_entity:
-                # Update with resolved entity
-                existing.version = resolution.resolved_entity.version
-                existing.name = resolution.resolved_entity.name
-                existing.content = resolution.resolved_entity.content
-                existing.parent_versions = resolution.resolved_entity.parent_versions
-                existing.updated_at = datetime.now(timezone.utc)
-
-                await self.db_session.commit()
-
-                return ConflictInfo(
-                    entity_id=change.entity.id,
-                    local_version=existing.version,
-                    remote_version=change.entity.version,
-                    resolution_strategy="merge",
-                    resolved_version=resolution.resolved_entity.version
-                )
-        else:
-            # No conflict, update
-            existing.version = change.entity.version
-            existing.name = change.entity.name
-            existing.content = change.entity.content
-            existing.parent_versions = change.entity.parent_versions
-            existing.updated_at = datetime.now(timezone.utc)
-
-            await self.db_session.commit()
-
-        return None
-
-    async def _handle_delete(self, change: SyncChange):
-        """Handle entity deletion"""
+    async def _apply_incoming(self, change: SyncChange, conflicts: List[ConflictInfo]) -> None:
+        """Apply a create/update: fast-forward if based on our latest, else resolve."""
         if not change.entity:
             return
 
-        # Get entity to delete - need to find the latest version
-        from sqlalchemy import select
-        stmt = select(Entity).where(Entity.id == change.entity.id).order_by(Entity.created_at.desc()).limit(1)
-        result = await self.db_session.execute(stmt)
-        entity = result.scalar_one_or_none()
-        if entity:
-            await self.db_session.delete(entity)
-            await self.db_session.commit()
+        latest = await self._latest_entities()
+        existing = latest.get(change.entity.id)
+
+        if existing is None:
+            await self._insert_version(change)
+            return
+
+        if existing.version == change.entity.version:
+            return  # idempotent re-send
+
+        parents = change.entity.parent_versions or []
+        if existing.version in parents:
+            await self._insert_version(change)  # fast-forward
+            return
+
+        # Concurrent edit -> canonical resolution (LWW + version tiebreak).
+        local = {"updated_at": _to_utc(existing.updated_at), "version": existing.version}
+        remote = {
+            "updated_at": Entity.version_timestamp(change.entity.version) or _to_utc(existing.updated_at),
+            "version": change.entity.version,
+        }
+        resolution = ConflictResolver.resolve(local, remote)
+        remote_wins = resolution.winner.get("version") == change.entity.version
+
+        if remote_wins:
+            await self._insert_version(change)
+            resolved_version = change.entity.version
+        else:
+            resolved_version = existing.version
+
+        conflicts.append(ConflictInfo(
+            entity_id=change.entity.id,
+            local_version=existing.version,
+            remote_version=change.entity.version,
+            resolution_strategy=resolution.reason,
+            resolved_version=resolved_version,
+        ))
+
+    async def _handle_delete(self, change: SyncChange) -> None:
+        """Apply a delete as a tombstone version (content.deleted = true, §8)."""
+        if not change.entity:
+            return
+        latest = await self._latest_entities()
+        existing = latest.get(change.entity.id)
+        if existing is None:
+            return  # nothing to delete
+        if bool((existing.content or {}).get("deleted")):
+            return  # already tombstoned
+        # If the client didn't set the prior version as a parent, record it so the
+        # tombstone supersedes the latest known version.
+        if existing.version not in (change.entity.parent_versions or []):
+            change.entity.parent_versions = [existing.version]
+        await self._insert_version(change, deleted=True)
 
     def _entity_to_change(self, entity: Entity) -> EntityChange:
-        """Convert entity to change format"""
+        """Convert a stored entity to its wire EntityChange."""
         return EntityChange(
             id=entity.id,
             version=entity.version,
@@ -241,28 +224,8 @@ class SyncHandler:
             content=entity.content or {},
             source_type=entity.source_type.value,
             user_id=entity.user_id,
-            parent_versions=entity.parent_versions
+            parent_versions=entity.parent_versions or [],
         )
-
-    async def _get_all_entities(self, filters: Optional[SyncFilters]) -> List[Entity]:
-        """Get all entities with optional filters"""
-        from sqlalchemy import select
-
-        query = select(Entity)
-
-        if filters:
-            if filters.entity_types:
-                entity_types = [EntityType(et) for et in filters.entity_types]
-                query = query.where(Entity.entity_type.in_(entity_types))
-
-            if filters.since:
-                query = query.where(Entity.updated_at >= filters.since)
-
-            if filters.modified_by:
-                query = query.where(Entity.user_id.in_(filters.modified_by))
-
-        result = await self.db_session.execute(query)
-        return list(result.scalars().all())
 
 
 @router.post("/", response_model=SyncResponse)
@@ -277,29 +240,24 @@ async def sync_data(
 
 @router.get("/status")
 async def sync_status(
-    device_id: str = Query(..., description="Device ID to check sync status"),
+    device_id: str = Query(..., description="Device ID (informational)"),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get sync status for a device"""
-    delta_engine = DeltaSyncEngine(db)
-    last_sync = delta_engine.get_last_sync_time(device_id)
-
+    """Sync status. Delta sync is stateless (the client holds its own watermark
+    via the response `server_time`), so this just reports the current server time
+    the client can use as a `since` baseline."""
     return {
         "device_id": device_id,
-        "last_sync": last_sync.isoformat() if last_sync else None,
-        "protocol_version": "inbetweenies-v2"
+        "server_time": datetime.now(timezone.utc).isoformat(),
+        "protocol_version": "inbetweenies-v2",
     }
 
 
 @router.get("/conflicts")
-async def get_pending_conflicts(
-    db: AsyncSession = Depends(get_db)
-):
-    """Get all pending manual conflict resolutions"""
-    conflict_resolver = ConflictResolver()
-    return {
-        "conflicts": conflict_resolver.get_pending_resolutions()
-    }
+async def get_pending_conflicts(db: AsyncSession = Depends(get_db)):
+    """Conflicts are resolved automatically and deterministically during sync
+    (PROTOCOL.md §7); there is no manual-resolution queue. Always empty."""
+    return {"conflicts": []}
 
 
 @router.post("/conflicts/{conflict_id}/resolve")
@@ -308,11 +266,8 @@ async def resolve_conflict(
     resolution: Dict,
     db: AsyncSession = Depends(get_db)
 ):
-    """Manually resolve a conflict"""
-    conflict_resolver = ConflictResolver()
-    success = conflict_resolver.resolve_manual_conflict(conflict_id, resolution)
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Conflict not found")
-
-    return {"status": "resolved", "conflict_id": conflict_id}
+    """Manual conflict resolution is not supported — conflicts auto-resolve."""
+    raise HTTPException(
+        status_code=404,
+        detail="No manual conflict queue; conflicts auto-resolve during sync.",
+    )

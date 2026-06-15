@@ -48,16 +48,24 @@ class ConflictResolution:
 
 
 class ConflictResolver:
-    """Handles last-write-wins conflict resolution for the Inbetweenies protocol."""
+    """The single canonical conflict resolver for the Inbetweenies protocol.
+
+    Last-write-wins on ``updated_at`` (UTC), and when two edits land within a
+    1-second window, tiebreak on the ``version`` string (lexically greater wins).
+    The version encodes UTC time + a monotonic counter + user id, so it is a
+    stable, wire-visible tiebreaker — unlike ``sync_id``, which is not part of the
+    wire model. This is the one algorithm; clients and server MUST share it
+    (PROTOCOL.md §7).
+    """
 
     @staticmethod
     def resolve(local: Dict[str, Any], remote: Dict[str, Any]) -> ConflictResolution:
         """
-        Resolve conflicts using last-write-wins strategy.
+        Resolve conflicts using last-write-wins with a version tiebreak.
 
         Args:
-            local: Local entity data
-            remote: Remote entity data
+            local: Local entity data (must have ``updated_at`` and ``version``)
+            remote: Remote entity data (must have ``updated_at`` and ``version``)
 
         Returns:
             ConflictResolution with winner and reason
@@ -89,21 +97,21 @@ class ConflictResolver:
         # Calculate millisecond difference
         diff_ms = int((remote_ts - local_ts).total_seconds() * 1000)
 
-        if abs(diff_ms) < 1000:  # Within 1 second, use sync_id as tiebreaker
-            remote_sync_id = remote.get("sync_id") or ""
-            local_sync_id = local.get("sync_id") or ""
-            if remote_sync_id > local_sync_id:
+        if abs(diff_ms) < 1000:  # Within 1 second: tiebreak on the version string
+            remote_version = remote.get("version") or ""
+            local_version = local.get("version") or ""
+            if remote_version > local_version:
                 return ConflictResolution(
                     winner=remote,
                     loser=local,
-                    reason="timestamps equal, remote has higher sync_id",
+                    reason="timestamps within 1s, remote has greater version",
                     timestamp_diff_ms=diff_ms
                 )
             else:
                 return ConflictResolution(
                     winner=local,
                     loser=remote,
-                    reason="timestamps equal, local has higher sync_id",
+                    reason="timestamps within 1s, local has greater version",
                     timestamp_diff_ms=diff_ms
                 )
 

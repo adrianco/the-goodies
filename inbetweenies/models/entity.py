@@ -5,6 +5,8 @@ This module defines the generic Entity model that can represent any node
 in the knowledge graph (homes, rooms, devices, procedures, etc.).
 """
 
+import itertools
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Any, Optional
@@ -12,6 +14,10 @@ from sqlalchemy import Column, String, JSON, DateTime, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
+
+# Monotonic per-process counter for version-string tiebreaking. next() is atomic
+# under CPython's GIL, so this is safe across threads without extra locking.
+_version_counter = itertools.count()
 
 
 class EntityType(str, Enum):
@@ -112,13 +118,39 @@ class Entity(Base, InbetweeniesTimestampMixin):
 
     @classmethod
     def create_version(cls, user_id: str) -> str:
-        """Generate a new version string for immutable versioning"""
-        import time
-        import random
+        """Generate a version string: ``{utc-iso8601}-{counter:06d}-{user_id}``.
+
+        The timestamp is timezone-aware UTC ISO-8601 (``+00:00`` offset, no extra
+        trailing ``Z``). The counter is a 6-digit monotonic per-process tiebreaker
+        that disambiguates edits made within the same microsecond. Versions sort
+        lexically, and because the timestamp prefix is fixed-width UTC, lexical
+        order equals chronological order. See inbetweenies/PROTOCOL.md §2.
+        """
         timestamp = datetime.now(timezone.utc).isoformat()
-        # Add nanosecond precision to ensure uniqueness on Windows
-        nanos = int(time.perf_counter_ns() % 1000000)
-        return f"{timestamp}Z-{nanos:06d}-{user_id}"
+        counter = next(_version_counter) % 1000000
+        return f"{timestamp}-{counter:06d}-{user_id}"
+
+    @staticmethod
+    def version_timestamp(version: str) -> Optional[datetime]:
+        """Parse the UTC timestamp out of a version string, or None if it can't.
+
+        Version is ``{utc-iso8601}-{counter:06d}-{user_id}``. The ISO-8601 prefix
+        ends at the UTC offset (``+00:00``); the counter and (possibly hyphenated)
+        user id follow. We anchor on the offset rather than splitting on ``-`` so a
+        hyphenated user id (e.g. ``local-client``) parses correctly, and a stray
+        legacy trailing ``Z`` is tolerated. Used to derive a remote edit's time for
+        conflict resolution, since the wire EntityChange carries no updated_at.
+        """
+        match = re.match(r"^(.*?[+-]\d{2}:\d{2})", version)
+        if not match:
+            return None
+        try:
+            parsed = datetime.fromisoformat(match.group(1))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     def create_new_version(self, user_id: str, changes: Dict[str, Any]) -> "Entity":
         """
