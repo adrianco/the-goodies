@@ -72,10 +72,12 @@ setup(
         "rich>=10.0.0",
         "click>=8.0.0",
         "tabulate>=0.9.0",
+        "mcp>=1.0.0",
     ],
     entry_points={
         "console_scripts": [
             "blowing-off=blowingoff.cli.main:cli",
+            "blowingoff-mcp=blowingoff.mcp.server:main",
         ],
     },
     python_requires=">=3.11",
