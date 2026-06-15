@@ -10,11 +10,12 @@
 # machine where it runs. Idempotent and backup-first. See UPGRADE.md.
 #
 # Usage:
-#   scripts/upgrade.sh --tag vX.Y.Z [options]
+#   scripts/upgrade.sh [--tag vX.Y.Z] [options]
 #
-# Required:
-#   --tag TAG              Release tag to upgrade to (both installs use the SAME
-#                          tag so they land on identical code).
+# Release tag:
+#   --tag TAG              Release tag to upgrade to. Defaults to the latest
+#                          vX.Y.Z tag (after fetching). Pin it explicitly to put
+#                          both installs on the SAME, identical code.
 #
 # Auth (choose one; only needed the first time auth is set up):
 #   --admin-password PASS  Configure a real admin password.
@@ -91,8 +92,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$TAG" ] || die "--tag is required (the release tag to upgrade to)"
-
 # The server is always a macOS launchd service. Default to stopping/starting the
 # standard LaunchAgent (com.funkygibbon, RunAtLoad+KeepAlive) so the common case
 # needs no --stop-cmd/--start-cmd. Unload before migrating so KeepAlive doesn't
@@ -103,8 +102,19 @@ done
 cd "$REPO_DIR"
 git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository: $REPO_DIR"
 
+# Resolve the release tag. Fetch tags first (read-only) so "latest" reflects the
+# remote; default --tag to the newest vX.Y.Z when not given.
+git fetch --tags --quiet 2>/dev/null || warn "could not fetch tags; using local tags"
+TAG_SOURCE="specified"
+if [ -z "$TAG" ]; then
+  TAG="$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)"
+  TAG_SOURCE="latest"
+  [ -n "$TAG" ] || die "no release tags found; pass --tag explicitly"
+fi
+git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || die "tag not found: $TAG"
+
 log "Upgrade plan for $REPO_DIR"
-echo "   release tag:   $TAG"
+echo "   release tag:   $TAG ($TAG_SOURCE)"
 echo "   auth setup:    ${AUTH_MODE:-(leave existing untouched)}"
 echo "   launchd agent: $LAUNCHD_PLIST"
 echo "   service stop:  $STOP_CMD"
@@ -117,13 +127,10 @@ if [ "$ASSUME_YES" != 1 ] && [ "$DRY_RUN" != 1 ]; then
   case "$reply" in y|Y|yes) ;; *) die "aborted";; esac
 fi
 
-# 0. Pre-flight: clean tree, tag exists ------------------------------------- #
+# 0. Pre-flight: clean working tree ----------------------------------------- #
 if [ -n "$(git status --porcelain)" ]; then
   die "working tree is not clean — commit/stash local changes first"
 fi
-run "git fetch --tags --quiet"
-git rev-parse -q --verify "refs/tags/$TAG" >/dev/null \
-  || die "tag not found after fetch: $TAG"
 
 # 1. Stop the service ------------------------------------------------------- #
 log "Stopping the server"
