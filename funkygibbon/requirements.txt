@@ -15,4 +15,4 @@ argon2-cffi>=25.1.0
 pyjwt>=2.8.0
 qrcode>=8.2
 pillow>=12.2.0
-apscheduler>=3.10.4
+apscheduler>=3.11.2
