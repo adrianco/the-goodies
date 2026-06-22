@@ -1,6 +1,6 @@
 inbetweenies
 sqlalchemy>=2.0.49
-greenlet>=2.0.0
+greenlet>=3.5.2
 aiosqlite>=0.22.1
 httpx>=0.24.0
 aiohttp>=3.8.0
