@@ -103,11 +103,11 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
             "from_entity_version": self.from_entity_version,
             "to_entity_id": self.to_entity_id,
             "to_entity_version": self.to_entity_version,
-            "relationship_type": self.relationship_type.value,
+            "relationship_type": getattr(self.relationship_type, "value", self.relationship_type),
             "properties": self.properties,
             "user_id": self.user_id,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+            "created_at": self.created_at.isoformat() if hasattr(self.created_at, "isoformat") else self.created_at,
+            "updated_at": self.updated_at.isoformat() if hasattr(self.updated_at, "isoformat") else self.updated_at
         }
 
     def is_valid_for_entities(self, from_entity: "Entity", to_entity: "Entity") -> bool:
