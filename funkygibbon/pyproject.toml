@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "funkygibbon"
-version = "0.1.0"
+version = "0.2.0"
 description = "Simplified smart home knowledge graph backend"
 authors = ["The Goodies Team"]
 readme = "README.md"
