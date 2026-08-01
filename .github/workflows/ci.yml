@@ -64,11 +64,17 @@ jobs:
           done
 
       - name: Run tests
+        # No `|| true`: this step used to swallow the exit code, so the Test
+        # Suite job reported success even when tests failed or failed to
+        # collect, and every PR showed green regardless. Failures must fail the
+        # job. Integration tests start their own FunkyGibbon server on an
+        # ephemeral port (see conftest.py at the repo root), so they run here
+        # without any externally provisioned service.
         run: |
           export PYTHONPATH=${{ github.workspace }}:$PYTHONPATH
           export ADMIN_PASSWORD_HASH=""
           export JWT_SECRET="development-secret"
-          python -m pytest -v --cov=funkygibbon --cov=blowing-off --cov=inbetweenies --cov=oook --cov-report=xml --cov-report=term-missing || true
+          python -m pytest -v --cov=funkygibbon --cov=blowing-off --cov=inbetweenies --cov=oook --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'

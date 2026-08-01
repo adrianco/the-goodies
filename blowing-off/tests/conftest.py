@@ -1,20 +1,34 @@
 """
-Test configuration for Blowing-Off integration tests.
+Test configuration for Blowing-Off tests.
 
-Provides fixtures for running FunkyGibbon server during tests.
+The FunkyGibbon server used by the integration tests is NOT started here any
+more. It is owned by the repo-root conftest.py, which starts it on a freshly
+allocated ephemeral port and proves the responder is its own subprocess before
+handing out a URL.
+
+The fixture that used to live here started the server on the hardcoded port
+8000 and then probed http://localhost:8000/health to decide whether it had come
+up. That probe cannot distinguish "my server started" from "some other server
+was already listening on 8000", so on a machine where 8000 was taken the
+fixture reported success while its own subprocess was dead, and every
+integration test silently ran against a foreign server. See conftest.py at the
+repo root for the replacement.
+
+The `server_url` and `auth_token` fixtures are inherited from that root
+conftest; nothing in this package should hardcode a host or port.
 
 REVISION HISTORY:
 - 2025-07-28: Fixed server startup to use module approach (python -m funkygibbon)
+- 2026-07-31: Moved the server fixture to the repo-root conftest (ephemeral
+  port + real auth token); removed the hardcoded port 8000.
 """
 
-import pytest
-import pytest_asyncio
 import asyncio
-import subprocess
-import time
-import httpx
 import sys
 from pathlib import Path
+
+import pytest
+
 
 # Register pytest markers
 def pytest_configure(config):
@@ -26,12 +40,12 @@ def pytest_configure(config):
         "markers", "unit: marks tests as unit tests"
     )
 
+
 # Put the repo ROOT on the path so `funkygibbon` / `inbetweenies` import as
 # packages. Inserting the funkygibbon dir itself would expose funkygibbon/mcp as
 # a top-level `mcp` and shadow the installed MCP SDK (mcp.server, mcp.types).
 repo_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(repo_root))
-funkygibbon_path = repo_root / "funkygibbon"  # used by the server fixture below
 
 
 @pytest.fixture(scope="session")
@@ -40,106 +54,3 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
-
-
-@pytest_asyncio.fixture(scope="session")
-async def funkygibbon_server():
-    """Start FunkyGibbon server for testing."""
-    import tempfile
-    import os
-
-    # Create a temporary database for testing
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        test_db_path = f.name
-
-    print(f"DEBUG: Test database path: {test_db_path}")
-
-    # Start the server process using the module approach
-    env = os.environ.copy()
-    parent_path = funkygibbon_path.parent
-    env["PYTHONPATH"] = f"{parent_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
-    env["DATABASE_URL"] = f"sqlite+aiosqlite:///{test_db_path}"
-
-    print(f"DEBUG: Setting DATABASE_URL={env['DATABASE_URL']}")
-
-    process = subprocess.Popen(
-        [sys.executable, "-m", "funkygibbon"],
-        cwd=str(parent_path),  # Run from parent directory
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,  # Keep separate to see errors
-        text=True,
-        env=env
-    )
-
-    # Wait for server to start - fail fast
-    max_retries = 10  # 5 seconds max
-    for i in range(max_retries):
-        try:
-            async with httpx.AsyncClient(timeout=1.0) as client:  # 1 second timeout
-                response = await client.get("http://localhost:8000/health")
-                if response.status_code == 200:
-                    print("\n✅ FunkyGibbon server started successfully")
-                    break
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
-            if i == max_retries - 1:
-                # Get server output for debugging
-                stdout, stderr = process.communicate(timeout=1)
-                print(f"\n❌ Server failed to start. Stdout: {stdout}")
-                print(f"Stderr: {stderr}")
-                process.terminate()
-                pytest.fail("FunkyGibbon server failed to start in 5 seconds")
-            await asyncio.sleep(0.5)
-
-    # Run populate_graph_db.py to add test data
-    populate_result = subprocess.run(
-        [sys.executable, str(funkygibbon_path / "populate_graph_db.py")],
-        cwd=str(parent_path),
-        env=env,
-        capture_output=True,
-        text=True
-    )
-    if populate_result.returncode == 0:
-        print("✅ Test database populated")
-    else:
-        print(f"⚠️ Failed to populate database: {populate_result.stderr}")
-
-    yield "http://localhost:8000"
-
-    # Stop the server and capture output
-    process.terminate()
-    try:
-        stdout, stderr = process.communicate(timeout=5)
-        # Always print server output for debugging
-        print("\n📋 Server stdout:")
-        if stdout:
-            print(stdout[-2000:])  # Last 2000 chars
-        print("\n📋 Server stderr:")
-        if stderr:
-            print(stderr[-2000:])  # Last 2000 chars
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-    print("\n✅ FunkyGibbon server stopped")
-
-    # Cleanup test database
-    try:
-        os.unlink(test_db_path)
-        # Also remove WAL and SHM files if they exist
-        for suffix in ["-wal", "-shm"]:
-            wal_path = test_db_path + suffix
-            if os.path.exists(wal_path):
-                os.unlink(wal_path)
-    except Exception as e:
-        print(f"Warning: Could not cleanup test database: {e}")
-
-
-@pytest.fixture(scope="session")
-def server_url(funkygibbon_server):
-    """Get the server URL."""
-    return funkygibbon_server
-
-
-@pytest.fixture(scope="session")
-def auth_token():
-    """Get test auth token."""
-    return "test-token-12345"

@@ -3,34 +3,40 @@ Test that the FunkyGibbon server can start properly.
 
 This test actually starts the server in a subprocess to ensure
 all imports and configurations work correctly.
+
+The server comes from the `running_server` fixture in the repo-root
+conftest.py, which binds a freshly allocated ephemeral port and proves the
+responder is its own subprocess. This module previously imported a local
+fixture that hardcoded port 8000, so an unrelated server already listening
+there would be tested instead of ours.
 """
 
-import pytest
 import asyncio
-import httpx
-import sys
-from pathlib import Path
 
-# Import the server fixture
-sys.path.append(str(Path(__file__).parent.parent))
-from conftest_server import running_server
+import httpx
+import pytest
 
 
 class TestServerStartup:
     """Test server startup and basic functionality."""
 
     @pytest.mark.asyncio
-    async def test_server_starts_and_responds(self, running_server):
+    async def test_server_starts_and_responds(self, running_server, auth_token):
         """Test that the server can start and respond to health checks."""
         # Test that we can make API calls
         async with httpx.AsyncClient(base_url=running_server) as client:
-            # Test health endpoint
+            # Health endpoint is public
             response = await client.get("/health")
             assert response.status_code == 200
             assert response.json() == {"status": "healthy"}
 
-            # Test graph API endpoint
-            response = await client.get("/api/v1/graph/entities")
+            # Graph API sits behind require_auth, so this needs the session's
+            # real admin token. Calling it unauthenticated (as this test used
+            # to) just asserts on a 401 and proves nothing about the graph API.
+            response = await client.get(
+                "/api/v1/graph/entities",
+                headers={"Authorization": f"Bearer {auth_token}"},
+            )
             assert response.status_code == 200
             data = response.json()
             assert "entities" in data

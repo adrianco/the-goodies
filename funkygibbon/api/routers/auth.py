@@ -18,6 +18,7 @@ from ...auth import (
     auth_rate_limiter, rate_limit_decorator,
     audit_logger, SecurityEventType, get_request_info
 )
+from ...config import settings
 
 
 # Initialize router
@@ -58,7 +59,11 @@ if TEST_MODE:
 # Initialize managers (singletons for this process)
 password_manager = PasswordManager()
 token_manager = TokenManager(secret_key=_resolve_jwt_secret())
-qr_manager = QRCodeManager()
+# The QR code tells a guest device where to connect, so it must advertise the
+# port this server is actually listening on. QRCodeManager defaults to 8000;
+# left unset, a server running on any other port issued guest QR codes pointing
+# at a port it was not bound to, and guest access could never complete.
+qr_manager = QRCodeManager(port=settings.api_port)
 
 # Admin password hash (argon2). Empty + TEST_MODE → the configured test password is
 # accepted; empty + not TEST_MODE → admin login fails closed.

@@ -27,13 +27,13 @@ def temp_dir():
 
 
 @pytest.fixture
-def config_file(temp_dir):
-    """Create a test config file."""
+def config_file(temp_dir, server_url, auth_token):
+    """Create a test config file pointing at the session's real server."""
     config_path = Path(temp_dir) / "config.json"
     config = {
-        "server_url": "http://localhost:8000",
+        "server_url": server_url,
         "client_id": "test-client",
-        "auth_token": "test-token"
+        "auth_token": auth_token
     }
     with open(config_path, 'w') as f:
         json.dump(config, f)
@@ -61,7 +61,7 @@ class TestBlowingOffClient:
         assert client.mcp_client is not None
 
     @pytest.mark.asyncio
-    async def test_connect_disconnect(self, client):
+    async def test_connect_disconnect(self, client, server_url, auth_token):
         """Test connecting and disconnecting."""
         with patch('httpx.AsyncClient.get') as mock_get:
             mock_get.return_value = AsyncMock(
@@ -71,8 +71,8 @@ class TestBlowingOffClient:
 
             # Connect
             await client.connect(
-                server_url="http://localhost:8000",
-                auth_token="test-token",
+                server_url=server_url,
+                auth_token=auth_token,
                 client_id="test-client"
             )
             # After connect, verify the client is set up
@@ -203,12 +203,12 @@ class TestClientSync:
     """Test client synchronization functionality."""
 
     @pytest.mark.asyncio
-    async def test_sync_with_server(self, client):
+    async def test_sync_with_server(self, client, server_url):
         """Test syncing with server."""
         # Mock sync_engine since client isn't connected
         client.sync_engine = Mock()
         client.sync_engine.sync = AsyncMock()
-        client.sync_engine.base_url = "http://localhost:8000"  # Add base_url for connectivity check</
+        client.sync_engine.base_url = server_url  # Needed by the connectivity check</
         # Mock check_server_connectivity to return True
         client.check_server_connectivity = AsyncMock(return_value=True)
 

@@ -1,8 +1,20 @@
 """
 Conflict resolution integration tests.
 
+NOTE ON UPDATING ENTITIES
+-------------------------
+Entities are immutably versioned: a version string identifies one exact
+content. Editing `entity.content` and re-storing the object keeps the old
+version string, so two clients end up publishing different content under the
+*same* version id — which the sync protocol has no way to order, and the
+clients cannot converge. `graph_operations.update_entity()` is the supported
+edit path: it derives a new version with the previous one as its parent, which
+is what last-write-wins ordering keys off. Tests here must use it.
+
 REVISION HISTORY:
 - 2025-07-28: Skipped entire test class due to database concurrency issues
+- 2026-07-31: Replaced in-place content mutation with update_entity() so the
+  convergence assertions are actually reachable.
 """
 
 import pytest
@@ -86,12 +98,15 @@ class TestSyncConflicts:
         sync2 = await client2.sync()
         print(f"DEBUG: Client2 sync to get entity: success={sync2.success}, synced={sync2.synced_entities}")
 
-        # Update on both clients with different values
+        # Update on both clients with different values. update_entity() mints a
+        # new version parented on the current one; mutating .content in place
+        # would leave both clients claiming the same version id.
         # Client1 updates
         entity1 = await client1.graph_operations.get_entity(entity_id)
         if entity1:
-            entity1.content = {"state": "on", "color": "red"}
-            await client1.graph_operations.store_entity(entity1)
+            await client1.graph_operations.update_entity(
+                entity_id, {"content": {"state": "on", "color": "red"}}, "client1"
+            )
             client1.sync_engine.mark_entity_for_sync(entity_id)
 
         # Client2 updates - need to check if entity exists after sync
@@ -105,8 +120,9 @@ class TestSyncConflicts:
                 print(f"DEBUG: Found entity2 by search: id={entity2.id}")
 
         if entity2:
-            entity2.content = {"state": "off", "color": "blue"}
-            await client2.graph_operations.store_entity(entity2)
+            await client2.graph_operations.update_entity(
+                entity2.id, {"content": {"state": "off", "color": "blue"}}, "client2"
+            )
             client2.sync_engine.mark_entity_for_sync(entity2.id)
 
         # Sync both - last write should win
@@ -168,8 +184,9 @@ class TestSyncConflicts:
         # Client2 updates
         entity2 = await client2.graph_operations.get_entity(entity_id)
         if entity2:
-            entity2.content = {"type": "switch", "power": "on"}
-            await client2.graph_operations.store_entity(entity2)
+            await client2.graph_operations.update_entity(
+                entity_id, {"content": {"type": "switch", "power": "on"}}, "client2"
+            )
 
         # Sync both
         result1 = await client1.sync()
@@ -220,21 +237,20 @@ class TestSyncConflicts:
         await client1.sync()
         await client2.sync()
 
-        # Now both update with different values
-        # The one with later version should win
-        entity1 = await client1.graph_operations.get_entity(entity_id)
-        entity1.content = {"value": "client1"}
-        entity1.updated_at = datetime.now(UTC)
-        stored1 = await client1.graph_operations.store_entity(entity1)
+        # Now both update with different values. Each update mints a new
+        # version stamped with the wall clock, and the later version is the one
+        # last-write-wins should settle on.
+        stored1 = await client1.graph_operations.update_entity(
+            entity_id, {"content": {"value": "client1"}}, "client1"
+        )
         client1.sync_engine.mark_entity_for_sync(entity_id)
 
         # Small delay to ensure different timestamp
         await asyncio.sleep(0.1)
 
-        entity2 = await client2.graph_operations.get_entity(entity_id)
-        entity2.content = {"value": "client2"}
-        entity2.updated_at = datetime.now(UTC)  # Later timestamp
-        stored2 = await client2.graph_operations.store_entity(entity2)
+        stored2 = await client2.graph_operations.update_entity(
+            entity_id, {"content": {"value": "client2"}}, "client2"
+        )
         client2.sync_engine.mark_entity_for_sync(entity_id)
 
         # Sync both - multiple rounds to ensure convergence
@@ -295,15 +311,17 @@ class TestSyncConflicts:
             # Client1 updates
             entity1 = await client1.graph_operations.get_entity(entity_id)
             if entity1:
-                entity1.content = {"power": "on", "level": i}
-                await client1.graph_operations.store_entity(entity1)
+                await client1.graph_operations.update_entity(
+                    entity_id, {"content": {"power": "on", "level": i}}, "client1"
+                )
                 client1.sync_engine.mark_entity_for_sync(entity_id)
 
             # Client2 updates
             entity2 = await client2.graph_operations.get_entity(entity_id)
             if entity2:
-                entity2.content = {"power": "off", "level": i * 2}
-                await client2.graph_operations.store_entity(entity2)
+                await client2.graph_operations.update_entity(
+                    entity_id, {"content": {"power": "off", "level": i * 2}}, "client2"
+                )
                 client2.sync_engine.mark_entity_for_sync(entity_id)
 
         # Sync and resolve all conflicts
