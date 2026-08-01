@@ -9,6 +9,7 @@ import asyncio
 import time
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
 from fastapi.testclient import TestClient
@@ -16,7 +17,7 @@ from fastapi.testclient import TestClient
 import funkygibbon.database as dbmod
 from funkygibbon.config import settings
 from funkygibbon.api.app import create_app
-from inbetweenies.models import Entity
+from inbetweenies.models import Entity, EntityRelationship
 from inbetweenies.sync import ConflictResolver
 
 
@@ -91,7 +92,7 @@ def headers(client):
 
 
 def _change(change_type, *, id, version, name="N", content=None,
-            etype="device", user="alice", parents=None):
+            etype="device", user="alice", parents=None, rels=None):
     return {
         "change_type": change_type,
         "entity": {
@@ -99,8 +100,32 @@ def _change(change_type, *, id, version, name="N", content=None,
             "content": content or {}, "source_type": "manual", "user_id": user,
             "parent_versions": parents or [],
         },
-        "relationships": [],
+        "relationships": rels or [],
     }
+
+
+def _rel(id, *, from_id, from_version, to_id, to_version,
+         rel_type="located_in", properties=None):
+    return {
+        "id": id,
+        "from_entity_id": from_id, "from_entity_version": from_version,
+        "to_entity_id": to_id, "to_entity_version": to_version,
+        "relationship_type": rel_type, "properties": properties or {},
+    }
+
+
+def _rel_only_change(rels):
+    """A change carrying only edges — its endpoint entities are already in sync."""
+    return {"change_type": "update", "entity": None, "relationships": rels}
+
+
+def _stored_relationships():
+    """Read persisted edges straight out of the isolated test DB."""
+    async def _read():
+        async with dbmod.async_session() as session:
+            result = await session.execute(select(EntityRelationship))
+            return [r.to_dict() for r in result.scalars().all()]
+    return asyncio.run(_read())
 
 
 def _sync(client, headers, sync_type, changes=None, since=None, device="dev1", user="alice"):
@@ -192,3 +217,271 @@ def test_idempotent_resend_is_noop(client, headers):
     data = _sync(client, headers, "full").json()
     matches = [c for c in data["changes"] if c["entity"]["id"] == "I"]
     assert len(matches) == 1  # not duplicated
+
+
+# --------------------------------------------------------------------------- #
+# Empty parent_versions (§7) — a parentless update over an id we already hold is
+# a blind overwrite and must be decided by the conflict rule, never waved through.
+# --------------------------------------------------------------------------- #
+# Hand-crafted versions whose timestamp prefix is far from "now", so the §7
+# last-write-wins comparison is decided by updated_at rather than the 1s tiebreak.
+_ANCIENT = "2020-01-01T00:00:00.000000+00:00-000001-alice"
+_FUTURE = "2099-01-01T00:00:00.000000+00:00-000001-alice"
+
+
+def test_parentless_update_over_existing_entity_is_a_conflict(client, headers):
+    """Stale blind overwrite: reported as a conflict AND rejected (local wins)."""
+    v1 = Entity.create_version("alice")
+    _sync(client, headers, "full", [_change("create", id="P", version=v1, name="kept")])
+
+    # No parent_versions at all, and an older version -> local must win.
+    resp = _sync(client, headers, "full",
+                 [_change("update", id="P", version=_ANCIENT, name="clobbered", parents=[])])
+    body = resp.json()
+
+    assert body["conflicts"], "parentless update over an existing id must conflict"
+    conflict = body["conflicts"][0]
+    assert conflict["entity_id"] == "P"
+    assert conflict["local_version"] == v1
+    assert conflict["remote_version"] == _ANCIENT
+    assert conflict["resolved_version"] == v1
+    assert body["sync_stats"]["conflicts_resolved"] == 1
+
+    latest = [c["entity"] for c in _sync(client, headers, "full").json()["changes"]
+              if c["entity"]["id"] == "P"][0]
+    assert latest["version"] == v1 and latest["name"] == "kept"
+
+
+def test_parentless_update_that_wins_records_superseded_version(client, headers):
+    """A winning blind overwrite still conflicts, and keeps the version DAG linked."""
+    v1 = Entity.create_version("alice")
+    _sync(client, headers, "full", [_change("create", id="Q", version=v1, name="old")])
+
+    resp = _sync(client, headers, "full",
+                 [_change("update", id="Q", version=_FUTURE, name="new", parents=[])])
+    conflicts = resp.json()["conflicts"]
+    assert conflicts and conflicts[0]["resolved_version"] == _FUTURE
+
+    latest = [c["entity"] for c in _sync(client, headers, "full").json()["changes"]
+              if c["entity"]["id"] == "Q"][0]
+    assert latest["version"] == _FUTURE and latest["name"] == "new"
+    # Stored with the version it superseded, not orphaned with [].
+    assert latest["parent_versions"] == [v1]
+
+
+def test_parentless_create_of_unknown_entity_is_not_a_conflict(client, headers):
+    """Guard against over-correcting: a first-ever create legitimately has no parents."""
+    v1 = Entity.create_version("alice")
+    resp = _sync(client, headers, "full",
+                 [_change("create", id="R", version=v1, name="brand new", parents=[])])
+    body = resp.json()
+    assert body["conflicts"] == []
+    assert body["sync_stats"]["conflicts_resolved"] == 0
+    assert "R" in [c["entity"]["id"] for c in body["changes"]]
+
+
+# --------------------------------------------------------------------------- #
+# Relationship push (§3.1, §5) — inbound edges must actually be persisted.
+# --------------------------------------------------------------------------- #
+def test_pushed_relationships_are_persisted(client, headers):
+    """Edges in the batch are stored, even when the endpoint arrives later in it."""
+    dev_v, room_v = Entity.create_version("alice"), Entity.create_version("alice")
+    # The edge hangs off the *first* change but points at the room created by the
+    # *second* one: entities must all be applied before any relationship (§5).
+    changes = [
+        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device",
+                rels=[_rel("rel1", from_id="dev1", from_version=dev_v,
+                           to_id="room1", to_version=room_v,
+                           properties={"since": "2026"})]),
+        _change("create", id="room1", version=room_v, name="Kitchen", etype="room"),
+    ]
+    resp = _sync(client, headers, "full", changes)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sync_stats"]["relationships_synced"] == 1
+
+    stored = _stored_relationships()
+    assert len(stored) == 1
+    assert stored[0]["id"] == "rel1"
+    assert stored[0]["from_entity_id"] == "dev1"
+    assert stored[0]["from_entity_version"] == dev_v
+    assert stored[0]["to_entity_id"] == "room1"
+    assert stored[0]["to_entity_version"] == room_v
+    assert stored[0]["relationship_type"] == "located_in"
+    assert stored[0]["properties"] == {"since": "2026"}
+
+
+def test_relationship_push_is_idempotent(client, headers):
+    """Re-pushing the same edge must not duplicate it or error."""
+    dev_v, room_v = Entity.create_version("alice"), Entity.create_version("alice")
+    changes = [
+        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device",
+                rels=[_rel("rel1", from_id="dev1", from_version=dev_v,
+                           to_id="room1", to_version=room_v)]),
+        _change("create", id="room1", version=room_v, name="Kitchen", etype="room"),
+    ]
+    first = _sync(client, headers, "full", changes)
+    second = _sync(client, headers, "full", changes)  # byte-identical re-push
+
+    assert first.status_code == 200 and second.status_code == 200, second.text
+    assert second.json()["sync_stats"]["relationships_synced"] == 1
+    assert len(_stored_relationships()) == 1  # not duplicated
+
+
+def test_relationship_repush_follows_new_entity_version(client, headers):
+    """Relationships are not versioned: the same edge id re-points at new versions."""
+    dev_v1, room_v = Entity.create_version("alice"), Entity.create_version("alice")
+    _sync(client, headers, "full", [
+        _change("create", id="dev1", version=dev_v1, name="Lamp", etype="device",
+                rels=[_rel("rel1", from_id="dev1", from_version=dev_v1,
+                           to_id="room1", to_version=room_v)]),
+        _change("create", id="room1", version=room_v, name="Kitchen", etype="room"),
+    ])
+
+    # Device gets a new version; the client re-pushes the same edge id against it.
+    dev_v2 = Entity.create_version("alice")
+    resp = _sync(client, headers, "full", [
+        _change("update", id="dev1", version=dev_v2, name="Lamp", etype="device",
+                parents=[dev_v1],
+                rels=[_rel("rel1", from_id="dev1", from_version=dev_v2,
+                           to_id="room1", to_version=room_v)]),
+    ])
+    assert resp.status_code == 200, resp.text
+
+    stored = _stored_relationships()
+    assert len(stored) == 1  # still one edge, moved rather than duplicated
+    assert stored[0]["from_entity_version"] == dev_v2
+
+
+def test_relationship_with_missing_endpoint_is_skipped(client, headers):
+    """A dangling edge is dropped, not persisted and not fatal (composite FK)."""
+    dev_v = Entity.create_version("alice")
+    resp = _sync(client, headers, "full", [
+        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device",
+                rels=[_rel("rel1", from_id="dev1", from_version=dev_v,
+                           to_id="nope", to_version="no-such-version")]),
+    ])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sync_stats"]["relationships_synced"] == 0
+    assert _stored_relationships() == []
+
+
+def test_relationship_referencing_stale_entity_version_is_skipped(client, headers):
+    """The FK is on (entity_id, entity_version) — a known id at an unknown
+    version is still dangling."""
+    dev_v, room_v = Entity.create_version("alice"), Entity.create_version("alice")
+    resp = _sync(client, headers, "full", [
+        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device",
+                rels=[_rel("rel1", from_id="dev1", from_version="never-stored",
+                           to_id="room1", to_version=room_v)]),
+        _change("create", id="room1", version=room_v, name="Kitchen", etype="room"),
+    ])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sync_stats"]["relationships_synced"] == 0
+    assert _stored_relationships() == []
+
+
+def test_unknown_relationship_type_is_rejected(client, headers):
+    """Malformed input gets a 400, matching the protocol_version check."""
+    dev_v, room_v = Entity.create_version("alice"), Entity.create_version("alice")
+    resp = _sync(client, headers, "full", [
+        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device",
+                rels=[_rel("rel1", from_id="dev1", from_version=dev_v,
+                           to_id="room1", to_version=room_v,
+                           rel_type="teleports_to")]),
+        _change("create", id="room1", version=room_v, name="Kitchen", etype="room"),
+    ])
+    assert resp.status_code == 400
+    assert "teleports_to" in resp.json()["detail"]
+    assert _stored_relationships() == []
+
+
+# --------------------------------------------------------------------------- #
+# Per-id acknowledgement — the client clears pending marks from `applied` /
+# `applied_relationships`, so an id may only appear once it genuinely landed.
+# --------------------------------------------------------------------------- #
+def test_push_reports_applied_ids(client, headers):
+    dev_v, room_v = Entity.create_version("alice"), Entity.create_version("alice")
+    resp = _sync(client, headers, "full", [
+        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device",
+                rels=[_rel("rel1", from_id="dev1", from_version=dev_v,
+                           to_id="room1", to_version=room_v)]),
+        _change("create", id="room1", version=room_v, name="Kitchen", etype="room"),
+    ])
+    body = resp.json()
+    assert sorted(body["applied"]) == ["dev1", "room1"]
+    assert body["applied_relationships"] == ["rel1"]
+    # Counts agree with the acknowledgement lists.
+    assert body["sync_stats"]["entities_synced"] == 2
+    assert body["sync_stats"]["relationships_synced"] == 1
+
+
+def test_rejected_change_is_not_reported_as_applied(client, headers):
+    """A blind overwrite that LOSES resolution must stay pending on the client."""
+    v1 = Entity.create_version("alice")
+    _sync(client, headers, "full", [_change("create", id="P", version=v1, name="kept")])
+
+    resp = _sync(client, headers, "full",
+                 [_change("update", id="P", version=_ANCIENT, name="clobbered", parents=[])])
+    body = resp.json()
+    assert body["conflicts"], "expected the losing overwrite to be reported"
+    assert "P" not in body["applied"]
+    assert body["sync_stats"]["entities_synced"] == 0
+
+
+def test_conflict_winner_is_reported_as_applied(client, headers):
+    """The other side of the same rule: a winning remote IS acknowledged."""
+    v1 = Entity.create_version("alice")
+    _sync(client, headers, "full", [_change("create", id="Q", version=v1, name="old")])
+
+    resp = _sync(client, headers, "full",
+                 [_change("update", id="Q", version=_FUTURE, name="new", parents=[])])
+    body = resp.json()
+    assert body["conflicts"] and body["applied"] == ["Q"]
+
+
+def test_idempotent_repush_is_still_reported_as_applied(client, headers):
+    """Already in the desired state counts as applied, or the client retries forever."""
+    v1 = Entity.create_version("alice")
+    change = _change("create", id="I", version=v1, name="once")
+    assert _sync(client, headers, "full", [change]).json()["applied"] == ["I"]
+    assert _sync(client, headers, "full", [change]).json()["applied"] == ["I"]
+
+
+def test_delete_of_unknown_entity_is_reported_as_applied(client, headers):
+    """Nothing to delete: the intent already holds, so acknowledge it."""
+    vt = Entity.create_version("alice")
+    body = _sync(client, headers, "full",
+                 [_change("delete", id="ghost", version=vt, name="ghost")]).json()
+    assert body["applied"] == ["ghost"]
+
+
+def test_skipped_dangling_relationship_is_not_reported_as_applied(client, headers):
+    """A skipped edge must stay pending so the client retries once the endpoint lands."""
+    dev_v = Entity.create_version("alice")
+    body = _sync(client, headers, "full", [
+        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device",
+                rels=[_rel("rel1", from_id="dev1", from_version=dev_v,
+                           to_id="nope", to_version="no-such-version")]),
+    ]).json()
+    assert body["applied"] == ["dev1"]          # the entity did land
+    assert body["applied_relationships"] == []  # the edge did not
+
+
+def test_relationship_only_change_without_entity(client, headers):
+    """`entity: None` carrying only edges must not crash, and must be acknowledged."""
+    dev_v, room_v = Entity.create_version("alice"), Entity.create_version("alice")
+    _sync(client, headers, "full", [
+        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device"),
+        _change("create", id="room1", version=room_v, name="Kitchen", etype="room"),
+    ])
+
+    # Endpoints already in sync — a later push carries the edge on its own.
+    resp = _sync(client, headers, "full", [
+        _rel_only_change([_rel("rel1", from_id="dev1", from_version=dev_v,
+                               to_id="room1", to_version=room_v)]),
+    ])
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["applied"] == []  # no entity id to acknowledge
+    assert body["applied_relationships"] == ["rel1"]
+    assert len(_stored_relationships()) == 1

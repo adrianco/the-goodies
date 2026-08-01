@@ -1,0 +1,14 @@
+# Declaring a build-system makes pip use the PEP 517/660 build path for this
+# project. Without it, `pip install -e .` falls back to legacy `setup.py
+# develop`, which appends this directory verbatim to sys.path via
+# easy-install.pth -- leaking `tests/` as an importable top-level package that
+# shadows the repo-root tests/ package.
+#
+# Excluding tests in setup.py is not sufficient on its own: the legacy path puts
+# the whole directory on sys.path regardless of what `packages` declares. PEP 660
+# instead installs an import finder exposing only the `blowingoff` name.
+#
+# Metadata deliberately stays in setup.py so there is a single source of truth.
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"

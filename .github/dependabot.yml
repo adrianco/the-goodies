@@ -1,4 +1,15 @@
 version: 2
+
+# Grouping rationale:
+# Without `groups`, dependabot opens one PR per package per directory. With four
+# pip directories that reached the per-ecosystem limit of 5 and left a standing
+# backlog of single-package PRs — five of which touched the same
+# funkygibbon/requirements.txt, so merging any one rebased the other four.
+#
+# Minor and patch bumps are grouped into a single PR per directory: they are
+# routine, and reviewing them together is both faster and safer than merging
+# them one at a time. Major bumps are deliberately left ungrouped so a breaking
+# change arrives as its own reviewable PR rather than hiding in a batch.
 updates:
   # Python dependencies for funkygibbon
   - package-ecosystem: "pip"
@@ -13,6 +24,13 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      funkygibbon-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # Python dependencies for inbetweenies
   - package-ecosystem: "pip"
@@ -27,6 +45,13 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      inbetweenies-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # Python dependencies for oook
   - package-ecosystem: "pip"
@@ -41,6 +66,13 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      oook-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # Python dependencies for blowing-off
   - package-ecosystem: "pip"
@@ -55,8 +87,19 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      blowing-off-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # GitHub Actions dependencies
+  #
+  # Actions are versioned by major tag (v6 -> v7), so restricting the group to
+  # minor/patch would leave every real bump ungrouped. They are grouped wholesale
+  # instead: the blast radius is CI itself, where a break is immediately visible.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -68,3 +111,7 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

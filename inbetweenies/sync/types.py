@@ -28,6 +28,10 @@ class Change:
     updated_at: datetime
     sync_id: str
     client_sync_id: Optional[str] = None
+    # Relationships travelling with this entity change. Serialized form, as
+    # produced by EntityRelationship.to_dict(). The wire protocol bundles
+    # relationships onto the change for their originating entity.
+    relationships: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -56,6 +60,13 @@ class SyncResult:
     """Result of a sync operation."""
     success: bool
     synced_entities: int = 0
+    # Broken out because a single total hides a broken push: a pull-only sync
+    # still reports a large synced_entities, which is exactly what masked the
+    # push path being unreachable (issue #61).
+    pulled_entities: int = 0
+    pushed_entities: int = 0
+    pushed_relationships: int = 0
+    pending_after_sync: int = 0
     conflicts_resolved: int = 0
     conflicts: List[Conflict] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)

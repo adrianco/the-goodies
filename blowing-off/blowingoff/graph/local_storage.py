@@ -30,6 +30,7 @@ class LocalGraphStorage:
         self.entities_file = self.storage_dir / "entities.json"
         self.relationships_file = self.storage_dir / "relationships.json"
         self.index_file = self.storage_dir / "index.json"
+        self.pending_file = self.storage_dir / "pending.json"
 
         # In-memory caches
         self._entities: Dict[str, List[Entity]] = {}  # entity_id -> list of versions
@@ -38,6 +39,12 @@ class LocalGraphStorage:
             "by_type": {},  # entity_type -> set of entity_ids
             "by_room": {},  # room_id -> set of device_ids
         }
+
+        # Dirty tracking for the sync push path. Maps id -> "create" | "update".
+        # Persisted so that writes made while offline survive a restart and are
+        # still pushed on the next successful sync.
+        self._pending_entities: Dict[str, str] = {}
+        self._pending_relationships: Dict[str, str] = {}
 
         self._load_data()
 
@@ -59,6 +66,13 @@ class LocalGraphStorage:
                 self._relationships = [
                     EntityRelationship(**r) for r in data
                 ]
+
+        # Load pending (unpushed) local changes
+        if self.pending_file.exists():
+            with open(self.pending_file, 'r') as f:
+                pending = json.load(f)
+                self._pending_entities = pending.get("entities", {})
+                self._pending_relationships = pending.get("relationships", {})
 
         # Load or rebuild index
         if self.index_file.exists():
@@ -95,6 +109,13 @@ class LocalGraphStorage:
         # Save index
         with open(self.index_file, 'w') as f:
             json.dump(self._index, f, indent=2)
+
+        # Save pending local changes
+        with open(self.pending_file, 'w') as f:
+            json.dump({
+                "entities": self._pending_entities,
+                "relationships": self._pending_relationships,
+            }, f, indent=2)
 
     def _entity_to_dict(self, entity: Entity) -> dict:
         """Convert entity to dictionary for JSON serialization"""
@@ -184,9 +205,18 @@ class LocalGraphStorage:
                     self._index["by_room"][room_id] = []
                 self._index["by_room"][room_id].append(device_id)
 
-    def store_entity(self, entity: Entity) -> Entity:
-        """Store an entity version"""
-        if entity.id not in self._entities:
+    def store_entity(self, entity: Entity, mark_dirty: bool = True) -> Entity:
+        """Store an entity version.
+
+        Args:
+            entity: the entity version to store.
+            mark_dirty: whether to queue this version for the next sync push.
+                Local writes must mark dirty. The sync engine passes False when
+                applying a version it just pulled from the server — otherwise we
+                would immediately push the server's own change back to it.
+        """
+        is_new = entity.id not in self._entities
+        if is_new:
             self._entities[entity.id] = []
 
         # Check if this is a newer version that should replace the current one
@@ -208,6 +238,13 @@ class LocalGraphStorage:
             self._index["by_type"][type_key] = []
         if entity.id not in self._index["by_type"][type_key]:
             self._index["by_type"][type_key].append(entity.id)
+
+        if mark_dirty:
+            # An entity created locally and then edited again before it ever
+            # syncs is still a create as far as the server is concerned, so a
+            # pending "create" is never downgraded to "update".
+            if self._pending_entities.get(entity.id) != "create":
+                self._pending_entities[entity.id] = "create" if is_new else "update"
 
         self._save_data()
         return entity
@@ -245,9 +282,22 @@ class LocalGraphStorage:
 
         return entities
 
-    def store_relationship(self, relationship: EntityRelationship) -> EntityRelationship:
-        """Store a relationship"""
-        self._relationships.append(relationship)
+    def store_relationship(self, relationship: EntityRelationship, mark_dirty: bool = True) -> EntityRelationship:
+        """Store a relationship.
+
+        Args:
+            relationship: the relationship to store.
+            mark_dirty: see :meth:`store_entity`. False when applying a
+                server-originated relationship during sync.
+        """
+        is_new = not any(r.id == relationship.id for r in self._relationships)
+        if is_new:
+            self._relationships.append(relationship)
+        else:
+            self._relationships = [
+                relationship if r.id == relationship.id else r
+                for r in self._relationships
+            ]
 
         # Update room index if it's a LOCATED_IN relationship
         if relationship.relationship_type == RelationshipType.LOCATED_IN:
@@ -257,6 +307,10 @@ class LocalGraphStorage:
                 self._index["by_room"][room_id] = []
             if device_id not in self._index["by_room"][room_id]:
                 self._index["by_room"][room_id].append(device_id)
+
+        if mark_dirty:
+            if self._pending_relationships.get(relationship.id) != "create":
+                self._pending_relationships[relationship.id] = "create" if is_new else "update"
 
         self._save_data()
         return relationship
@@ -281,6 +335,61 @@ class LocalGraphStorage:
             results.append(rel)
 
         return results
+
+    # ------------------------------------------------------------------
+    # Pending-change tracking (sync push)
+    #
+    # The sync engine reads these to build the push payload. They are backed
+    # by pending.json so an offline write is still pushed after a restart.
+    # ------------------------------------------------------------------
+
+    def get_pending_entities(self) -> Dict[str, str]:
+        """Return {entity_id: operation} for locally-changed, unpushed entities."""
+        return dict(self._pending_entities)
+
+    def get_pending_relationships(self) -> Dict[str, str]:
+        """Return {relationship_id: operation} for locally-changed, unpushed relationships."""
+        return dict(self._pending_relationships)
+
+    def mark_entity_pending(self, entity_id: str, operation: str = "update"):
+        """Explicitly queue an entity for the next push.
+
+        For callers that mutate storage out-of-band; normal writes through
+        store_entity() mark themselves.
+        """
+        if self._pending_entities.get(entity_id) != "create":
+            self._pending_entities[entity_id] = operation
+        self._save_data()
+
+    def has_pending(self) -> bool:
+        """Whether there is any local change waiting to be pushed."""
+        return bool(self._pending_entities or self._pending_relationships)
+
+    def pending_count(self) -> int:
+        """Total number of local changes waiting to be pushed."""
+        return len(self._pending_entities) + len(self._pending_relationships)
+
+    def clear_pending(
+        self,
+        entity_ids: Optional[List[str]] = None,
+        relationship_ids: Optional[List[str]] = None
+    ):
+        """Drop pending marks for changes the server has confirmed it applied.
+
+        Only the ids the server acknowledged are cleared. Anything written
+        while the push was in flight keeps its mark and goes out next sync.
+        Passing None for both clears everything.
+        """
+        if entity_ids is None and relationship_ids is None:
+            self._pending_entities.clear()
+            self._pending_relationships.clear()
+        else:
+            for entity_id in entity_ids or []:
+                self._pending_entities.pop(entity_id, None)
+            for relationship_id in relationship_ids or []:
+                self._pending_relationships.pop(relationship_id, None)
+
+        self._save_data()
 
     def search_entities(self, query: str, entity_types: Optional[List[EntityType]] = None) -> List[Entity]:
         """Simple search implementation"""
@@ -342,13 +451,15 @@ class LocalGraphStorage:
         """Clear all local data"""
         self._entities.clear()
         self._relationships.clear()
+        self._pending_entities.clear()
+        self._pending_relationships.clear()
         self._index = {
             "by_type": {},
             "by_room": {}
         }
 
         # Remove files
-        for file in [self.entities_file, self.relationships_file, self.index_file]:
+        for file in [self.entities_file, self.relationships_file, self.index_file, self.pending_file]:
             if file.exists():
                 file.unlink()
 

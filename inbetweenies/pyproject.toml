@@ -1,0 +1,13 @@
+# Declaring a build-system makes pip use the PEP 517/660 build path for this
+# project. That matters for `pip install -e .`: without it pip falls back to the
+# legacy `setup.py develop` mode, which appends this directory verbatim to
+# sys.path (via easy-install.pth) and so leaks `models/`, `mcp/`, `sync/` and
+# `graph/` as importable top-level modules -- shadowing the real `mcp` SDK.
+#
+# With PEP 660, setuptools honours the package_dir mapping in setup.py and
+# installs an import finder that exposes only the `inbetweenies` name.
+#
+# Metadata deliberately stays in setup.py so there is a single source of truth.
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"

@@ -112,8 +112,8 @@ class Entity(Base, InbetweeniesTimestampMixin):
             "source_type": source_type_value,
             "user_id": self.user_id,
             "parent_versions": self.parent_versions,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+            "created_at": self.created_at.isoformat() if hasattr(self.created_at, "isoformat") else self.created_at,
+            "updated_at": self.updated_at.isoformat() if hasattr(self.updated_at, "isoformat") else self.updated_at
         }
 
     @classmethod

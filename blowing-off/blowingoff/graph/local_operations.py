@@ -171,8 +171,14 @@ class LocalGraphOperations(MCPTools):
         except Exception as e:
             return ToolResult(False, None, str(e))
 
-    async def store_entity(self, entity: Entity) -> Entity:
-        """Store an entity locally"""
+    async def store_entity(self, entity: Entity, mark_dirty: bool = True) -> Entity:
+        """Store an entity locally.
+
+        Args:
+            entity: the entity version to store.
+            mark_dirty: whether to queue this version for the next sync push.
+                The sync engine passes False when applying a server change.
+        """
         import uuid
         # Generate ID if not set
         if not entity.id:
@@ -186,7 +192,7 @@ class LocalGraphOperations(MCPTools):
         # Ensure parent_versions is a list
         if not hasattr(entity, 'parent_versions') or entity.parent_versions is None:
             entity.parent_versions = []
-        return self.storage.store_entity(entity)
+        return self.storage.store_entity(entity, mark_dirty=mark_dirty)
 
     async def get_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[Entity]:
         """Get an entity from local storage"""
@@ -196,9 +202,34 @@ class LocalGraphOperations(MCPTools):
         """Get all entities of a specific type"""
         return self.storage.get_entities_by_type(entity_type)
 
-    async def store_relationship(self, relationship: EntityRelationship) -> EntityRelationship:
-        """Store a relationship locally"""
-        return self.storage.store_relationship(relationship)
+    async def store_relationship(
+        self,
+        relationship: EntityRelationship,
+        mark_dirty: bool = True
+    ) -> EntityRelationship:
+        """Store a relationship locally.
+
+        Args:
+            relationship: the relationship to store.
+            mark_dirty: see :meth:`store_entity`.
+        """
+        return self.storage.store_relationship(relationship, mark_dirty=mark_dirty)
+
+    def get_pending_entities(self) -> dict:
+        """Return {entity_id: operation} for locally-changed, unpushed entities."""
+        return self.storage.get_pending_entities()
+
+    def get_pending_relationships(self) -> dict:
+        """Return {relationship_id: operation} for locally-changed, unpushed relationships."""
+        return self.storage.get_pending_relationships()
+
+    def pending_count(self) -> int:
+        """Total number of local changes waiting to be pushed."""
+        return self.storage.pending_count()
+
+    def clear_pending(self, entity_ids=None, relationship_ids=None):
+        """Drop pending marks for changes the server confirmed it applied."""
+        self.storage.clear_pending(entity_ids, relationship_ids)
 
     async def get_relationships(
         self,

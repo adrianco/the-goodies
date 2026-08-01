@@ -94,3 +94,10 @@ class SyncResponse(BaseModel):
     # UTC ISO-8601 server clock at response time. The client persists this and
     # sends it back as filters.since on the next delta sync (PROTOCOL.md §4).
     server_time: Optional[str] = None
+    # Per-id acknowledgement of the changes the client pushed in this request.
+    # A client cannot safely drop a local change until the server confirms it
+    # by id — aggregate counts are not enough, since a partially-applied batch
+    # would otherwise clear writes that never landed. Ids absent from these
+    # lists stay pending client-side and are retried on the next sync.
+    applied: List[str] = Field(default_factory=list)
+    applied_relationships: List[str] = Field(default_factory=list)

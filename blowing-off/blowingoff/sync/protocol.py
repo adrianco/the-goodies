@@ -70,7 +70,7 @@ import httpx
 from inbetweenies.models import Entity
 from inbetweenies.sync import Change, Conflict, SyncOperation
 from inbetweenies.sync import (
-    VectorClock, EntityChange, SyncChange,
+    VectorClock, EntityChange, RelationshipChange, SyncChange,
     SyncFilters, SyncRequest, SyncResponse
 )
 
@@ -130,7 +130,10 @@ class InbetweeniesProtocol:
         for change in changes:
             # Create entity change if not delete
             entity = None
-            if change.operation != SyncOperation.DELETE:
+            # entity_id is empty for a relationship-only change: an edge whose
+            # endpoint entities are already in sync and so carry no change of
+            # their own. Those ride the wire with entity=None.
+            if change.operation != SyncOperation.DELETE and change.entity_id:
                 entity = EntityChange(
                     id=change.entity_id,
                     version=change.data.get("version", ""),
@@ -147,7 +150,18 @@ class InbetweeniesProtocol:
             sync_change = SyncChange(
                 change_type=operation,
                 entity=entity,
-                relationships=[]
+                relationships=[
+                    RelationshipChange(
+                        id=relationship["id"],
+                        from_entity_id=relationship["from_entity_id"],
+                        from_entity_version=relationship["from_entity_version"],
+                        to_entity_id=relationship["to_entity_id"],
+                        to_entity_version=relationship["to_entity_version"],
+                        relationship_type=relationship["relationship_type"],
+                        properties=relationship.get("properties") or {}
+                    )
+                    for relationship in change.relationships
+                ]
             )
             sync_changes.append(sync_change)
 

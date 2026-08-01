@@ -266,3 +266,6 @@ chat/models/
 
 # Database backups created by the backup service
 backups/
+
+# Generated knowledge graph (graphify) - regenerate with `graphify update .`
+graphify-out/

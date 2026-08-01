@@ -20,6 +20,32 @@ from inbetweenies.sync import SyncState, Change, SyncOperation, ConflictResoluti
 from inbetweenies.models import Entity, EntityType
 
 
+def make_mock_graph_ops(**overrides):
+    """Build a graph-operations double satisfying the full SyncEngine contract.
+
+    Defined once so that adding a method to the real collaborator does not
+    silently produce a bare Mock here — an auto-created Mock attribute returns
+    a Mock, which then blows up somewhere far from the cause. Pass keyword
+    overrides for the behaviour a given test actually cares about.
+    """
+    mock = Mock()
+    mock.store_entity = AsyncMock()
+    mock.store_relationship = AsyncMock()
+    mock.get_entities_by_type = AsyncMock(return_value=[])
+    mock.get_entity = AsyncMock(return_value=None)
+    mock.get_relationships = AsyncMock(return_value=[])
+    mock.search_entities = AsyncMock(return_value=[])
+    # Push path: no pending local changes unless a test says otherwise.
+    mock.get_pending_entities = Mock(return_value={})
+    mock.get_pending_relationships = Mock(return_value={})
+    mock.pending_count = Mock(return_value=0)
+    mock.clear_pending = Mock()
+
+    for name, value in overrides.items():
+        setattr(mock, name, value)
+    return mock
+
+
 @pytest.fixture
 def sync_protocol():
     """Create an InbetweeniesProtocol instance."""
@@ -232,13 +258,7 @@ class TestSyncEngine:
     async def test_sync_basic(self, sync_engine):
         """Test basic synchronization."""
         # Set up graph operations mock
-        mock_graph_ops = Mock()
-        mock_graph_ops.store_entity = AsyncMock()
-        mock_graph_ops.store_relationship = AsyncMock()
-        # Return empty list to avoid Mock serialization issues
-        mock_graph_ops.get_entities_by_type = AsyncMock(return_value=[])
-        mock_graph_ops.get_entity = AsyncMock(return_value=None)
-        mock_graph_ops.search_entities = AsyncMock(return_value=[])
+        mock_graph_ops = make_mock_graph_ops()
         sync_engine.set_graph_operations(mock_graph_ops)
 
         # Mock metadata repository to return None (no previous sync)
@@ -287,12 +307,7 @@ class TestSyncEngine:
     async def test_sync_with_conflicts(self, sync_engine):
         """Test synchronization with conflicts."""
         # Set up graph operations mock
-        mock_graph_ops = Mock()
-        mock_graph_ops.store_entity = AsyncMock()
-        mock_graph_ops.store_relationship = AsyncMock()
-        mock_graph_ops.get_entities_by_type = AsyncMock(return_value=[])
-        mock_graph_ops.get_entity = AsyncMock(return_value=None)
-        mock_graph_ops.search_entities = AsyncMock(return_value=[])
+        mock_graph_ops = make_mock_graph_ops()
         sync_engine.set_graph_operations(mock_graph_ops)
 
         entity_id = str(uuid.uuid4())
@@ -342,12 +357,7 @@ class TestSyncEngine:
     async def test_sync_delta(self, sync_engine):
         """Test delta synchronization."""
         # Set up graph operations mock
-        mock_graph_ops = Mock()
-        mock_graph_ops.store_entity = AsyncMock()
-        mock_graph_ops.store_relationship = AsyncMock()
-        mock_graph_ops.get_entities_by_type = AsyncMock(return_value=[])
-        mock_graph_ops.get_entity = AsyncMock(return_value=None)
-        mock_graph_ops.search_entities = AsyncMock(return_value=[])
+        mock_graph_ops = make_mock_graph_ops()
         sync_engine.set_graph_operations(mock_graph_ops)
 
         # Mock metadata repository
@@ -397,8 +407,7 @@ class TestSyncEngine:
     async def test_sync_error_handling(self, sync_engine):
         """Test error handling during sync."""
         # Set up graph operations mock
-        mock_graph_ops = Mock()
-        mock_graph_ops.get_entities_by_type = AsyncMock(return_value=[])
+        mock_graph_ops = make_mock_graph_ops()
         sync_engine.set_graph_operations(mock_graph_ops)
 
         # Mock metadata repository
@@ -455,8 +464,7 @@ class TestSyncEngine:
     async def test_apply_remote_changes(self, sync_engine):
         """Test applying remote changes."""
         # Set up graph operations mock
-        mock_graph_ops = Mock()
-        mock_graph_ops.store_entity = AsyncMock()
+        mock_graph_ops = make_mock_graph_ops()
         sync_engine.set_graph_operations(mock_graph_ops)
 
         # Create a test change
@@ -494,12 +502,7 @@ class TestSyncIntegration:
     async def test_bidirectional_sync(self, sync_engine):
         """Test bidirectional synchronization."""
         # Set up graph operations mock
-        mock_graph_ops = Mock()
-        mock_graph_ops.store_entity = AsyncMock()
-        mock_graph_ops.store_relationship = AsyncMock()
-        mock_graph_ops.get_entities_by_type = AsyncMock(return_value=[])
-        mock_graph_ops.get_entity = AsyncMock(return_value=None)
-        mock_graph_ops.search_entities = AsyncMock(return_value=[])
+        mock_graph_ops = make_mock_graph_ops()
         sync_engine.set_graph_operations(mock_graph_ops)
 
         # Mock metadata repository

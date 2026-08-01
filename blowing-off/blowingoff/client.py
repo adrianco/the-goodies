@@ -203,12 +203,9 @@ class BlowingOffClient:
             self._is_offline = True
 
             # Count pending changes
-            if self.sync_engine and hasattr(self.sync_engine, '_pending_sync_entities'):
-                self._offline_changes_count = len(
-                    self.sync_engine._pending_sync_entities
-                )
-            else:
-                self._offline_changes_count = 0
+            self._offline_changes_count = (
+                self.graph_operations.pending_count() if self.graph_operations else 0
+            )
 
             result = SyncResult(
                 success=False,
@@ -323,7 +320,13 @@ class BlowingOffClient:
 
     @property
     def pending_changes_count(self) -> int:
-        """Get count of changes pending sync."""
+        """Get count of local changes waiting to be pushed to the server.
+
+        Read live from local storage rather than from the last sync attempt, so
+        it stays accurate for writes made since — including across a restart.
+        """
+        if self.graph_operations:
+            return self.graph_operations.pending_count()
         return self._offline_changes_count
 
     def check_write_permission(self) -> bool:

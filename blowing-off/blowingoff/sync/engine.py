@@ -115,15 +115,20 @@ class SyncEngine:
             server_changes, conflicts = self.protocol.parse_sync_delta(sync_response)
 
             # Apply server changes
-            synced_count = 0
+            pulled_count = 0
             for change in server_changes:
                 if await self._apply_single_change(change):
-                    synced_count += 1
+                    pulled_count += 1
 
             # Push local changes if any
+            pushed_entities = 0
+            pushed_relationships = 0
             if local_changes:
                 push_result = await self._push_local_changes(local_changes)
-                synced_count += len(push_result.get("applied", []))
+                pushed_entities = len(push_result.get("applied", []))
+                pushed_relationships = len(push_result.get("applied_relationships", []))
+
+            synced_count = pulled_count + pushed_entities
 
             # Resolve conflicts
             resolved_count = 0
@@ -142,6 +147,10 @@ class SyncEngine:
             return SyncResult(
                 success=True,
                 synced_entities=synced_count,
+                pulled_entities=pulled_count,
+                pushed_entities=pushed_entities,
+                pushed_relationships=pushed_relationships,
+                pending_after_sync=self.graph_operations.pending_count(),
                 conflicts_resolved=resolved_count,
                 conflicts=[],  # All resolved
                 errors=[],
@@ -163,38 +172,83 @@ class SyncEngine:
             self._is_syncing = False
 
     async def _get_local_changes(self, since: Optional[datetime]) -> List[Change]:
-        """Get local changes that need syncing."""
+        """Build the push payload from the storage-backed pending set.
+
+        Pending marks are deliberately NOT cleared here — that only happens
+        once the server confirms it applied a change (see _push_local_changes).
+        Clearing early loses the write whenever a push fails.
+        """
         if not self.graph_operations:
             return []
 
-        changes = []
+        pending_entities = self.graph_operations.get_pending_entities()
+        pending_relationships = self.graph_operations.get_pending_relationships()
 
-        # Check if we have any pending changes to sync
-        if hasattr(self, '_pending_sync_entities'):
-            for entity_id in self._pending_sync_entities:
-                entity = await self.graph_operations.get_entity(entity_id)
-                if entity:
-                    entity_type_value = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
-                    change = Change(
-                        entity_type=entity_type_value,
-                        entity_id=entity.id,
-                        operation=SyncOperation.UPDATE,
-                        data=entity.to_dict(),
-                        updated_at=getattr(entity, 'updated_at', datetime.now()),
-                        sync_id=entity.version,
-                        client_sync_id=str(uuid.uuid4())
-                    )
-                    changes.append(change)
-            # Clear pending entities after creating changes
-            self._pending_sync_entities = set()
+        # Group pending relationships onto the entity change they originate
+        # from, which is how the wire protocol carries them.
+        relationships_by_entity: Dict[str, List[Dict[str, Any]]] = {}
+        orphan_relationships: List[Dict[str, Any]] = []
+        for relationship_id in pending_relationships:
+            relationship = await self._get_relationship(relationship_id)
+            if not relationship:
+                continue
+            serialized = relationship.to_dict()
+            if relationship.from_entity_id in pending_entities:
+                relationships_by_entity.setdefault(
+                    relationship.from_entity_id, []
+                ).append(serialized)
+            else:
+                orphan_relationships.append(serialized)
+
+        changes = []
+        for entity_id, operation in pending_entities.items():
+            entity = await self.graph_operations.get_entity(entity_id)
+            if not entity:
+                continue
+            entity_type_value = entity.entity_type.value if hasattr(entity.entity_type, 'value') else str(entity.entity_type)
+            changes.append(Change(
+                entity_type=entity_type_value,
+                entity_id=entity.id,
+                operation=SyncOperation(operation),
+                data=entity.to_dict(),
+                updated_at=getattr(entity, 'updated_at', datetime.now()),
+                sync_id=entity.version,
+                client_sync_id=str(uuid.uuid4()),
+                relationships=relationships_by_entity.get(entity.id, [])
+            ))
+
+        # A relationship whose endpoint entity is already in sync still has to
+        # be pushed, so it rides on its own entity-less change.
+        for serialized in orphan_relationships:
+            changes.append(Change(
+                entity_type="",
+                entity_id="",
+                operation=SyncOperation.UPDATE,
+                data={},
+                updated_at=datetime.now(),
+                sync_id="",
+                client_sync_id=str(uuid.uuid4()),
+                relationships=[serialized]
+            ))
 
         return changes
 
+    async def _get_relationship(self, relationship_id: str):
+        """Look up a single relationship by id from the local graph."""
+        for relationship in await self.graph_operations.get_relationships():
+            if relationship.id == relationship_id:
+                return relationship
+        return None
+
     def mark_entity_for_sync(self, entity_id: str):
-        """Mark an entity as needing to be synced."""
-        if not hasattr(self, '_pending_sync_entities'):
-            self._pending_sync_entities = set()
-        self._pending_sync_entities.add(entity_id)
+        """Explicitly queue an entity for the next push.
+
+        Local writes mark themselves dirty, so this is rarely needed. It
+        remains for callers that mutate storage out-of-band and for tests.
+        """
+        if not self.graph_operations:
+            return
+        self.graph_operations.storage.mark_entity_pending(entity_id)
 
     @staticmethod
     def _parse_server_time(server_time: Optional[str]) -> datetime:
@@ -234,7 +288,9 @@ class SyncEngine:
                 parent_versions=entity_data.get('parent_versions', []),
                 user_id=entity_data.get('user_id', 'sync')
             )
-            await self.graph_operations.store_entity(entity)
+            # mark_dirty=False: this version came FROM the server, so queuing it
+            # for push would bounce the server's own change straight back.
+            await self.graph_operations.store_entity(entity, mark_dirty=False)
             return True
 
         except Exception as e:
@@ -246,18 +302,19 @@ class SyncEngine:
         if not changes:
             return {"applied": []}
 
-        print(f"DEBUG: Pushing {len(changes)} local changes to server")
-        for change in changes[:3]:  # Print first 3 for debugging
-            print(f"  - {change.entity_id}: {change.data.get('content', {})}")
-
         # Convert changes to sync format and push
         response = await self.protocol.sync_push(changes)
 
-        # Mark successfully synced entities
+        # Clear pending marks only for what the server acknowledged by id.
+        # Anything it rejected — or that was written while this push was in
+        # flight — keeps its mark and goes out on the next sync.
         applied_ids = response.get("applied", [])
-
-        # In a real implementation, we'd mark these entities as synced
-        # to avoid re-syncing them next time
+        applied_relationship_ids = response.get("applied_relationships", [])
+        if applied_ids or applied_relationship_ids:
+            self.graph_operations.clear_pending(
+                entity_ids=applied_ids,
+                relationship_ids=applied_relationship_ids
+            )
 
         return response
 

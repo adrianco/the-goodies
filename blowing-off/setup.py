@@ -61,7 +61,9 @@ setup(
     name="blowingoff",
     version="0.1.0",
     description="Python test client for The Goodies smart home system",
-    packages=find_packages(),
+    # Exclude tests: find_packages() would otherwise export a top-level `tests`
+    # distribution that shadows the repo-root tests/ package once installed.
+    packages=find_packages(exclude=["tests", "tests.*"]),
     install_requires=[
         "inbetweenies",
         "sqlalchemy>=2.0.0",

@@ -12,7 +12,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from funkygibbon.database import get_db
-from inbetweenies.models import Entity, EntityRelationship, EntityType, SourceType
+from inbetweenies.models import (
+    Entity, EntityRelationship, EntityType, RelationshipType, SourceType,
+)
 from inbetweenies.sync import (
     VectorClock, EntityChange, RelationshipChange, SyncChange,
     SyncFilters, SyncRequest, ConflictInfo, SyncStats, SyncResponse,
@@ -55,20 +57,35 @@ class SyncHandler:
 
         # --- Apply incoming (client -> server) changes ---
         conflicts: List[ConflictInfo] = []
-        entities_synced = 0
-        relationships_synced = 0
+        # Per-id acknowledgement. The client clears its pending marks from these,
+        # so an id may only appear once its change is genuinely persisted (or was
+        # already in the desired state). Anything omitted here is retried on the
+        # next sync — aggregate counts cannot express a partially-applied batch.
+        applied: List[str] = []
+        applied_relationships: List[str] = []
 
         for change in request.changes:
-            if change.change_type == "create":
-                await self._apply_incoming(change, conflicts)
-                entities_synced += 1
-            elif change.change_type == "update":
-                await self._apply_incoming(change, conflicts)
-                entities_synced += 1
+            if change.change_type in ("create", "update"):
+                persisted = await self._apply_incoming(change, conflicts)
             elif change.change_type == "delete":
-                await self._handle_delete(change)
-                entities_synced += 1
-            relationships_synced += len(change.relationships)
+                persisted = await self._handle_delete(change)
+            else:
+                persisted = False
+            # `change.entity` is optional: a change may carry only relationships
+            # (its endpoints are already in sync), in which case there is no
+            # entity id to acknowledge.
+            if persisted and change.entity and change.entity.id not in applied:
+                applied.append(change.entity.id)
+
+        # Relationships only after every entity in the batch has been applied:
+        # an edge references its endpoints at a specific version and the table
+        # carries a composite FK on (entity_id, entity_version), so the endpoints
+        # must already exist (PROTOCOL.md §5, entities before relationships).
+        for change in request.changes:
+            for relationship in change.relationships:
+                if await self._persist_relationship(relationship, request.user_id):
+                    if relationship.id not in applied_relationships:
+                        applied_relationships.append(relationship.id)
 
         # server_time is the watermark the client persists and sends back as the
         # next `since`. Capture it now; everything applied above is <= it.
@@ -108,11 +125,15 @@ class SyncHandler:
             sync_type=request.sync_type,
             changes=response_changes,
             conflicts=conflicts,
+            applied=applied,
+            applied_relationships=applied_relationships,
             vector_clock=request.vector_clock,  # RESERVED — echoed, never read
             server_time=server_time.isoformat(),
             sync_stats=SyncStats(
-                entities_synced=entities_synced,
-                relationships_synced=relationships_synced,
+                # Counts stay consistent with the acknowledgement lists: they
+                # report what landed, not what was merely attempted.
+                entities_synced=len(applied),
+                relationships_synced=len(applied_relationships),
                 conflicts_resolved=len(conflicts),
                 duration_ms=duration_ms,
             ),
@@ -155,27 +176,53 @@ class SyncHandler:
         self.db_session.add(entity)
         await self.db_session.commit()
 
-    async def _apply_incoming(self, change: SyncChange, conflicts: List[ConflictInfo]) -> None:
-        """Apply a create/update: fast-forward if based on our latest, else resolve."""
+    async def _apply_incoming(self, change: SyncChange, conflicts: List[ConflictInfo]) -> bool:
+        """Apply a create/update: fast-forward if based on our latest, else resolve.
+
+        Returns True when our stored state now reflects this change — either it
+        persisted, or it was already in the desired state. False means the client
+        must keep its pending mark and retry (it lost conflict resolution, or the
+        change carried no entity to apply).
+        """
         if not change.entity:
-            return
+            return False  # relationships-only change; nothing to apply here
 
         latest = await self._latest_entities()
         existing = latest.get(change.entity.id)
 
         if existing is None:
             await self._insert_version(change)
-            return
+            return True
 
         if existing.version == change.entity.version:
-            return  # idempotent re-send
+            return True  # idempotent re-send: already in the desired state
 
         parents = change.entity.parent_versions or []
+
+        if not parents:
+            # An update that names no parent_versions for an id we already hold is
+            # a blind overwrite: the client cannot have seen our version, so this
+            # is by definition not a fast-forward. Decide it through the §7 rule
+            # like any other concurrent edit instead of letting it through
+            # unchallenged. Record the version it supersedes if it wins, so the
+            # version DAG stays connected (same repair as the tombstone path).
+            change.entity.parent_versions = [existing.version]
+            return await self._resolve_conflict(change, existing, conflicts)
+
         if existing.version in parents:
             await self._insert_version(change)  # fast-forward
-            return
+            return True
 
-        # Concurrent edit -> canonical resolution (LWW + version tiebreak).
+        # Client edited from a version we have since superseded.
+        return await self._resolve_conflict(change, existing, conflicts)
+
+    async def _resolve_conflict(self, change: SyncChange, existing: Entity,
+                                conflicts: List[ConflictInfo]) -> bool:
+        """Resolve a concurrent edit canonically (LWW + version tiebreak, §7).
+
+        Returns True only if the remote version won and was stored; a losing
+        remote is deliberately not acknowledged, so the client retries it.
+        """
         local = {"updated_at": _to_utc(existing.updated_at), "version": existing.version}
         remote = {
             "updated_at": Entity.version_timestamp(change.entity.version) or _to_utc(existing.updated_at),
@@ -197,22 +244,89 @@ class SyncHandler:
             resolution_strategy=resolution.reason,
             resolved_version=resolved_version,
         ))
+        return remote_wins
 
-    async def _handle_delete(self, change: SyncChange) -> None:
-        """Apply a delete as a tombstone version (content.deleted = true, §8)."""
+    async def _handle_delete(self, change: SyncChange) -> bool:
+        """Apply a delete as a tombstone version (content.deleted = true, §8).
+
+        Returns True whenever the entity is deleted server-side afterwards —
+        including "nothing to delete" and "already tombstoned", since the client's
+        intent holds in both cases and withholding the acknowledgement would make
+        it retry forever.
+        """
         if not change.entity:
-            return
+            return False
         latest = await self._latest_entities()
         existing = latest.get(change.entity.id)
         if existing is None:
-            return  # nothing to delete
+            return True  # nothing to delete - the desired state already holds
         if bool((existing.content or {}).get("deleted")):
-            return  # already tombstoned
+            return True  # already tombstoned
         # If the client didn't set the prior version as a parent, record it so the
         # tombstone supersedes the latest known version.
         if existing.version not in (change.entity.parent_versions or []):
             change.entity.parent_versions = [existing.version]
         await self._insert_version(change, deleted=True)
+        return True
+
+    async def _persist_relationship(self, relationship: RelationshipChange,
+                                    user_id: Optional[str] = None) -> bool:
+        """Persist one inbound edge; returns True if it is now stored (§3.1).
+
+        Idempotent on the relationship ``id`` (the primary key): re-pushing the
+        same edge updates that row rather than inserting a duplicate. Unlike
+        entities, relationships are not versioned — the row itself carries the
+        endpoint versions, so an edge that follows its endpoints onto a new
+        entity version is the same row with new ``*_entity_version`` values.
+        """
+        try:
+            rel_type = RelationshipType(relationship.relationship_type)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown relationship_type: {relationship.relationship_type}",
+            )
+
+        # Both endpoints must exist at exactly the referenced version — the table
+        # has a composite FK on (entity_id, entity_version). A dangling endpoint
+        # is skipped rather than fatal: the entity may simply not have reached us
+        # yet, and the caller reports the shortfall via sync_stats.
+        for entity_id, entity_version in (
+            (relationship.from_entity_id, relationship.from_entity_version),
+            (relationship.to_entity_id, relationship.to_entity_version),
+        ):
+            if await self.db_session.get(Entity, (entity_id, entity_version)) is None:
+                return False
+
+        now = datetime.now(timezone.utc)
+        properties = dict(relationship.properties or {})
+        existing = await self.db_session.get(EntityRelationship, relationship.id)
+
+        if existing is None:
+            self.db_session.add(EntityRelationship(
+                id=relationship.id,
+                from_entity_id=relationship.from_entity_id,
+                from_entity_version=relationship.from_entity_version,
+                to_entity_id=relationship.to_entity_id,
+                to_entity_version=relationship.to_entity_version,
+                relationship_type=rel_type,
+                properties=properties,
+                user_id=user_id,
+                created_at=now,
+                updated_at=now,
+            ))
+        else:
+            existing.from_entity_id = relationship.from_entity_id
+            existing.from_entity_version = relationship.from_entity_version
+            existing.to_entity_id = relationship.to_entity_id
+            existing.to_entity_version = relationship.to_entity_version
+            existing.relationship_type = rel_type
+            existing.properties = properties
+            existing.user_id = user_id
+            existing.updated_at = now
+
+        await self.db_session.commit()
+        return True
 
     def _entity_to_change(self, entity: Entity) -> EntityChange:
         """Convert a stored entity to its wire EntityChange."""
