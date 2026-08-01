@@ -220,7 +220,7 @@ def build_server(client: BlowingOffClient) -> Server:
 
     return Server(
         "blowingoff",
-        version="0.2.0",  # keyword-only since MCP 2.0
+        version="0.3.0",  # keyword-only since MCP 2.0
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
     )

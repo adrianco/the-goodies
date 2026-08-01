@@ -59,7 +59,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="blowingoff",
-    version="0.2.0",
+    version="0.3.0",
     description="Python test client for The Goodies smart home system",
     # Exclude tests: find_packages() would otherwise export a top-level `tests`
     # distribution that shadows the repo-root tests/ package once installed.

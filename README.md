@@ -10,7 +10,7 @@ protocol-correct sync engine (see [`inbetweenies/PROTOCOL.md`](inbetweenies/PROT
 12 MCP tools, backup/restore, and data-migration + upgrade tooling. The Python
 **blowing-off** client also runs as an MCP server, mirroring the TypeScript port
 (*KittenKong*). CI runs the test suites on Linux and macOS. Released tags: see the
-GitHub releases (latest `v0.2.2`).
+GitHub releases (latest `v0.3.0`).
 
 > ⚠️ Authentication is enforced: every data endpoint (`/graph`, `/mcp`, `/sync`,
 > `/sync-metadata`, `/backup`) requires a bearer token. Only `/health` and

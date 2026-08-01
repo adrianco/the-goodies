@@ -32,7 +32,7 @@ SUBPACKAGES = find_packages(where=HERE, exclude=["tests", "tests.*"])
 
 setup(
     name="inbetweenies",
-    version="0.2.0",
+    version="0.3.0",
     description="Shared models for the Inbetweenies sync protocol",
     packages=["inbetweenies"] + [f"inbetweenies.{name}" for name in SUBPACKAGES],
     package_dir={"inbetweenies": "."},
