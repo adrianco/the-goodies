@@ -26,7 +26,7 @@ def test_tool_surface_matches_kittenkong():
 
 def test_every_tool_has_a_valid_object_schema_with_required():
     for tool in TOOLS:
-        schema = tool.inputSchema
+        schema = tool.input_schema  # renamed from inputSchema in MCP 2.0
         assert schema["type"] == "object"
         assert "properties" in schema and isinstance(schema["properties"], dict)
         assert isinstance(schema.get("required", []), list)
@@ -63,16 +63,39 @@ def test_build_server_dispatches_calls_to_the_client():
     assert server.name == "blowingoff"
 
     # The call-tool handler is registered; invoke it through the SDK's registry.
-    from mcp.types import CallToolRequest
-    handler = server.request_handlers[CallToolRequest]
-    req = CallToolRequest(
-        method="tools/call",
-        params={"name": "search_entities", "arguments": {"query": "lamp"}},
+    # MCP 2.x keys the registry by method name and hands the handler an
+    # already-validated params model plus a request context (unused here).
+    entry = server.get_request_handler("tools/call")
+    assert entry is not None, "tools/call handler was not registered"
+    params = entry.params_type.model_validate(
+        {"name": "search_entities", "arguments": {"query": "lamp"}}
     )
-    result = asyncio.run(handler(req))
+    result = asyncio.run(entry.handler(None, params))
 
     assert client.calls == [("search_entities", {"query": "lamp"})]
     # The text content carries the tool's result payload.
-    blocks = result.root.content
+    blocks = result.content
     assert blocks[0].type == "text"
     assert '"ok": true' in blocks[0].text
+
+
+def test_build_server_lists_the_full_tool_surface():
+    """The registered tools/list handler serves exactly the TOOLS list."""
+    server = build_server(_FakeClient(None))
+    entry = server.get_request_handler("tools/list")
+    assert entry is not None, "tools/list handler was not registered"
+    result = asyncio.run(entry.handler(None, None))
+    assert {t.name for t in result.tools} == EXPECTED_TOOLS
+
+
+def test_build_server_reports_client_errors_as_error_payloads():
+    """A failed client call still yields a text block carrying the error."""
+    client = _FakeClient({"success": False, "error": "boom"})
+    server = build_server(client)
+    entry = server.get_request_handler("tools/call")
+    params = entry.params_type.model_validate(
+        {"name": "get_entity_details", "arguments": {"entity_id": "e1"}}
+    )
+    result = asyncio.run(entry.handler(None, params))
+    assert client.calls == [("get_entity_details", {"entity_id": "e1"})]
+    assert '"error": "boom"' in result.content[0].text

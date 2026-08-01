@@ -47,7 +47,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="search_entities",
         description="Search for entities in the home knowledge graph by name or content",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query string"},
@@ -61,7 +61,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="get_entity_details",
         description="Get full details for a specific entity by ID, including all relationships",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"entity_id": {"type": "string", "description": "Entity ID"}},
             "required": ["entity_id"],
@@ -70,7 +70,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="create_entity",
         description="Create a new entity in the knowledge graph",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "entity_type": {"type": "string", "description": f"Type: {_ENTITY_TYPES}"},
@@ -84,7 +84,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="update_entity",
         description="Update an existing entity — creates a new immutable version",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "entity_id": {"type": "string", "description": "Entity ID to update"},
@@ -97,7 +97,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="create_relationship",
         description="Create a directed relationship between two entities",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "from_entity_id": {"type": "string", "description": "Source entity ID"},
@@ -113,7 +113,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="get_devices_in_room",
         description="Get all devices located in a specific room",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"room_id": {"type": "string", "description": "Room entity ID"}},
             "required": ["room_id"],
@@ -122,7 +122,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="find_device_controls",
         description="Get available controls, automations, and procedures for a device",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"device_id": {"type": "string", "description": "Device entity ID"}},
             "required": ["device_id"],
@@ -131,7 +131,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="get_room_connections",
         description="Find doors, windows, and passages connecting a room to adjacent spaces",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"room_id": {"type": "string", "description": "Room entity ID"}},
             "required": ["room_id"],
@@ -140,7 +140,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="find_path",
         description="Find the relationship path between two entities in the graph",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "from_entity_id": {"type": "string", "description": "Starting entity ID"},
@@ -153,7 +153,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="find_similar_entities",
         description="Find entities similar to a given entity based on type and content",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "entity_id": {"type": "string", "description": "Reference entity ID"},
@@ -166,7 +166,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="get_procedures_for_device",
         description="Get all procedures, manuals, and instructions for a device",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"device_id": {"type": "string", "description": "Device entity ID"}},
             "required": ["device_id"],
@@ -175,7 +175,7 @@ TOOLS: List[types.Tool] = [
     types.Tool(
         name="get_automations_in_room",
         description="Get all automation rules and schedules associated with a room",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"room_id": {"type": "string", "description": "Room entity ID"}},
             "required": ["room_id"],
@@ -195,20 +195,35 @@ def result_payload(result: Any) -> Any:
 
 
 def build_server(client: BlowingOffClient) -> Server:
-    """Build the MCP Server wired to a (connected) Blowing-Off client."""
-    server = Server("blowingoff", "0.2.0")
+    """Build the MCP Server wired to a (connected) Blowing-Off client.
 
-    @server.list_tools()
-    async def list_tools() -> List[types.Tool]:
-        return TOOLS
+    MCP 2.x removed the ``@server.list_tools()`` / ``@server.call_tool()``
+    decorators from the low-level ``Server``; handlers are now passed as the
+    ``on_list_tools`` / ``on_call_tool`` constructor callbacks, which receive a
+    ``ServerRequestContext`` plus the already-validated request params and
+    return the full result model. We keep the explicit ``TOOLS`` list rather
+    than moving to the high-level ``MCPServer``: these schemas are the
+    specification mirrored from the KittenKong TypeScript server, not something
+    to re-derive from Python signatures.
+    """
 
-    @server.call_tool()
-    async def call_tool(name: str, arguments: Optional[Dict[str, Any]]) -> List[types.TextContent]:
-        result = await client.execute_mcp_tool(name, **(arguments or {}))
+    async def on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=TOOLS)
+
+    async def on_call_tool(ctx: Any, params: Any) -> types.CallToolResult:
+        arguments: Optional[Dict[str, Any]] = params.arguments
+        result = await client.execute_mcp_tool(params.name, **(arguments or {}))
         payload = result_payload(result)
-        return [types.TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+        )
 
-    return server
+    return Server(
+        "blowingoff",
+        version="0.2.0",  # keyword-only since MCP 2.0
+        on_list_tools=on_list_tools,
+        on_call_tool=on_call_tool,
+    )
 
 
 async def serve() -> None:
