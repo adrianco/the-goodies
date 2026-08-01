@@ -74,7 +74,8 @@ setup(
         "rich>=10.0.0",
         "click>=8.0.0",
         "tabulate>=0.9.0",
-        "mcp>=1.0.0",
+        # See requirements.txt: 2.x is an API break for blowingoff/mcp/server.py.
+        "mcp>=1.0.0,<2",
     ],
     entry_points={
         "console_scripts": [
