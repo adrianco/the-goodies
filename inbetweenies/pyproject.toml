@@ -9,5 +9,5 @@
 #
 # Metadata deliberately stays in setup.py so there is a single source of truth.
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
