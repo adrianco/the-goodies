@@ -10,10 +10,16 @@
 > (Home/Room/Accessory/Service/Characteristic). The real model is a generic
 > **Entity / Relationship knowledge graph**.
 >
-> Sections marked **⚠ REFERENCE DEVIATES** describe where the current Python
-> reference implementation does not yet match this spec; those are tracked as
-> sync-correctness fixes. A porter should implement **the spec**, not the current
-> Python behavior, in those spots.
+> Earlier revisions carried **⚠ REFERENCE DEVIATES** notes marking where the
+> Python reference lagged the spec. Those are resolved: relationship sync, the
+> `server_time` watermark, the version-string format, tombstone deletes, and
+> server-side conflict resolution all match this document now. The remaining
+> unimplemented item is `cursor` pagination (§9), which is scheduled and marked
+> as such.
+>
+> Where spec and server could still drift, the check is executable rather than
+> editorial: `funkygibbon/tests/test_protocol_conformance.py` asserts this
+> document clause by clause. Update the suite and the spec together.
 
 ## 1. Data model
 
@@ -64,11 +70,10 @@ versions**, which constrains apply ordering (§5).
     edits within the same microsecond.
   - Versions are compared **lexically**; because the timestamp prefix is fixed
     width and UTC, lexical order == chronological order.
-  - **⚠ REFERENCE DEVIATES:** `Entity.create_version` currently appends a
-    literal `Z` after an isoformat that already carries `+00:00` (doubled
-    offset), and uses `perf_counter_ns() % 1e6` (a *relative* counter, not
-    comparable across processes). A porter MUST use the format above; the
-    reference will be fixed to match.
+  - The doubled-`Z` defect described in earlier revisions is fixed;
+    `Entity.create_version` now emits the format above. `Entity.version_timestamp`
+    still *parses* a legacy trailing `Z`, so versions written by older clients
+    keep resolving — do not emit it.
 
 ## 3. Wire protocol
 
@@ -133,17 +138,50 @@ versions**, which constrains apply ordering (§5).
                   "conflicts_resolved": 0, "duration_ms": 0 },
   "vector_clock": {...},            // RESERVED
   "cursor": null,                   // RESERVED
-  "server_time": "<utc-iso8601>"    // REQUIRED — the client's next `since`, see §4
+  "server_time": "<utc-iso8601>",   // REQUIRED — the client's next `since`, see §4
+  "applied": ["<entity-id>", ...],           // REQUIRED — see §3.2
+  "applied_relationships": ["<rel-id>", ...] // REQUIRED — see §3.2
 }
 ```
 `ConflictInfo`: `{ entity_id, local_version, remote_version, resolution_strategy, resolved_version }`.
 
 ### 3.1 Relationships in a change
 `SyncChange.relationships` carries edges that accompany the entity change.
-**⚠ REFERENCE DEVIATES:** the current client always sends `[]` and the server
-parser ignores them — relationship sync is effectively unimplemented over the
-wire. The spec intent: relationships travel in the same change set as their
-entities and obey the ordering rule in §5.
+Relationships travel in the same change set as their entities and obey the
+ordering rule in §5. `entity` may be `null` when a change carries only edges
+whose endpoints are already in sync.
+
+### 3.2 Per-id acknowledgement (the durability contract)
+
+**A client MUST NOT drop a local change until the server names its id** in
+`applied` (entities) or `applied_relationships` (relationships).
+
+Aggregate counts cannot express this. A partially-applied batch reports a
+count that says nothing about *which* changes landed, so a client clearing its
+pending set on a count discards writes that never persisted.
+
+The server includes an id when the change reached a **terminal** state — one
+that retrying cannot improve:
+
+| Outcome | Acked? | Why |
+|---|---|---|
+| Applied (create / fast-forward) | yes | It persisted. |
+| Idempotent re-send of a version already held | yes | Already in the desired state. |
+| Won conflict resolution | yes | It persisted. |
+| **Lost** conflict resolution | **yes** | Losing is terminal; the loser is preserved as a non-latest version row and reported in `conflicts`. |
+| Delete of an unknown id | yes | Nothing to advance past. |
+| Relationship skipped for a missing/stale endpoint | **no** | Not terminal — retry once the endpoint arrives. |
+
+The losing case is the subtle one, and getting it wrong is not theoretical. A
+client that guards pending ids against pull-apply (the standard defence against
+a pull overwriting an unpushed edit) **livelocks** if losers are not acked: the
+guard blocks the server's version because the id is pending, the push loses and
+is never acked, the pending mark survives, and every subsequent sync repeats
+identically. The entity never converges on that client.
+
+Acking a loser is only sound because the loser is *preserved*. Acking without
+preserving is worse than the livelock: the client drops its pending mark, later
+pulls the winner over its own edit, and the losing content is gone everywhere.
 
 ## 4. Sync flows & the `since` watermark
 
@@ -154,10 +192,9 @@ entities and obey the ordering rule in §5.
 - The client's watermark for the next delta is the **`server_time`** returned in
   the response — NOT the client's local clock. Persist `server_time` and send it
   back as the next `since`.
-- **⚠ REFERENCE DEVIATES:** the reference stores `datetime.now()` (naive, local)
-  as the watermark and the server doesn't return `server_time`; delta also
-  degrades to full because last-sync state is kept per-request in memory. Porters
-  must use server-returned UTC time.
+- Note for porters: a push request that carries no `filters.since` receives the
+  **full** current state in `changes`, not an empty list. That is how a client
+  learns the winner of a conflict it just lost.
 
 ## 5. Apply ordering (required)
 
@@ -185,10 +222,15 @@ When the same `id` is edited on both sides, resolve deterministically:
    field that doesn't exist on the wire model — porters should tiebreak on
    `version`; the reference will be unified to match.)*
 3. Otherwise the **newer `updated_at` wins** (last-write-wins).
-The winner's full version is kept; report the decision in `conflicts[]`.
-There is exactly **one** canonical algorithm — do not copy the divergent
-client-side variant. **⚠ REFERENCE DEVIATES:** the live client `_resolve_conflict`
-is a no-op stub that drops conflicts; a real port MUST implement the above.
+The winner's full version is kept and the decision is reported in `conflicts[]`.
+The **loser is also kept**, as a non-latest version row, so a write can lose
+prominence but never existence — see §3.2.
+
+There is exactly **one** canonical algorithm and it runs **server-side**. A
+client does not resolve conflicts: it pushes, and the server tells it what won.
+A port therefore implements only version strings, parent tracking,
+push-until-acked, and pull-apply — deliberately the cheapest possible client
+contract.
 
 ## 8. Deletes & tombstones
 
@@ -197,10 +239,11 @@ immutable and versioned, a delete is represented as a **tombstone version**: a
 new version with `content.deleted = true` (and the prior version in
 `parent_versions`), so the deletion *converges* like any other edit and wins/loses
 conflicts by the §7 rule. Clients treat a tombstone as "entity gone" but retain
-the row for sync. **⚠ REFERENCE DEVIATES:** delete handling is currently
-unimplemented on the client (`return False  # Skip deletes for now`) and there is
-no tombstone model. This is a design point to confirm before porting — the
-tombstone-version approach above is the recommendation.
+the row for sync.
+
+This is implemented on both sides. A delete of an id the server does not hold
+is still acknowledged (§3.2): there is no state the client could reach by
+retrying it.
 
 ## 9. Reserved / unused fields
 
@@ -208,14 +251,29 @@ These appear in the schema but are **not implemented**; a porter should
 round-trip them but not depend on them, and we will mark them reserved:
 - `vector_clock` — always empty, never read (no causal tracking exists).
 - `cursor` (request & response) — pagination is not implemented; large syncs are
-  returned whole.
-- `sync_ack` (a client method) — a no-op; there is no ack step.
+  returned whole. ADR-002 implements it; until then a port must tolerate `null`.
+
+**No longer reserved:** acknowledgement is now a real, required part of the
+protocol — see §3.2. An earlier revision of this document stated "there is no
+ack step", which was true when written. A port that follows that sentence will
+silently drop writes; implement §3.2.
 
 ## 10. Conformance checklist for a port
 
 A correct port must: use the §2 version format; speak the §3 JSON exactly;
-persist the §4 `server_time` watermark; obey §5 apply ordering atomically;
-send/expect §6 UTC timestamps; implement the single §7 conflict rule; implement
-§8 tombstone deletes; and ignore §9 reserved fields. The Python reference will be
-brought into line with this spec (the **⚠ REFERENCE DEVIATES** items) so it can
-serve as a conformance oracle for the ports and for the retort port-benchmark.
+**clear a pending change only on the §3.2 per-id ack**; persist the §4
+`server_time` watermark; obey §5 apply ordering atomically; send/expect §6 UTC
+timestamps; expect the server to apply the single §7 conflict rule; implement §8
+tombstone deletes; and ignore §9 reserved fields.
+
+One client-side rule is not visible in the wire format but is required:
+**a pending local change must block pull-apply for that id.** Without it, a
+concurrent server change overwrites the unpushed edit before the push runs, the
+push then sends the server's own version back, the server acknowledges it, and
+the edit is destroyed with the server never having seen it and no conflict
+recorded. This has been hit for real (adrianco/the-goodies#69).
+
+Conformance is executable: `funkygibbon/tests/test_protocol_conformance.py`
+asserts this specification clause by clause against the server. A port that
+disagrees with a passing assertion there is wrong, or the spec needs changing —
+in that order.

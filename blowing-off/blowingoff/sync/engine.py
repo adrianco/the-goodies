@@ -17,8 +17,13 @@ FUNCTIONALITY:
 CRITICAL COMPONENTS:
 - InbetweeniesProtocol for wire protocol
 - GraphOperations for entity storage
-- ConflictResolver for merge strategies
 - SyncMetadataRepository for tracking sync state
+
+Conflict resolution is deliberately absent here: it is server-authoritative
+(PROTOCOL.md §7). The server applies the single canonical rule and returns the
+winner; this client pushes, reads the per-id acks, and applies what comes back.
+The client-side resolver this file used to instantiate was never invoked and
+has been removed.
 
 PURPOSE:
 Central coordination point for all sync operations. Manages the complexity
@@ -39,7 +44,6 @@ import json
 
 from .protocol import InbetweeniesProtocol
 from inbetweenies.sync import SyncState, SyncResult, Change, Conflict, SyncOperation
-from .conflict_resolver import ConflictResolver
 from ..repositories import SyncMetadataRepository
 from inbetweenies.models import Entity, EntityType, SourceType
 
@@ -56,7 +60,6 @@ class SyncEngine:
         # Protocol and state
         self.protocol = InbetweeniesProtocol(base_url, auth_token, self.client_id)
         self.state = SyncState()
-        self.resolver = ConflictResolver()
 
         # Graph operations will be set by the client
         self.graph_operations = None

@@ -1,13 +1,64 @@
-# Declaring a build-system makes pip use the PEP 517/660 build path for this
-# project. That matters for `pip install -e .`: without it pip falls back to the
-# legacy `setup.py develop` mode, which appends this directory verbatim to
-# sys.path (via easy-install.pth) and so leaks `models/`, `mcp/`, `sync/` and
-# `graph/` as importable top-level modules -- shadowing the real `mcp` SDK.
+# Inbetweenies -- shared models, graph engine and sync protocol.
+# Workspace member of the root pyproject.toml (ADR-010 section 6).
 #
-# With PEP 660, setuptools honours the package_dir mapping in setup.py and
-# installs an import finder that exposes only the `inbetweenies` name.
+# PACKAGING NOTE -- READ BEFORE CHANGING `packages` OR `package-dir`
+# -----------------------------------------------------------------
+# This directory *is* the `inbetweenies` package root: `models/`, `mcp/`,
+# `sync/`, `graph/`, `repositories/` and `utils/` live directly here rather
+# than in a nested `inbetweenies/inbetweenies/` source directory like the
+# sibling `oook` and `blowing-off` projects.
 #
-# Metadata deliberately stays in setup.py so there is a single source of truth.
+# A bare `find_packages()` / `[tool.setuptools.packages.find]` therefore
+# discovers those subdirectories as *top level* distributions named `models`,
+# `mcp`, `sync` and `graph`. Because CI and install.sh install this project,
+# that made `import mcp` resolve to `inbetweenies/mcp/` instead of the real
+# third-party MCP SDK -- machine-wide, breaking test collection repo-wide
+# (incident 2a6284f).
+#
+# The fix, carried over verbatim from the retired setup.py, is two-part and
+# both halves are load-bearing:
+#
+#   1. An EXPLICIT `packages` list declaring a single top-level package,
+#      `inbetweenies`, with everything else registered as a subpackage of it,
+#      plus `package-dir` rooting that package at this directory. Never replace
+#      this with `[tool.setuptools.packages.find]` -- discovery is precisely
+#      what caused the incident.
+#   2. A `[build-system]` table, which makes pip use the PEP 517/660 build
+#      path. Without it `pip install -e .` falls back to legacy
+#      `setup.py develop`, which appends this directory verbatim to sys.path
+#      via easy-install.pth and leaks `models/`, `mcp/`, `sync/` and `graph/`
+#      as importable top-level modules regardless of what `packages` says.
+#      With PEP 660 setuptools honours `package-dir` and installs an import
+#      finder that exposes only the `inbetweenies` name.
+#
+# `tests` is absent from the list on purpose: it must not become a top-level
+# `tests` distribution shadowing the repo-root tests/ package.
+
 [build-system]
-requires = ["setuptools>=83.0.0", "wheel"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "inbetweenies"
+version = "0.3.0"
+description = "Shared models for the Inbetweenies sync protocol"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "The Goodies Team" }]
+dependencies = [
+    "sqlalchemy>=2.0.0",
+]
+
+[tool.setuptools]
+# One top-level name, rooted at this directory.
+package-dir = { "inbetweenies" = "." }
+# Explicit, not discovered. See the packaging note above.
+packages = [
+    "inbetweenies",
+    "inbetweenies.graph",
+    "inbetweenies.mcp",
+    "inbetweenies.models",
+    "inbetweenies.repositories",
+    "inbetweenies.sync",
+    "inbetweenies.utils",
+]

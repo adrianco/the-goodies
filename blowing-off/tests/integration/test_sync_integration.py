@@ -15,8 +15,7 @@ import httpx
 
 from blowingoff.sync.engine import SyncEngine
 from blowingoff.sync.protocol import InbetweeniesProtocol
-from blowingoff.sync.conflict_resolver import ConflictResolver
-from inbetweenies.sync import SyncState, Change, SyncOperation, ConflictResolution
+from inbetweenies.sync import SyncState, Change, SyncOperation
 from inbetweenies.models import Entity, EntityType
 
 
@@ -54,12 +53,6 @@ def sync_protocol():
         auth_token="test-token",
         client_id="test-client"
     )
-
-
-@pytest.fixture
-def conflict_resolver():
-    """Create a ConflictResolver instance."""
-    return ConflictResolver()
 
 
 @pytest_asyncio.fixture
@@ -183,72 +176,6 @@ class TestInbetweeniesProtocol:
         assert id1 in accepted_ids
         assert id2 in accepted_ids
         assert len(conflicts) == 0
-
-
-class TestConflictResolver:
-    """Test conflict resolution functionality."""
-
-    def test_resolve_last_write_wins(self, conflict_resolver):
-        """Test last-write-wins conflict resolution."""
-        local_data = {
-            "name": "Local Name",
-            "updated_at": "2024-01-01T12:00:00Z"
-        }
-        remote_data = {
-            "name": "Remote Name",
-            "updated_at": "2024-01-01T13:00:00Z"
-        }
-
-        winning_data, reason = conflict_resolver.resolve_conflict(local_data, remote_data)
-        assert winning_data == remote_data
-        assert reason == "newer_remote"
-
-    def test_resolve_client_wins(self, conflict_resolver):
-        """Test client-wins conflict resolution (newer local)."""
-        local_data = {
-            "name": "Local Name",
-            "updated_at": "2024-01-01T14:00:00Z"  # Newer
-        }
-        remote_data = {
-            "name": "Remote Name",
-            "updated_at": "2024-01-01T13:00:00Z"
-        }
-
-        winning_data, reason = conflict_resolver.resolve_conflict(local_data, remote_data)
-        assert winning_data == local_data
-        assert reason == "newer_local"
-
-    def test_resolve_server_wins(self, conflict_resolver):
-        """Test server-wins conflict resolution."""
-        local_data = {
-            "name": "Local Name",
-            "updated_at": "2024-01-01T12:00:00Z"
-        }
-        remote_data = {
-            "name": "Remote Name",
-            "updated_at": "2024-01-01T13:00:00Z"  # Newer
-        }
-
-        winning_data, reason = conflict_resolver.resolve_conflict(local_data, remote_data)
-        assert winning_data == remote_data
-        assert reason == "newer_remote"
-
-    def test_resolve_deletion_conflict(self, conflict_resolver):
-        """Test deletion conflict resolution."""
-        local_data = {
-            "name": "Local Name",
-            "updated_at": "2024-01-01T12:00:00Z",
-            "deleted": True
-        }
-        remote_data = {
-            "name": "Remote Name",
-            "updated_at": "2024-01-01T13:00:00Z",
-            "deleted": False
-        }
-
-        winning_data, reason = conflict_resolver.resolve_conflict(local_data, remote_data)
-        assert winning_data == local_data
-        assert reason == "local_deleted"
 
 
 class TestSyncEngine:

@@ -1,5 +1,14 @@
+# Oook -- CLI for testing the FunkyGibbon MCP server.
+# Workspace member of the root pyproject.toml (ADR-010 section 6).
+#
+# `[tool.setuptools.packages.find]` is filtered with `include = ["oook*"]`;
+# unfiltered discovery here would export `examples` as a top-level
+# distribution. The `[build-system]` table forces the PEP 517/660 path so the
+# editable install exposes only the `oook` name rather than putting this whole
+# directory on sys.path.
+
 [build-system]
-requires = ["setuptools>=82.0.1", "wheel"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +16,9 @@ name = "oook"
 version = "0.3.0"
 description = "CLI tool for testing FunkyGibbon MCP server"
 readme = "README.md"
-requires-python = ">=3.9"
+# ADR-010 section 6: one requires-python across the workspace, matching the
+# deployed interpreter. Was ">=3.9".
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "The Goodies Team"},
@@ -18,9 +29,8 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Testing",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]

@@ -39,29 +39,22 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/requirements*.txt', '**/setup.py', '**/pyproject.toml') }}
+          # setup.py files are retired (ADR-010 section 6); the workspace root
+          # pyproject.toml and uv.lock are what the environment now depends on.
+          key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('uv.lock', 'pyproject.toml', '*/pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-py${{ matrix.python-version }}-pip-
 
       - name: Install dependencies
+        # ADR-010 section 6: one uv workspace, one install step. `pip install -e .`
+        # at the repo root maps all four member source trees into the environment
+        # and pulls the full dependency union -- including pytest, pytest-cov,
+        # pytest-asyncio and pytest-mock -- replacing the old
+        # `cd <component> && pip install -e .` loop that had to be kept in step
+        # with funkygibbon/requirements.txt by hand.
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov pytest-asyncio pytest-mock
-
-          # Install project dependencies
-          export PYTHONPATH=${{ github.workspace }}:$PYTHONPATH
-
-          # Install funkygibbon dependencies
-          if [ -f "funkygibbon/requirements.txt" ]; then
-            pip install -r funkygibbon/requirements.txt
-          fi
-
-          # Install other components
-          for component in inbetweenies oook blowing-off; do
-            if [ -d "$component" ]; then
-              cd $component && pip install -e . && cd ..
-            fi
-          done
+          pip install -e .
 
       - name: Run tests
         # No `|| true`: this step used to swallow the exit code, so the Test
@@ -75,6 +68,31 @@ jobs:
           export ADMIN_PASSWORD_HASH=""
           export JWT_SECRET="development-secret"
           python -m pytest -v --cov=funkygibbon --cov=blowing-off --cov=inbetweenies --cov=oook --cov-report=xml --cov-report=term-missing
+
+      # ----------------------------------------------------------------------
+      # ADR-010 section 3 -- PER-PACKAGE COVERAGE FLOOR GOES HERE.
+      #
+      # The gate belongs in its own step, not appended to "Run tests" above:
+      # `--cov-fail-under` is evaluated against the *combined* coverage of every
+      # `--cov` target, so adding `--cov=inbetweenies --cov-fail-under=80` to
+      # that command would measure the whole repo against 80, not inbetweenies.
+      # A separate run with a single `--cov` target is the only way to make the
+      # floor mean what ADR-010 says it means. It also overrides the repo-wide
+      # `--cov-fail-under=30` in pytest.ini, which stays as the overall floor.
+      #
+      # Scoped to the `inbetweenies` test path deliberately: ADR-010 section 3
+      # asks that the package be covered by ITS OWN tests, not that it borrow
+      # coverage from funkygibbon's integration suite exercising it indirectly.
+      # It is also ~30x faster, and avoids the whole-suite shared-state flake.
+      # ----------------------------------------------------------------------
+
+      - name: Coverage floor -- inbetweenies (ADR-010 section 3)
+        run: |
+          export PYTHONPATH=${{ github.workspace }}:$PYTHONPATH
+          export ADMIN_PASSWORD_HASH=""
+          export JWT_SECRET="development-secret"
+          python -m pytest inbetweenies -q --cov=inbetweenies --cov-fail-under=80 \
+            --cov-report=term-missing --no-cov-on-fail
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -101,9 +119,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install safety bandit
-          if [ -f "funkygibbon/requirements.txt" ]; then
-            pip install -r funkygibbon/requirements.txt
-          fi
+          # One workspace, one install (ADR-010 section 6).
+          pip install -e .
 
       - name: Run Security Checks
         run: |
@@ -162,17 +179,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          
-          # Install all components
-          if [ -f "funkygibbon/requirements.txt" ]; then
-            pip install -r funkygibbon/requirements.txt
-          fi
-          
-          for component in inbetweenies oook blowing-off; do
-            if [ -d "$component" ]; then
-              cd $component && pip install -e . && cd ..
-            fi
-          done
+          # One workspace, one install (ADR-010 section 6).
+          pip install -e .
 
       - name: Setup and test components
         run: |
@@ -220,29 +228,55 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Check for missing dependencies
+      - name: Clean-room install and packaging invariants
+        # Proves the documented one-step install (ADR-010 section 6) really does
+        # produce a complete environment, and guards the packaging invariants
+        # that incident 2a6284f violated. No `|| true` anywhere: these are
+        # assertions, and a broken install must fail the job.
+        #
+        # Every check runs from an empty directory, never the repo root. From
+        # the repo root the cwd is on sys.path, so `import funkygibbon` and
+        # `import tests` would succeed off the working tree and prove nothing.
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          
-          # Create a fresh virtual environment to test clean install
+
+          # Fresh venv, then the single documented command.
           python -m venv test_env
-          source test_env/bin/activate
-          
-          # Try to install and import each component
-          echo "Testing clean installation of components..."
-          
-          if [ -f "funkygibbon/requirements.txt" ]; then
-            pip install -r funkygibbon/requirements.txt
-            python -c "import funkygibbon" || echo "funkygibbon import test completed"
-          fi
-          
-          for component in inbetweenies oook blowing-off; do
-            if [ -d "$component" ]; then
-              cd $component
-              pip install -e .
-              python -c "import $component" || echo "$component import test completed"
-              cd ..
+          VENV_PY="$GITHUB_WORKSPACE/test_env/bin/python"
+          "$VENV_PY" -m pip install --upgrade pip setuptools wheel
+          "$VENV_PY" -m pip install -e .
+
+          mkdir -p "$RUNNER_TEMP/importcheck"
+          cd "$RUNNER_TEMP/importcheck"
+
+          # 1. One install, all four members importable.
+          "$VENV_PY" -c "import funkygibbon, inbetweenies, blowingoff, oook"
+          "$VENV_PY" -c "import inbetweenies.models, inbetweenies.mcp, inbetweenies.sync, inbetweenies.graph"
+
+          # 2. `import mcp` must resolve to the real MCP SDK. inbetweenies/ and
+          #    funkygibbon/ ARE their own package roots, so package discovery
+          #    inside them registers `mcp`, `models`, `sync` and `graph` as
+          #    top-level distributions and shadows the SDK for the entire
+          #    environment -- which is what broke test collection repo-wide.
+          "$VENV_PY" - <<'PY'
+          import mcp, pathlib
+          resolved = pathlib.Path(mcp.__file__).resolve()
+          assert "site-packages" in resolved.parts, (
+              f"import mcp resolved to {resolved}, not the MCP SDK -- "
+              "package discovery has leaked a member subpackage as a top-level distribution"
+          )
+          print("mcp ->", resolved)
+          PY
+
+          # 3. No member subpackage or test tree installed as a top-level name.
+          for mod in mcp.tools models sync graph repositories utils auth search api tests; do
+            if "$VENV_PY" -c "import $mod" 2>/dev/null; then
+              echo "FAIL: top-level '$mod' is importable -- packaging has leaked"
+              exit 1
             fi
           done
-          
-          deactivate
+          echo "No top-level leakage."
+
+          # 4. Dependency set is internally consistent.
+          "$VENV_PY" -m pip check

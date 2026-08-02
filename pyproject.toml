@@ -1,0 +1,147 @@
+# The Goodies -- uv workspace root (ADR-010 section 6).
+#
+# One workspace, one lockfile, one install command:
+#
+#     pip install -e .      # one step, no uv required
+#     uv sync               # same set, resolved from uv.lock
+#
+# WHAT THIS PROJECT IS
+# --------------------
+# A *development aggregator*, never published. It owns no source of its own;
+# `[tool.setuptools]` below maps the four workspace members' source trees into
+# a single editable install, so one command produces the whole environment.
+# The members remain the publishable units -- `uv build --package inbetweenies`
+# and friends build from their own pyproject.toml, which is where each
+# package's real metadata lives.
+#
+# WHY THE MEMBERS ARE NOT LISTED AS DEPENDENCIES
+# ----------------------------------------------
+# The obvious spelling -- `"inbetweenies @ file:inbetweenies"` -- is a pip-only
+# trick: uv rejects relative `file:` locators outright ("relative path without
+# a working directory"), so the workspace would have no lockfile, which is the
+# thing ADR-010 section 6 is actually asking for. Naming the members bare
+# (`"inbetweenies"`) is worse: uv would rewrite them via `[tool.uv.sources]`,
+# but pip would go to PyPI and install a stranger's project. Mapping the source
+# trees directly is the one spelling both tools agree on.
+#
+# The cost is that the dependency union below restates what the members
+# declare. The coupling ADR-010 section 7 is aimed at -- consumers drifting
+# from `inbetweenies` -- is not affected: that edge is a workspace reference in
+# funkygibbon/pyproject.toml and blowing-off/pyproject.toml, so it can never be
+# a version at all.
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "the-goodies"
+version = "0.3.0"
+description = "Development environment for The Goodies smart home knowledge graph (workspace root)"
+readme = "README.md"
+# ADR-010 section 6: one requires-python across the workspace, matching the
+# deployed interpreter. The members previously disagreed (>=3.8 / >=3.9 / >=3.11).
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "The Goodies Team" }]
+
+dependencies = [
+    # --- union of the members' runtime dependencies, at the tightest floor
+    # --- each member asks for. Keep in step with funkygibbon/pyproject.toml,
+    # --- inbetweenies/pyproject.toml, blowing-off/pyproject.toml and
+    # --- oook/pyproject.toml, which stay authoritative per package.
+    "sqlalchemy>=2.0.23",
+    "aiosqlite>=0.19.0",
+    "greenlet>=3.5.4",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.14.2",
+    # 0.133.0 is the first release to drop fastapi's starlette<1.0.0 cap.
+    # Needed so blowing-off's mcp>=2 resolves on Python >=3.14, where mcp
+    # requires starlette>=0.48. Do not lower it. (See funkygibbon/pyproject.toml.)
+    "fastapi>=0.133.0",
+    "uvicorn[standard]>=0.24.0",
+    "httpx>=0.25.2",
+    "aiohttp>=3.8.0",
+    "click>=8.1.8",
+    "rich>=15.0.0",
+    "tabulate>=0.9.0",
+    "python-dateutil>=2.8.2",
+    "argon2-cffi>=25.1.0",
+    "pyjwt>=2.13.0",
+    "qrcode>=8.2",
+    "pillow>=12.3.0",
+    "apscheduler>=3.11.3",
+    # Capped below 3 on purpose: blowingoff/mcp/server.py targets the 2.x API.
+    "mcp>=2.0.0,<3",
+
+    # --- test and lint tooling. Part of the default dependency set rather than
+    # --- an extra: ADR-010 section 6 asks for "the complete dev environment in
+    # --- one step", and providing that is this project's only job.
+    "pytest>=7.4.3",
+    "pytest-asyncio>=0.21.1",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "hypothesis>=6.90.0",
+    "black>=23.11.0",
+    "ruff>=0.1.6",
+    "mypy>=1.7.0",
+]
+
+# ---------------------------------------------------------------------------
+# The four member source trees, mapped into one editable install.
+#
+# `packages` is EXPLICIT and must stay that way. Auto-discovery at the repo
+# root would register `tests`, `scripts` and `docs` as top-level distributions,
+# and discovery inside funkygibbon/ or inbetweenies/ would register `mcp`,
+# `models`, `graph` and `sync` as top-level distributions -- which is exactly
+# how `import mcp` came to resolve to `inbetweenies/mcp/` instead of the real
+# MCP SDK, machine-wide (incident 2a6284f). The list below names one top-level
+# package per member and nothing else; `tests` appears nowhere.
+#
+# It mirrors the `packages` lists in the member pyproject.toml files. A new
+# subpackage needs adding in both places.
+# ---------------------------------------------------------------------------
+[tool.setuptools]
+package-dir = { "funkygibbon" = "funkygibbon", "inbetweenies" = "inbetweenies", "blowingoff" = "blowing-off/blowingoff", "oook" = "oook/oook" }
+packages = [
+    "funkygibbon",
+    "funkygibbon.api",
+    "funkygibbon.api.routers",
+    "funkygibbon.auth",
+    "funkygibbon.graph",
+    "funkygibbon.mcp",
+    "funkygibbon.models",
+    "funkygibbon.repositories",
+    "funkygibbon.search",
+    "inbetweenies",
+    "inbetweenies.graph",
+    "inbetweenies.mcp",
+    "inbetweenies.models",
+    "inbetweenies.repositories",
+    "inbetweenies.sync",
+    "inbetweenies.utils",
+    "blowingoff",
+    "blowingoff.cli",
+    "blowingoff.graph",
+    "blowingoff.mcp",
+    "blowingoff.models",
+    "blowingoff.repositories",
+    "blowingoff.sync",
+    "oook",
+]
+
+[project.scripts]
+# Mirrors the members' own console scripts so the one-step install is usable.
+blowing-off = "blowingoff.cli.main:cli"
+blowingoff-mcp = "blowingoff.mcp.server:main"
+oook = "oook.cli:cli"
+
+[tool.uv.workspace]
+members = [
+    "funkygibbon",
+    "inbetweenies",
+    "blowing-off",
+    "oook",
+    # ADR-012 domain packages land here as they are created:
+    # "domains/house", "domains/garage",
+]
