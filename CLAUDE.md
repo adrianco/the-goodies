@@ -206,6 +206,23 @@ blowing-off search "smart"
 - Direct MCP tool execution
 - Database exploration and debugging
 
+### Invariant: sync logic lives in exactly two places
+
+Sync logic lives in **exactly two** places, and nowhere else:
+
+1. **`inbetweenies/sync/`** — the shared contract: wire types, protocol messages, and the
+   single canonical `ConflictResolver` (last-write-wins on `updated_at`, tiebreak on the
+   `version` string). Both server and clients MUST use this one algorithm.
+2. **`funkygibbon/api/sync.py`** — the server application: apply/ack logic, server-authoritative
+   conflict handling. Clients do not resolve conflicts locally; the server sends the winner.
+
+**A third location is a review-blocking smell.** If you are about to add a sync engine, a
+delta/Merkle layer, a versioning tree, or another conflict resolver anywhere else, stop: either it
+belongs in one of the two homes above, or it needs an ADR that supersedes this rule. A parallel
+sync stack that nothing imports is worse than no code at all — it misleads every future reader
+(human or LLM) about how sync actually works. `funkygibbon/sync/` was exactly that and was
+deleted (ADR-008); do not recreate it.
+
 ### Key Data Models
 
 The system uses a graph-based data model with:

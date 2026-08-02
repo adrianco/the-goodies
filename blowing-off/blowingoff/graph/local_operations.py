@@ -213,6 +213,15 @@ class LocalGraphOperations(MCPTools):
             relationship: the relationship to store.
             mark_dirty: see :meth:`store_entity`.
         """
+        import uuid
+        # Mirror store_entity: an id is generated rather than assumed. Without
+        # this a relationship saved with id=None was tracked under the JSON key
+        # "null", producing a pending entry that could never be pushed and never
+        # cleared -- it just accumulated on every sync.
+        if not relationship.id:
+            relationship.id = str(uuid.uuid4())
+        if not relationship.user_id:
+            relationship.user_id = "local-user"
         return self.storage.store_relationship(relationship, mark_dirty=mark_dirty)
 
     def get_pending_entities(self) -> dict:

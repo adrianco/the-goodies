@@ -128,6 +128,21 @@ def _stored_relationships():
     return asyncio.run(_read())
 
 
+def _stored_versions(entity_id):
+    """Read every persisted version row for an entity out of the test DB.
+
+    The sync response only ever carries the latest row, so preservation of a
+    losing version (ADR-011 §2) is only observable at the database.
+    """
+    async def _read():
+        async with dbmod.async_session() as session:
+            result = await session.execute(
+                select(Entity).where(Entity.id == entity_id)
+            )
+            return list(result.scalars().all())
+    return asyncio.run(_read())
+
+
 def _sync(client, headers, sync_type, changes=None, since=None, device="dev1", user="alice"):
     body = {
         "protocol_version": "inbetweenies-v2", "device_id": device, "user_id": user,
@@ -415,17 +430,80 @@ def test_push_reports_applied_ids(client, headers):
     assert body["sync_stats"]["relationships_synced"] == 1
 
 
-def test_rejected_change_is_not_reported_as_applied(client, headers):
-    """A blind overwrite that LOSES resolution must stay pending on the client."""
+def test_losing_change_is_acked_so_the_client_stops_retrying(client, headers):
+    """A change that LOSES resolution is still acknowledged (ADR-011 §2).
+
+    This reverses the earlier rule that a loser stayed unacked to force a
+    retry. That was safe only while clients applied every pulled change. A
+    client implementing the ADR-011 §1 pull-guard (KittenKong does) livelocks
+    under it: the guard blocks our version because the id is pending, the push
+    loses and is not acked, the pending mark survives, and every later sync
+    repeats identically -- the entity never converges on that client.
+
+    Losing is terminal. Retrying cannot change it, so it is acknowledged.
+    """
     v1 = Entity.create_version("alice")
     _sync(client, headers, "full", [_change("create", id="P", version=v1, name="kept")])
 
     resp = _sync(client, headers, "full",
                  [_change("update", id="P", version=_ANCIENT, name="clobbered", parents=[])])
     body = resp.json()
-    assert body["conflicts"], "expected the losing overwrite to be reported"
-    assert "P" not in body["applied"]
-    assert body["sync_stats"]["entities_synced"] == 0
+
+    assert body["conflicts"], "the losing overwrite must still be reported"
+    assert "P" in body["applied"], "a loser is processed, so it is acked"
+
+    # Acked, but it did NOT win: the served latest is unchanged.
+    served = {c["entity"]["id"]: c["entity"] for c in body["changes"] if c.get("entity")}
+    assert served["P"]["name"] == "kept"
+
+
+def test_losing_version_is_preserved_in_history(client, headers):
+    """Acking a loser is only safe if its content survives (ADR-011 §2).
+
+    Ack without preservation would be worse than the livelock it fixes: the
+    client drops its pending mark, later pulls the winner over its own edit,
+    and the losing content is gone everywhere.
+    """
+    v1 = Entity.create_version("alice")
+    _sync(client, headers, "full", [_change("create", id="R", version=v1, name="kept")])
+    _sync(client, headers, "full",
+          [_change("update", id="R", version=_ANCIENT, name="lost-but-recoverable", parents=[])])
+
+    versions = _stored_versions("R")
+    names = {v.version: v.name for v in versions}
+    assert _ANCIENT in names, "the losing version row must be recoverable from history"
+    assert names[_ANCIENT] == "lost-but-recoverable"
+    assert names[v1] == "kept"
+
+
+def test_losing_version_that_would_sort_latest_is_not_promoted(client, headers):
+    """The preservation guard: never let a loser become the served latest.
+
+    Resolution is LWW on updated_at; _latest_entities() picks the lexically
+    greatest version string. They can disagree, and where they do, inserting
+    the loser would silently promote it. Such a row is skipped (and logged)
+    rather than corrupting state -- it is still acked and still reported.
+    """
+    old_edit_time = Entity.create_version("alice")
+    _sync(client, headers, "full",
+          [_change("create", id="S", version=old_edit_time, name="kept")])
+
+    # Sorts ABOVE the stored version, but loses LWW because the stored row's
+    # updated_at (its server insert time) is later than this claimed edit time.
+    later_sorting = Entity.create_version("bob")
+    resp = _sync(client, headers, "full",
+                 [_change("update", id="S", version=later_sorting, name="must-not-win",
+                          parents=[])])
+    body = resp.json()
+
+    served = {c["entity"]["id"]: c["entity"] for c in body["changes"] if c.get("entity")}
+    if served["S"]["name"] == "kept":
+        # It lost: it must be acked, and must NOT have been stored.
+        assert "S" in body["applied"]
+        assert later_sorting not in {v.version for v in _stored_versions("S")}
+    else:
+        # It won on time ordering; then it is simply the new latest.
+        assert served["S"]["name"] == "must-not-win"
 
 
 def test_conflict_winner_is_reported_as_applied(client, headers):

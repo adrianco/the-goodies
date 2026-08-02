@@ -16,7 +16,9 @@ from ...database import get_db
 from ...models import Entity, EntityType, SourceType, EntityRelationship, RelationshipType
 from ...repositories.graph import GraphRepository
 from ...graph.index import GraphIndex
+from ...graph.index_service import GraphIndexService
 from ...search.engine import SearchEngine
+from ..dependencies import get_graph_index, get_graph_index_service
 
 
 # Pydantic models for API
@@ -62,27 +64,19 @@ class PathQuery(BaseModel):
 # Create router
 router = APIRouter(prefix="/graph", tags=["graph"])
 
-# In-memory graph index (in production, this would be a singleton service)
-_graph_index: Optional[GraphIndex] = None
-
-
-async def get_graph_index(db: AsyncSession = Depends(get_db)) -> GraphIndex:
-    """Get or create the graph index"""
-    global _graph_index
-
-    if _graph_index is None:
-        _graph_index = GraphIndex()
-        repo = GraphRepository(db)
-        await _graph_index.load_from_storage(repo)
-
-    return _graph_index
+# ADR-003: there is no module-level index here any more. The application owns
+# one GraphIndexService (app.state.graph_index) and it arrives through
+# `get_graph_index` (readers) / `get_graph_index_service` (writers), both
+# imported from ..dependencies. They are re-exported for backwards
+# compatibility with modules that used to import get_graph_index from here.
+__all__ = ["router", "get_graph_index", "get_graph_index_service"]
 
 
 @router.post("/entities", response_model=Dict[str, Any])
 async def create_entity(
     entity_data: EntityCreate,
     db: AsyncSession = Depends(get_db),
-    graph: GraphIndex = Depends(get_graph_index)
+    index: GraphIndexService = Depends(get_graph_index_service)
 ):
     """Create a new entity in the graph"""
     repo = GraphRepository(db)
@@ -103,8 +97,11 @@ async def create_entity(
     stored = await repo.store_entity(entity)
     await db.commit()
 
-    # Update in-memory index
-    graph._add_entity(stored)
+    # Write through to the index in the same code path as the storage write
+    # (ADR-003 decision 2). This maintains `nodes` too, so the new entity is
+    # immediately reachable by find_path/get_connected_entities -- not just by
+    # name search, which was finding F2.
+    await index.entity_written(db, stored)
 
     return {"entity": stored.to_dict()}
 
@@ -173,7 +170,7 @@ async def update_entity(
     entity_id: str,
     update_data: EntityUpdate,
     db: AsyncSession = Depends(get_db),
-    graph: GraphIndex = Depends(get_graph_index)
+    index: GraphIndexService = Depends(get_graph_index_service)
 ):
     """Update an entity (creates new version)"""
     repo = GraphRepository(db)
@@ -197,8 +194,9 @@ async def update_entity(
     stored = await repo.store_entity(new_entity)
     await db.commit()
 
-    # Update in-memory index
-    graph._add_entity(stored)
+    # Write through: replaces the indexed version in place (and removes the
+    # entity entirely if this version is a tombstone -- ADR-003 decision 5).
+    await index.entity_written(db, stored)
 
     return {
         "entity": stored.to_dict(),
@@ -229,7 +227,7 @@ async def get_entity_versions(
 async def create_relationship(
     rel_data: RelationshipCreate,
     db: AsyncSession = Depends(get_db),
-    graph: GraphIndex = Depends(get_graph_index)
+    index: GraphIndexService = Depends(get_graph_index_service)
 ):
     """Create a relationship between entities"""
     repo = GraphRepository(db)
@@ -266,8 +264,10 @@ async def create_relationship(
     stored = await repo.store_relationship(relationship)
     await db.commit()
 
-    # Update in-memory index
-    graph._add_relationship(stored)
+    # Write through: adds the edge to both endpoints' adjacency lists, so the
+    # new edge is traversable immediately (previously it landed only in the
+    # relationships_by_* dicts and `find_path` could not see it).
+    await index.relationship_written(db, stored)
 
     return {"relationship": stored.to_dict()}
 
