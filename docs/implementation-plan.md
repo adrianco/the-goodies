@@ -1,7 +1,7 @@
 # The Goodies — Staged Implementation Plan
 
-**Date:** 2026-08-01 · **Planned at:** `715a3e8` (v0.3.0 + ADR-001…012)
-**Status: proposed — awaiting owner review. Nothing implemented.**
+**Date:** 2026-08-01 (revised 2026-08-02 — see §1.2) · **Planned at:** `715a3e8` (v0.3.0 + ADR-001…012)
+**Status: proposed — awaiting owner review. Nothing implemented in this repository.**
 **Companion to:** [`design-review-2026-08.md`](design-review-2026-08.md) (findings) and [`adr/`](adr/) (decisions). This document is the third piece: *order of work*, and why that order.
 
 ---
@@ -42,9 +42,36 @@ Step 4  getLocalChanges()      // AFTER the overwrite
 
 `getLocalChanges()` runs after local storage has been overwritten, so the push payload is the server's version. The idempotent ack then clears the pending mark and the local edit is destroyed with the server never having seen it — exactly the mechanism #69 describes.
 
-**Consequences for the plan.** The urgent fix belongs in the TypeScript client, which is the one in production. blowing-off is correct *by accident of statement order*, not by an expressed invariant — a future refactor could silently reintroduce the bug, so it gets a regression test that pins the ordering rather than a behavioural change. ADR-011 §1's pull-guard remains the right invariant for both clients; only its urgency differs.
+**Consequences for the plan.** The urgent fix belonged in the TypeScript client, which is the one in production. blowing-off is correct *by accident of statement order*, not by an expressed invariant — a future refactor could silently reintroduce the bug, so it gets a regression test that pins the ordering rather than a behavioural change. ADR-011 §1's pull-guard remains the right invariant for both clients; only its urgency differed.
 
-**Cross-repo note.** KittenKong lives in `rolandcanyon-cmd/the-goodies-typescript` (upstream). `adrianco/the-goodies-typescript` is a *fork* of it and is behind; fixing the fork would not reach production. Stage A therefore has a coordination dependency outside this repository.
+**Status: fixed upstream.** KittenKong shipped the guard in `ee4eea5` (2026-08-02) with tests (`sync-pending.test.ts`), skipping pull-apply for any id carrying a pending local edit and pushing relationships alongside. The same commit's comment traces the mechanism and cites #69. The Python-side regression test remains outstanding.
+
+**Cross-repo note.** KittenKong lives in `rolandcanyon-cmd/the-goodies-typescript` (upstream). `adrianco/the-goodies-typescript` is a *fork* of it and lags; fixing the fork would not reach production. Stage A retains a coordination dependency outside this repository.
+
+### 1.2 The guard and the loser-ack are coupled — shipping one alone livelocks
+
+*Added 2026-08-02, after the upstream guard landed.*
+
+ADR-011 lists the pull-guard (§1) and loser-acknowledgement (§2) as separate numbered decisions. They are not separable in practice, and the first draft of this plan wrongly split them across Stage A and Stage E.
+
+This server does not acknowledge a change that loses conflict resolution — deliberately, and pinned by a passing test (`funkygibbon/tests/test_sync_protocol.py::test_rejected_change_is_not_reported_as_applied`: *"A blind overwrite that LOSES resolution must stay pending on the client."*). That was correct behaviour when an unacked id simply retried. With a pull-guard in the client it is no longer sufficient:
+
+1. Client holds a pending edit `v_local`, older than the server's `v_other`.
+2. Pull returns `v_other` → the guard skips it, because the id is pending.
+3. Push sends `v_local` → it loses clamped LWW → **not acked**.
+4. The pending mark survives, so the guard keeps blocking `v_other`.
+5. Every subsequent sync repeats steps 2–4 unchanged.
+
+The entity never converges on that client and retries indefinitely. The trigger is precisely the scenario the guard exists for — edit offline at 14:00, another client edits at 15:00, sync at 18:00 — so this is a routine path, not an exotic one.
+
+Severity is *stuck divergence*, not destruction: both versions survive and the outcome is strictly better than the silent loss it replaced. But it is incomplete, and it is live now that the client half has shipped.
+
+ADR-011 §2 already contains the resolution — a loser is **"acked (it was processed — ends the ambiguity between 'lost' and 'not received')"**. That acknowledgement is what breaks the cycle: the client drops its pending mark, the guard stops firing, and the next delta delivers the winner. Only the *ack* is required now; storing losers as version rows can still wait for Stage E.
+
+Two further consequences worth recording:
+
+- The convergence digest (ADR-011 §4) would surface this class of divergence automatically. It is cheap and server-side, which is an argument for pulling it forward into Stage C rather than leaving it with the rest of §11.
+- The guard's own comment asserts the skipped server version "is re-sent on the next delta once this id is no longer pending". That holds only while the delta filter re-selects an entity whose latest row has not changed. It should be asserted in the conformance suite (Stage B) rather than assumed.
 
 ---
 
@@ -57,12 +84,15 @@ Each stage lists its exit gate. A stage is not "done" until its gate is demonstr
 
 | Work | ADR | Risk |
 |---|---|---|
-| KittenKong: pull-guard + capture push payload before pull-apply | 011 §1 | **Live data loss**; upstream repo, needs its owner |
+| ~~KittenKong: pull-guard~~ — **done upstream** in `ee4eea5` | 011 §1 | Was live data loss; closed |
+| **Server: acknowledge a losing change** (§1.2) — unblocks the shipped guard | 011 §2 | **Live livelock**; small, server-only |
 | blowing-off: regression test pinning the pre-pull snapshot ordering | 011 §1 | Trivial |
 | Delete `funkygibbon/sync/` (937 LOC) + client conflict-resolver overlap | 008 | Low — no importers |
 | GraphIndex: single owner, write-through on every mutation path, drift rebuild | 003 | Low |
 
-**Exit gate:** #69 closed with a reproducing test in KittenKong; `graphify update .` shows no orphaned sync modules; a sync-applied change is visible to `find_path` without a restart.
+The loser-ack is now the *only* urgent item, and it is on this side of the fence: the client half shipped first, which is what turned a latent coupling into a live one.
+
+**Exit gate:** a losing push is acked, its pending mark clears, and the following delta delivers the winner — asserted end-to-end against a real client, not just server-side; #69 closed; `graphify update .` shows no orphaned sync modules; a sync-applied change is visible to `find_path` without a restart.
 
 ### Stage B — Build the safety net
 *Gates Stages D and E. The single highest-leverage stage.*
@@ -115,13 +145,17 @@ Three changes, with reasons.
 
 **3.3 — Coverage precedes the 45-file refactor.** The review runs the coverage floor in parallel with everything. But the modules the abstraction rewrites are the least-tested in the repo — `graph/traversal.py` 12%, `mcp/tools.py` 15%, `graph/search.py` 16%, `graph/operations.py` 20% (F8). A large mechanical change through untested code is the one avoidable risk here.
 
+**3.4 — ADR-011 §2 (loser-ack) moves from Stage E into Stage A.** Per §1.2 the pull-guard and the loser-ack are one mechanism described in two numbered decisions; separating them across stages produces a livelock in the interval. Only the acknowledgement moves — storing losers as version rows stays in Stage E, where it belongs with the rest of the temporal work. The ADR-011 §4 digest is also a candidate to pull forward into Stage C, since it detects exactly this class of divergence and is cheap and server-side.
+
+*This is a correction to this document's own first draft, not to the review — the review did not make the split.*
+
 Unchanged from the review: the dead-code deletion and GraphIndex fix stay early and cheap; the access layer precedes the temporal model; the temporal model is the core; garage comes last.
 
 ---
 
 ## 4. Open questions for the owner
 
-1. **KittenKong ownership.** Stage A's urgent item is in an upstream repo this project cannot push to. Written up as a diagnosis on the existing issue, or handled another way?
+1. ~~**KittenKong ownership.**~~ Resolved — the guard shipped upstream in `ee4eea5`. Stage A's remaining urgent item (the loser-ack, §1.2) is server-side and in this repository. Ongoing coordination still matters for Stage E, which needs lockstep changes in both clients.
 2. **v3 cutover.** Both installs are controlled — hard cutover, or is a v2 compatibility window required? ADR-005 §3 assumes the window can be short; confirming it removes negotiation work.
 3. **Is garage driving the schedule?** If it is, Stage D moves ahead of Stage C and Stage E stages behind it. If opportunistic, the order above stands.
 4. **ADR-006 embeddings have no owner.** Is FTS5-only acceptable indefinitely, or should sqlite-vec be scheduled?
