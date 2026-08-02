@@ -308,7 +308,11 @@ class LocalGraphStorage:
             if device_id not in self._index["by_room"][room_id]:
                 self._index["by_room"][room_id].append(device_id)
 
-        if mark_dirty:
+        if mark_dirty and relationship.id:
+            # Guarded on id: an unidentified relationship would be tracked under
+            # the JSON key "null", giving a pending entry that can never be
+            # pushed (the server keys on id) and never cleared (no ack ever
+            # names it). Callers should assign an id; LocalGraphOperations does.
             if self._pending_relationships.get(relationship.id) != "create":
                 self._pending_relationships[relationship.id] = "create" if is_new else "update"
 

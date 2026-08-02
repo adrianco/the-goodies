@@ -3,6 +3,23 @@ In-Memory Graph Index for Fast Traversal
 
 This module provides an in-memory graph structure for efficient
 path finding, traversal, and relationship queries.
+
+LIFECYCLE (ADR-003)
+-------------------
+A ``GraphIndex`` is *not* a cache that anybody may construct on demand. It is
+owned by the FastAPI application (``funkygibbon.graph.index_service.GraphIndexService``,
+held on ``app.state``) and handed to routers through a dependency. This module
+only implements the data structure and its incremental maintenance:
+
+* ``_add_entity`` / ``_add_relationship`` / ``remove_entity`` keep **every**
+  structure consistent, including ``nodes`` -- the structure that ``find_path``
+  and ``get_connected_entities`` traverse. Before ADR-003 they maintained only
+  the lookup dictionaries, so a REST-created entity was findable by name but
+  invisible to traversal until the process restarted (finding F2).
+* ``_build_nodes()`` is a full rebuild and is therefore **load-time only**
+  (``load_from_storage``). Mutations must never need it.
+* Tombstoned entities (``content["deleted"] is True``) are excluded at load and
+  removed from the index on write-through.
 """
 
 from typing import Dict, List, Set, Optional, Tuple, Any
@@ -11,6 +28,11 @@ from dataclasses import dataclass
 
 from ..models import Entity, EntityRelationship, RelationshipType
 from ..repositories.graph import GraphRepository
+
+
+def is_tombstoned(entity: Entity) -> bool:
+    """True when an entity version is a delete tombstone (PROTOCOL.md §8)."""
+    return bool((entity.content or {}).get("deleted"))
 
 
 @dataclass
@@ -36,9 +58,17 @@ class GraphIndex:
         self.entities_by_type: Dict[str, Set[str]] = defaultdict(set)
         self.entities_by_name: Dict[str, Set[str]] = defaultdict(set)
 
+        # Identity map for relationships that carry an id, so re-adding the same
+        # edge (sync re-push, endpoint version bump) replaces it instead of
+        # duplicating it.
+        self.relationships_by_id: Dict[str, EntityRelationship] = {}
+
     async def load_from_storage(self, graph_repo: GraphRepository):
         """
         Load graph data from persistent storage into memory.
+
+        This is the only place a full ``_build_nodes()`` rebuild happens
+        (ADR-003 decision 2). Tombstoned entities are skipped (decision 5).
 
         Args:
             graph_repo: Repository to load data from
@@ -51,14 +81,18 @@ class GraphIndex:
         for entity_type in EntityType:
             entities = await graph_repo.get_entities_by_type(entity_type)
             for entity in entities:
+                if is_tombstoned(entity):
+                    continue
                 self._add_entity(entity)
 
-        # Load all relationships
+        # Load all relationships. An edge whose endpoint is missing (deleted, or
+        # never synced) is dropped rather than left dangling.
         relationships = await graph_repo.get_relationships(include_all_versions=False)
         for rel in relationships:
-            self._add_relationship(rel)
+            if rel.from_entity_id in self.entities and rel.to_entity_id in self.entities:
+                self._add_relationship(rel)
 
-        # Build graph nodes
+        # Build graph nodes (load-time full rebuild)
         self._build_nodes()
 
     def clear(self):
@@ -70,9 +104,36 @@ class GraphIndex:
         self.relationships_by_type.clear()
         self.entities_by_type.clear()
         self.entities_by_name.clear()
+        self.relationships_by_id.clear()
+
+    # ------------------------------------------------------------------
+    # Incremental maintenance (write-through)
+    # ------------------------------------------------------------------
 
     def _add_entity(self, entity: Entity):
-        """Add entity to indices"""
+        """Add or replace an entity, keeping every index -- including ``nodes`` --
+        consistent.
+
+        O(1) amortised: an existing node keeps its edges and only swaps the
+        entity payload, so a new version of an entity does not disturb the
+        topology around it.
+        """
+        previous = self.entities.get(entity.id)
+        if previous is not None:
+            # Drop stale secondary-index entries when a new version renames or
+            # retypes the entity, otherwise name search keeps answering with the
+            # old name.
+            old_name = previous.name.lower()
+            if old_name != entity.name.lower():
+                self.entities_by_name[old_name].discard(entity.id)
+                if not self.entities_by_name[old_name]:
+                    del self.entities_by_name[old_name]
+            old_type = previous.entity_type.value
+            if old_type != entity.entity_type.value:
+                self.entities_by_type[old_type].discard(entity.id)
+                if not self.entities_by_type[old_type]:
+                    del self.entities_by_type[old_type]
+
         self.entities[entity.id] = entity
         self.entities_by_type[entity.entity_type.value].add(entity.id)
 
@@ -80,14 +141,132 @@ class GraphIndex:
         name_lower = entity.name.lower()
         self.entities_by_name[name_lower].add(entity.id)
 
+        # Maintain the traversal structure incrementally. This is the half that
+        # was missing before ADR-003: without it the entity exists for name
+        # lookups but `find_path` cannot see it.
+        node = self.nodes.get(entity.id)
+        if node is None:
+            self.nodes[entity.id] = GraphNode(
+                entity=entity,
+                outgoing=[
+                    (rel, rel.to_entity_id)
+                    for rel in self.relationships_by_source.get(entity.id, [])
+                ],
+                incoming=[
+                    (rel, rel.from_entity_id)
+                    for rel in self.relationships_by_target.get(entity.id, [])
+                ],
+            )
+        else:
+            node.entity = entity
+
     def _add_relationship(self, rel: EntityRelationship):
-        """Add relationship to indices"""
+        """Add or replace a relationship, keeping the node adjacency lists in step."""
+        if rel.id:
+            existing = self.relationships_by_id.get(rel.id)
+            if existing is not None:
+                self._detach_relationship(existing)
+
         self.relationships_by_source[rel.from_entity_id].append(rel)
         self.relationships_by_target[rel.to_entity_id].append(rel)
         self.relationships_by_type[rel.relationship_type].append(rel)
+        if rel.id:
+            self.relationships_by_id[rel.id] = rel
+
+        source_node = self.nodes.get(rel.from_entity_id)
+        if source_node is not None:
+            source_node.outgoing.append((rel, rel.to_entity_id))
+        target_node = self.nodes.get(rel.to_entity_id)
+        if target_node is not None:
+            target_node.incoming.append((rel, rel.from_entity_id))
+
+    def _detach_relationship(self, rel: EntityRelationship):
+        """Remove one relationship object from every structure that holds it."""
+        for bucket, key in (
+            (self.relationships_by_source, rel.from_entity_id),
+            (self.relationships_by_target, rel.to_entity_id),
+        ):
+            existing = bucket.get(key)
+            if existing:
+                bucket[key] = [r for r in existing if r is not rel]
+
+        typed = self.relationships_by_type.get(rel.relationship_type)
+        if typed:
+            self.relationships_by_type[rel.relationship_type] = [r for r in typed if r is not rel]
+
+        source_node = self.nodes.get(rel.from_entity_id)
+        if source_node is not None:
+            source_node.outgoing = [edge for edge in source_node.outgoing if edge[0] is not rel]
+        target_node = self.nodes.get(rel.to_entity_id)
+        if target_node is not None:
+            target_node.incoming = [edge for edge in target_node.incoming if edge[0] is not rel]
+
+        if rel.id and self.relationships_by_id.get(rel.id) is rel:
+            del self.relationships_by_id[rel.id]
+
+    def remove_entity(self, entity_id: str) -> bool:
+        """Remove an entity (and its edges) from the index.
+
+        Used for tombstones (ADR-003 decision 5): a deleted entity must not turn
+        up in traversal, name search or statistics.
+
+        Returns:
+            True if the entity was present.
+        """
+        entity = self.entities.pop(entity_id, None)
+        if entity is None:
+            return False
+
+        name_lower = entity.name.lower()
+        self.entities_by_name[name_lower].discard(entity_id)
+        if not self.entities_by_name[name_lower]:
+            del self.entities_by_name[name_lower]
+
+        type_key = entity.entity_type.value
+        self.entities_by_type[type_key].discard(entity_id)
+        if not self.entities_by_type[type_key]:
+            del self.entities_by_type[type_key]
+
+        touching = list(self.relationships_by_source.get(entity_id, []))
+        touching += list(self.relationships_by_target.get(entity_id, []))
+        for rel in touching:
+            self._detach_relationship(rel)
+
+        self.relationships_by_source.pop(entity_id, None)
+        self.relationships_by_target.pop(entity_id, None)
+        self.nodes.pop(entity_id, None)
+        return True
+
+    def upsert_entity(self, entity: Entity) -> None:
+        """Write-through entry point: apply an entity version to the index.
+
+        A tombstone removes the entity; anything else adds or replaces it.
+        """
+        if is_tombstoned(entity):
+            self.remove_entity(entity.id)
+        else:
+            self._add_entity(entity)
+
+    def upsert_relationship(self, rel: EntityRelationship) -> None:
+        """Write-through entry point for one edge."""
+        self._add_relationship(rel)
+
+    def remove_relationship(self, relationship_id: str) -> bool:
+        """Remove an edge by id. Returns True if it was present."""
+        existing = self.relationships_by_id.get(relationship_id)
+        if existing is None:
+            return False
+        self._detach_relationship(existing)
+        return True
 
     def _build_nodes(self):
-        """Build graph nodes with connections"""
+        """Build graph nodes with connections.
+
+        Full O(V+E) rebuild -- load-time only (ADR-003 decision 2). Mutation
+        paths use ``_add_entity``/``_add_relationship``, which maintain ``nodes``
+        incrementally.
+        """
+        self.nodes.clear()
         for entity_id, entity in self.entities.items():
             outgoing = [
                 (rel, rel.to_entity_id)

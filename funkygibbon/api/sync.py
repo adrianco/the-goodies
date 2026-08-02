@@ -5,6 +5,7 @@ Handles sync requests, conflict resolution, and delta synchronization
 between FunkyGibbon server and clients.
 """
 
+import logging
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from funkygibbon.database import get_db
+from funkygibbon.graph.index_service import write_through_applied_changes
 from inbetweenies.models import (
     Entity, EntityRelationship, EntityType, RelationshipType, SourceType,
 )
@@ -23,6 +25,8 @@ from inbetweenies.sync import (
 
 
 # Router
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/sync", tags=["sync"])
 
 
@@ -86,6 +90,18 @@ class SyncHandler:
                 if await self._persist_relationship(relationship, request.user_id):
                     if relationship.id not in applied_relationships:
                         applied_relationships.append(relationship.id)
+
+        # ADR-003 decision 2: sync apply is a mutation path, so it writes through
+        # to the graph index in the same code path as the storage write. Without
+        # this, entities arriving by sync were invisible to find_path until the
+        # process restarted (finding F2). Runs after both loops so `applied` and
+        # `applied_relationships` are complete; ids that lost conflict resolution
+        # are absent from them and are correctly not indexed.
+        await write_through_applied_changes(
+            self.db_session,
+            entity_ids=applied,
+            relationship_ids=applied_relationships,
+        )
 
         # server_time is the watermark the client persists and sends back as the
         # next `since`. Capture it now; everything applied above is <= it.
@@ -179,10 +195,13 @@ class SyncHandler:
     async def _apply_incoming(self, change: SyncChange, conflicts: List[ConflictInfo]) -> bool:
         """Apply a create/update: fast-forward if based on our latest, else resolve.
 
-        Returns True when our stored state now reflects this change — either it
-        persisted, or it was already in the desired state. False means the client
-        must keep its pending mark and retry (it lost conflict resolution, or the
-        change carried no entity to apply).
+        Returns True when the change reached a terminal outcome and the client
+        may drop its pending mark: it persisted, it was already in the desired
+        state, or it lost resolution and was preserved as a non-latest row
+        (ADR-011 §2 — losing is terminal; retrying cannot change it).
+
+        False means retry. The only such case here is a change carrying no
+        entity to apply.
         """
         if not change.entity:
             return False  # relationships-only change; nothing to apply here
@@ -220,8 +239,21 @@ class SyncHandler:
                                 conflicts: List[ConflictInfo]) -> bool:
         """Resolve a concurrent edit canonically (LWW + version tiebreak, §7).
 
-        Returns True only if the remote version won and was stored; a losing
-        remote is deliberately not acknowledged, so the client retries it.
+        Always returns True: the change was *processed*, which is what an ack
+        means (ADR-011 §2). Winning and losing are both terminal outcomes, so
+        neither should be retried.
+
+        Withholding the ack from a loser — the previous behaviour — livelocks
+        any client that guards its pending ids against pull-apply (ADR-011 §1,
+        which KittenKong now implements): the guard blocks our version because
+        the id is pending, the push loses and is not acked, the pending mark
+        survives, and every subsequent sync repeats identically. The entity
+        never converges on that client.
+
+        Acking is only safe because the loser's content is preserved first —
+        see _preserve_losing_version. An ack without preservation would be
+        worse than the livelock: the client would drop its pending mark and
+        later overwrite its own edit with our winner, losing it everywhere.
         """
         local = {"updated_at": _to_utc(existing.updated_at), "version": existing.version}
         remote = {
@@ -236,6 +268,7 @@ class SyncHandler:
             resolved_version = change.entity.version
         else:
             resolved_version = existing.version
+            await self._preserve_losing_version(change, existing)
 
         conflicts.append(ConflictInfo(
             entity_id=change.entity.id,
@@ -244,7 +277,36 @@ class SyncHandler:
             resolution_strategy=resolution.reason,
             resolved_version=resolved_version,
         ))
-        return remote_wins
+        return True
+
+    async def _preserve_losing_version(self, change: SyncChange, existing: Entity) -> None:
+        """Store a losing version as a non-latest row so its content survives.
+
+        ADR-011 §2: a write may lose *prominence* but never *existence*. The
+        row is already parented into the DAG, so preserving it is one insert
+        and any human can recover the content from history.
+
+        Guarded, because two rules currently disagree about which row is
+        "latest": resolution is LWW on updated_at, while _latest_entities()
+        picks the lexically greatest version string. A client edit stamped
+        after our latest's *edit* time but applied before its *insert* time
+        loses resolution yet sorts higher — inserting it would silently
+        promote the loser to the served latest. Where that holds, the insert
+        is skipped and logged rather than corrupting state; the content is
+        still reported in `conflicts`. ADR-002's is_latest column removes the
+        disagreement in Stage C, after which this guard can go.
+        """
+        if change.entity.version >= existing.version:
+            logger.warning(
+                "Not preserving losing version %s for entity %s: it sorts at or "
+                "above the winning version %s, so storing it would make the loser "
+                "the served latest. Content is reported in conflicts only. "
+                "Resolved by ADR-002 is_latest (Stage C).",
+                change.entity.version, change.entity.id, existing.version,
+            )
+            return
+
+        await self._insert_version(change)
 
     async def _handle_delete(self, change: SyncChange) -> bool:
         """Apply a delete as a tombstone version (content.deleted = true, §8).

@@ -16,6 +16,7 @@ Two things made it hard to see:
 These tests pin the invariants that keep the push path reachable and safe.
 """
 
+import asyncio
 import shutil
 import tempfile
 import uuid
@@ -34,7 +35,7 @@ from inbetweenies.models import (
     RelationshipType,
     SourceType,
 )
-from inbetweenies.sync import SyncOperation
+from inbetweenies.sync import Change, SyncOperation
 
 
 @pytest.fixture
@@ -130,6 +131,30 @@ class TestDirtyTracking:
         await graph_ops.store_entity(edited)
 
         assert graph_ops.get_pending_entities() == {entity.id: "create"}
+
+    @pytest.mark.asyncio
+    async def test_relationship_without_an_id_gets_one(self, graph_ops):
+        """An unidentified relationship must never reach the pending set.
+
+        It was tracked under the JSON key "null": unpushable (the server keys
+        on id) and unclearable (no ack can ever name it), so it accumulated
+        on every sync forever. store_entity already generated ids; this did
+        not.
+        """
+        relationship = EntityRelationship(
+            from_entity_id="device-1",
+            from_entity_version="v1",
+            to_entity_id="room-1",
+            to_entity_version="v1",
+            relationship_type=RelationshipType.LOCATED_IN,
+            properties={},
+        )
+        stored = await graph_ops.store_relationship(relationship)
+
+        assert stored.id, "an id must be generated"
+        pending = graph_ops.get_pending_relationships()
+        assert "null" not in pending
+        assert list(pending) == [stored.id]
 
     @pytest.mark.asyncio
     async def test_local_relationship_write_marks_pending(self, graph_ops):
@@ -341,3 +366,101 @@ class TestPendingCount:
         await graph_ops.store_entity(make_entity(), mark_dirty=False)
 
         assert graph_ops.pending_count() == 0
+
+
+class _OrderingProbe:
+    """Protocol double that serves one server change and records the push."""
+
+    def __init__(self, server_entity):
+        self.server_entity = server_entity
+        self.pushed_names = None
+
+    async def sync_request(self, last_sync=None, entity_types=None):
+        return {"server_time": datetime.now(UTC).isoformat()}
+
+    def parse_sync_delta(self, response):
+        entity = self.server_entity
+        return [Change(
+            entity_type="room",
+            entity_id=entity.id,
+            operation=SyncOperation.UPDATE,
+            data=entity.to_dict(),
+            updated_at=datetime.now(UTC),
+            sync_id=entity.version,
+        )], []
+
+    async def sync_push(self, changes):
+        self.pushed_names = [c.data.get("name") for c in changes]
+        return {"applied": [c.entity_id for c in changes], "applied_relationships": []}
+
+
+class _NullMetadataRepo:
+    async def get_metadata(self, client_id):
+        return None
+
+    async def update_sync_time(self, watermark, client_id):
+        return None
+
+
+class TestPullDoesNotClobberThePushPayload:
+    """Guards the ordering that keeps this client clear of issue #69.
+
+    sync() captures the push payload BEFORE the pull applies server changes.
+    If that capture ever moves after the pull, the payload is rebuilt from
+    storage the pull just overwrote, and the client pushes the server's own
+    version back — the server acks it idempotently, the pending mark clears,
+    and the local edit is destroyed with the server never seeing it.
+
+    KittenKong had exactly that ordering and needed an explicit pull-guard
+    (ADR-011 §1). This client is safe only because of statement order, which
+    nothing else expresses — hence this test. It exercises the real sync()
+    rather than the phases individually, so a reordering inside sync() fails
+    it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_push_carries_the_local_edit_not_the_pulled_version(self, graph_ops):
+        local = make_entity(name="LOCAL-EDIT")
+        await graph_ops.store_entity(local)
+
+        server_version = make_entity(name="SERVER-EDIT")
+        server_version.id = local.id
+
+        engine = SyncEngine.__new__(SyncEngine)
+        engine.graph_operations = graph_ops
+        engine.protocol = _OrderingProbe(server_version)
+        engine.metadata_repo = _NullMetadataRepo()
+        engine.client_id = "test-client"
+        engine._sync_lock = asyncio.Lock()
+        engine._is_syncing = False
+
+        result = await engine.sync()
+
+        assert result.success, result.errors
+        assert engine.protocol.pushed_names == ["LOCAL-EDIT"], (
+            "the push must carry the local edit; seeing SERVER-EDIT means the "
+            "payload was rebuilt from storage after the pull overwrote it "
+            "(issue #69)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_local_edit_survives_the_pull_in_storage(self, graph_ops):
+        """The pulled version may become latest, but the edit is not erased."""
+        local = make_entity(name="LOCAL-EDIT")
+        await graph_ops.store_entity(local)
+
+        server_version = make_entity(name="SERVER-EDIT")
+        server_version.id = local.id
+
+        engine = SyncEngine.__new__(SyncEngine)
+        engine.graph_operations = graph_ops
+        engine.protocol = _OrderingProbe(server_version)
+        engine.metadata_repo = _NullMetadataRepo()
+        engine.client_id = "test-client"
+        engine._sync_lock = asyncio.Lock()
+        engine._is_syncing = False
+
+        await engine.sync()
+
+        stored = [v.name for v in graph_ops.storage._entities[local.id]]
+        assert "LOCAL-EDIT" in stored, "the local edit must remain in version history"

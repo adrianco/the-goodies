@@ -4,7 +4,7 @@ MCP API Router
 This module provides REST endpoints for MCP tool execution.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,7 @@ from ...database import get_db
 from ...repositories.graph_impl import SQLGraphOperations
 from ...graph.index import GraphIndex
 from ...mcp.server import FunkyGibbonMCPServer
-from ..routers.graph import get_graph_index
+from ..dependencies import get_graph_index
 
 
 class MCPToolCall(BaseModel):
@@ -25,22 +25,20 @@ class MCPToolCall(BaseModel):
 # Create router
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
-# MCP server instance (in production, this would be a singleton service)
-_mcp_server: Optional[FunkyGibbonMCPServer] = None
-
 
 async def get_mcp_server(
     db: AsyncSession = Depends(get_db),
     graph: GraphIndex = Depends(get_graph_index)
 ) -> FunkyGibbonMCPServer:
-    """Get or create the MCP server instance"""
-    global _mcp_server
+    """Build the MCP server for this request.
 
-    if _mcp_server is None:
-        graph_ops = SQLGraphOperations(db)
-        _mcp_server = FunkyGibbonMCPServer(graph, graph_ops)
-
-    return _mcp_server
+    Constructed per request rather than cached in a module global: the server
+    binds a database session, and a cached instance kept serving the *first*
+    request's session forever. The graph index it wraps is the application's one
+    index (ADR-003) -- the same object every time, kept current by write-through
+    and the drift check -- so there is nothing expensive to cache here.
+    """
+    return FunkyGibbonMCPServer(graph, SQLGraphOperations(db))
 
 
 @router.get("/tools", response_model=Dict[str, Any])

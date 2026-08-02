@@ -76,14 +76,56 @@ from .routers.auth import require_auth
 from . import sync as enhanced_sync
 from ..auth import auth_rate_limiter, audit_logger
 from ..backup_scheduler import init_scheduler, shutdown_scheduler
+from ..graph.index_service import (
+    GraphIndexService,
+    assert_single_worker_posture,
+    bind_graph_index_service,
+    unbind_graph_index_service,
+)
+
+
+class GraphIndexContextMiddleware:
+    """Bind the app's GraphIndexService to the request context (ADR-003).
+
+    Pure ASGI middleware -- it runs in the same task as the endpoint, so the
+    ContextVar it sets is visible to everything the request calls, including
+    code that cannot take a FastAPI dependency (``api/sync.py``'s SyncHandler).
+    """
+
+    def __init__(self, app, service: GraphIndexService):
+        self.app = app
+        self.service = service
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        token = bind_graph_index_service(self.service)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            unbind_graph_index_service(token)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan events."""
     # Startup
+
+    # ADR-003 decision 4: the graph index is a per-process structure, so a
+    # multi-worker deployment would run N silently diverging copies. Fail fast
+    # rather than serve inconsistent graph reads.
+    assert_single_worker_posture()
+
     await init_db()
     print("Database initialized")
+
+    # The graph index is owned here (created in create_app, stored on
+    # app.state). It loads from storage on first use through the request's own
+    # session -- that session, not this process's default engine binding, is the
+    # database the requests actually read -- and is kept current by write-through
+    # plus the drift check in GraphIndexService.ensure_current().
+    print(f"Graph index owner ready (enabled={app.state.graph_index.enabled})")
 
     # Start rate limiter cleanup task
     await auth_rate_limiter.start_cleanup_task()
@@ -121,6 +163,11 @@ def create_app() -> FastAPI:
         version="0.3.0",
         lifespan=lifespan
     )
+
+    # ADR-003 decision 1: exactly one GraphIndex per application, owned here and
+    # reached through funkygibbon.api.dependencies. No module-level instance.
+    app.state.graph_index = GraphIndexService()
+    app.add_middleware(GraphIndexContextMiddleware, service=app.state.graph_index)
 
     # Add CORS middleware
     app.add_middleware(

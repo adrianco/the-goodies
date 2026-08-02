@@ -58,10 +58,23 @@ class GraphRepository(BaseRepository[Entity]):
                 and_(Entity.id == entity_id, Entity.version == version)
             )
         else:
-            # Get latest version
+            # Latest = greatest version string, NOT greatest created_at.
+            #
+            # Version strings carry a UTC ISO-8601 prefix, so lexical order is
+            # chronological by *edit* time. created_at is the row's *insert*
+            # time, and the two diverge whenever a version arrives out of
+            # order — which sync does routinely: an offline edit synced later,
+            # or a losing version preserved into history (ADR-011 §2). Ordering
+            # by created_at made the most recently *inserted* row win, so
+            # preserving a superseded version would silently promote it here
+            # while api/sync.py::_latest_entities() still reported the correct
+            # one. Two disagreeing definitions of "latest" over the same table.
+            #
+            # This matches _latest_entities(). ADR-002 replaces both with an
+            # is_latest column in Stage C.
             stmt = select(Entity).where(
                 Entity.id == entity_id
-            ).order_by(Entity.created_at.desc()).limit(1)
+            ).order_by(Entity.version.desc()).limit(1)
 
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
