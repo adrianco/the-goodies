@@ -334,3 +334,62 @@ jobs:
 
           # 4. Dependency set is internally consistent.
           "$VENV_PY" -m pip check
+
+  knowledge-graph:
+    name: Knowledge Graph
+    # ADR-010 section 5: keep the graph, and its dead-code signal, fresh.
+    #
+    # main only. On a PR the graph would describe a branch nobody has merged,
+    # and the dead-code signal is only meaningful against the trunk.
+    #
+    # This job is allowed to FAIL the build, deliberately. graphify extracts via
+    # tree-sitter, so a failed rebuild means the repo stopped parsing -- a real
+    # signal, not tooling noise. No `|| true`: this repo has been bitten four
+    # times by CI steps that reported success without checking anything --
+    # `pytest || true`, validate-dependencies' `|| echo` no-ops, that same job
+    # silently importing from the checkout because it inherited the
+    # workflow-level PYTHONPATH, and graphify's own post-commit hook, which
+    # backgrounds its rebuild so a failure never reaches git. The graph is not
+    # committed -- graphify-out/ is gitignored -- so the artifact upload is
+    # what makes this job's output reachable.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install graphify
+        # Pinned below 1.0: pre-1.0 minors are not guaranteed compatible, and a
+        # silent bump would change the graph under us without a code change.
+        run: pip install "graphifyy<1.0"
+
+      - name: Rebuild the knowledge graph
+        run: graphify update .
+
+      - name: Report graph size
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          graph = json.loads(pathlib.Path("graphify-out/graph.json").read_text())
+          # NetworkX node-link format: edges live under "links", not "edges".
+          nodes, links = graph.get("nodes", []), graph.get("links", [])
+          print(f"nodes={len(nodes)} edges={len(links)}")
+          if not nodes:
+              raise SystemExit("graph is empty -- extraction produced nothing")
+          PY
+
+      - name: Upload graph and report
+        uses: actions/upload-artifact@v7
+        with:
+          name: knowledge-graph
+          path: |
+            graphify-out/graph.json
+            graphify-out/GRAPH_REPORT.md
+          retention-days: 30
+          if-no-files-found: error
