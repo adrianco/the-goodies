@@ -239,6 +239,7 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
     # Same ordering constraint as above, for the same reason: this matches
     # 'has_blob', which is still 'HAS_BLOB' until normalisation has run.
     stats.update(_converge_blob_linking(cur))
+    stats.update(_retire_controlled_by_app(cur))
     _assert_types_normalised(cur)
 
     if apply:
@@ -591,6 +592,123 @@ def backup_db(db_path: Path) -> Path:
     return backup
 
 
+def verify_db(db_path: Path, domain: str) -> int:
+    """Report whether a database conforms to a domain's vocabulary.
+
+    Read-only. The migration already refuses to finish on un-normalised type
+    values, but that is a check on *shape*; this is a check on *meaning* --
+    every current edge against the endpoint rules the manifest declares.
+
+    Worth running separately because the answer changes without the database
+    changing: a vocabulary edit can make conforming data non-conforming. It is
+    also the gate before letting clients reconnect, since an old client writing
+    the pre-ADR-013 vocabulary is exactly what this would catch.
+
+    The manifest is named by the caller (``package.module:ATTR``) and never
+    defaulted. The engine must not know that a house exists -- hardcoding an
+    import here is a domain leak, and ``tests/test_domain_isolation.py`` caught
+    exactly that when this function first tried it. A default would be the same
+    leak wearing a string.
+    """
+    import importlib
+    from collections import Counter
+
+    try:
+        module_name, _, attr = domain.partition(":")
+        manifest = getattr(importlib.import_module(module_name), attr or "MANIFEST")
+    except (ImportError, AttributeError, ValueError) as exc:
+        print(f"error: could not load manifest {domain!r}: {exc}", file=sys.stderr)
+        print("       expected 'package.module:ATTRIBUTE', e.g. "
+              "'domains.house.manifest:HOUSE'", file=sys.stderr)
+        return 2
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        if not _table_has_column(cur, "entities", "is_latest"):
+            print(f"Database: {db_path}")
+            print("  NOT MIGRATED -- no is_latest column. Run without --verify first.")
+            return 1
+
+        print(f"Database: {db_path}")
+
+        entities = cur.execute(
+            "SELECT COUNT(*) FROM entities WHERE is_latest = 1").fetchone()[0]
+        rels = cur.execute("SELECT COUNT(*) FROM entity_relationships").fetchone()[0]
+        blobs = cur.execute("SELECT COUNT(*) FROM blobs").fetchone()[0]
+        print(f"  {entities} current entities, {rels} relationships, {blobs} blobs")
+
+        problems = 0
+
+        undeclared = {r[0] for r in cur.execute(
+            "SELECT DISTINCT entity_type FROM entities WHERE is_latest = 1")
+        } - set(manifest.entity_types)
+        if undeclared:
+            print(f"  FAIL  entity types not in the vocabulary: {sorted(undeclared)}")
+            problems += len(undeclared)
+        else:
+            print("  ok    every entity type is declared")
+
+        bad_edges = Counter()
+        for rtype, from_type, to_type in cur.execute(
+            """SELECT r.relationship_type, fe.entity_type, te.entity_type
+                 FROM entity_relationships r
+                 JOIN entities fe ON fe.id = r.from_entity_id AND fe.is_latest = 1
+                 JOIN entities te ON te.id = r.to_entity_id   AND te.is_latest = 1"""
+        ):
+            rule = manifest.relationship_rules.get(rtype)
+            if rule is None or not rule.permits(from_type, to_type):
+                bad_edges[(rtype, from_type, to_type)] += 1
+        if bad_edges:
+            print(f"  FAIL  {sum(bad_edges.values())} edges the vocabulary does not permit:")
+            for (rtype, ft, tt), n in sorted(bad_edges.items(), key=lambda kv: -kv[1]):
+                print(f"          {n:5d}  {rtype}  {ft} -> {tt}")
+            problems += sum(bad_edges.values())
+        else:
+            print("  ok    every edge conforms to the vocabulary")
+
+        # Blob integrity: one link, no dangling references, no orphaned bytes.
+        blob_ids = {r[0] for r in cur.execute("SELECT id FROM blobs")}
+        referenced, dangling = set(), 0
+        for (content_json,) in cur.execute(
+                "SELECT content FROM entities WHERE is_latest = 1"):
+            try:
+                content = json.loads(content_json or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(content, dict):
+                continue
+            candidates = [content.get("blob_id")]
+            candidates += [img.get("blob_id") for img in (content.get("images") or [])
+                           if isinstance(img, dict)]
+            for bid in filter(None, candidates):
+                referenced.add(bid)
+                if bid not in blob_ids:
+                    dangling += 1
+        orphans = blob_ids - referenced
+        if dangling or orphans:
+            print(f"  WARN  {dangling} dangling blob references, {len(orphans)} orphaned blobs")
+        else:
+            print(f"  ok    {len(referenced)} blob references, none dangling, none orphaned")
+
+        retired = ("is_blob", "has_blob", "blob_reference", "blob_references",
+                   "screenshot_blob_ids")
+        stale = {k: cur.execute(
+            "SELECT COUNT(*) FROM entities WHERE is_latest = 1 AND content LIKE ?",
+            ('%"' + k + '"%',)).fetchone()[0] for k in retired}
+        stale = {k: v for k, v in stale.items() if v}
+        if stale:
+            print(f"  FAIL  retired content flags still present: {stale}")
+            problems += sum(stale.values())
+        else:
+            print("  ok    no retired blob conventions remain")
+
+        print("  PASS" if not problems else f"  {problems} problem(s) found")
+        return 0 if not problems else 1
+    finally:
+        conn.close()
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m funkygibbon.migrate",
@@ -601,12 +719,28 @@ def main(argv=None) -> int:
                         help="Write the changes (default: dry-run).")
     parser.add_argument("--no-backup", action="store_true",
                         help="Skip the pre-migration backup (only with --apply).")
+    parser.add_argument("--verify", action="store_true",
+                        help="Check the database against a domain vocabulary and exit. "
+                             "Writes nothing. Use after migrating, and before "
+                             "letting clients back in. Requires --domain.")
+    parser.add_argument("--domain", metavar="MODULE:ATTR",
+                        help="Manifest to verify against, e.g. "
+                             "domains.house.manifest:HOUSE. Required with --verify, "
+                             "and deliberately not defaulted: the engine does not "
+                             "know which domains exist.")
     args = parser.parse_args(argv)
 
     db_path = resolve_db_path(args.db)
     if not db_path.is_file():
         print(f"error: database not found: {db_path}", file=sys.stderr)
         return 1
+
+    if args.verify:
+        if not args.domain:
+            print("error: --verify requires --domain, e.g. "
+                  "--domain domains.house.manifest:HOUSE", file=sys.stderr)
+            return 2
+        return verify_db(db_path, args.domain)
 
     print(f"Database: {db_path}")
     print(f"Mode:     {'APPLY' if args.apply else 'dry-run (no changes written)'}")
@@ -677,6 +811,36 @@ def _split_containment_from_composition(cur) -> Dict[str, int]:
             (rel_id,),
         )
         stats["part_of_retyped_to_located_in"] += 1
+
+    return stats
+
+
+def _retire_controlled_by_app(cur) -> Dict[str, int]:
+    """`controlled_by_app device -> app` becomes `manages app -> device` (ADR-013 §4).
+
+    The two were exact inverses. Both were unused in the live installs, so
+    ADR-013 kept `manages` -- the app is the actor, so it reads as the subject --
+    and deleted the other. The demo seed still creates the deleted one, which is
+    why a freshly seeded database failed to conform to its own vocabulary.
+
+    Idempotent: selects on the type being the retired one.
+    """
+    stats = {"controlled_by_app_retired": 0}
+
+    for rel_id in [r[0] for r in cur.execute(
+        "SELECT id FROM entity_relationships WHERE lower(relationship_type) = 'controlled_by_app'"
+    ).fetchall()]:
+        cur.execute(
+            """UPDATE entity_relationships
+                  SET relationship_type   = 'manages',
+                      from_entity_id      = to_entity_id,
+                      from_entity_version = to_entity_version,
+                      to_entity_id        = from_entity_id,
+                      to_entity_version   = from_entity_version
+                WHERE id = ?""",
+            (rel_id,),
+        )
+        stats["controlled_by_app_retired"] += 1
 
     return stats
 
@@ -826,7 +990,10 @@ def _converge_blob_linking(cur) -> Dict[str, int]:
     # Narrow on purpose: flips only when the source is an attachment and the
     # target is not, which is unambiguous. Two attachments pointing at each
     # other would have no correct answer and is left alone.
-    attachment = ("photo", "manual")
+    # `note` is here as well as the attachment types: a note documents a device,
+    # never the reverse. The seed data had `note -> device` and `note -> home`
+    # edges for exactly the same reason the Corfe install had `manual -> device`.
+    attachment = ("photo", "manual", "note")
     reversed_edges = cur.execute(
         f"""SELECT r.id FROM entity_relationships r
             JOIN entities fe ON fe.id = r.from_entity_id AND fe.is_latest = 1

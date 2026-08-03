@@ -25,6 +25,57 @@ identical code.
   graph looks empty while the rows sit there intact. Migrate before starting the
   new server.
 
+## This release also cleans up the vocabulary (ADR-013)
+
+On top of the migration above, this release changes what the vocabulary *says*
+and fixes two bugs that made writes unreliable.
+
+**Stop the clients before you migrate, and do not let an old one back in.**
+This is the one ordering rule that matters. The pre-0.4 TypeScript client
+upper-cases every type it sends (`DEVICE`, `LOCATED_IN`). That was harmless
+while the database also held uppercase. After the migration the database holds
+lowercase, so **one push from an old client writes `DEVICE` alongside `device`**
+and splits the graph into two types that nothing joins. The damage is silent and
+shows up later as queries that quietly return less than they should.
+
+Upgrade the clients to the matching release before restarting them:
+KittenKong (TypeScript) needs
+[PR #5](https://github.com/rolandcanyon-cmd/the-goodies-typescript/pull/5).
+
+What the migration does, beyond the earlier steps:
+
+| Step | Why |
+|---|---|
+| 48 `part_of room→home` → `located_in` | One word carried two meanings — spatial containment and composition. Now split. |
+| 27 blob-carrying notes → `photo` (or `manual` for a PDF) | A JPEG and a walk transcript were the same entity type. |
+| `has_blob` → `has_photo` / `documented_by` | The edge never pointed at a blob; it pointed at a note carrying one. |
+| Reversed documentation edges flipped | An attachment is not documented *by* the thing it documents. |
+| `controlled_by_app` → `manages` (reversed) | They were exact inverses; the app is the actor. |
+| Redundant content flags dropped | `is_blob` / `has_blob` restated what the entity type now says. |
+
+### Verify before letting clients back in
+
+```bash
+python -m funkygibbon.migrate --db ./funkygibbon.db --verify --domain domains.house.manifest:HOUSE
+```
+
+Read-only. It checks every current edge against the vocabulary, confirms no
+undeclared entity types, checks blob references for dangling or orphaned rows,
+and confirms none of the retired conventions remain. Expect `PASS`.
+
+Run it again after the clients have been reconnected for a while: it is also the
+check that catches an old client writing the pre-ADR-013 vocabulary.
+
+### Two write-path bugs fixed at the same time
+
+- **MCP writes were never committed.** Every write through
+  `/api/v1/mcp/tools/{name}` was rolled back when the request ended —
+  `create_entity` and `create_relationship` reported success and persisted
+  nothing. If anything of yours used that endpoint, it has never worked, and
+  will start working now.
+- **Attachments wrote a null author**, which broke *reads* for any client that
+  later pulled the entity.
+
 ## Prerequisites
 
 - A clean git working tree in the repo (`git status` shows nothing to commit).

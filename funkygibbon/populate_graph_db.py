@@ -26,6 +26,20 @@ from sqlalchemy import text
 
 from inbetweenies.models import Base, Entity, EntityType, SourceType, EntityRelationship, RelationshipType, Blob, BlobType, BlobStatus
 
+
+def _demo_bytes(tag: str) -> str:
+    """A few deterministic bytes, base64-encoded, standing in for a real file.
+
+    The seed used to write a made-up ``blob_id`` pointing at no row at all, so a
+    freshly seeded database had dangling blob references before anyone touched
+    it. Real bytes mean the migration's extractor creates a real blob and the
+    integrity check passes.
+    """
+    import base64
+    return base64.b64encode(f"demo-blob:{tag}".encode()).decode()
+
+
+
 # Default database URL - can be overridden by environment variable
 # Use 'or' to handle empty string case
 DATABASE_URL = os.environ.get("DATABASE_URL") or "sqlite+aiosqlite:///./funkygibbon.db"
@@ -343,7 +357,9 @@ class GraphPopulator:
                                          {"position": "east_wall"})
             await self.create_relationship(session, living_room_lights, living_room, RelationshipType.LOCATED_IN,
                                          {"positions": ["ceiling_center", "corners"]})
-            await self.create_relationship(session, doorbell, home, RelationshipType.MONITORS,
+            # device -> room, not device -> home: `monitors` is declared for
+            # device->device, device->room and automation->device.
+            await self.create_relationship(session, doorbell, living_room, RelationshipType.MONITORS,
                                          {"location": "front_entrance"})
             await self.create_relationship(session, mitsubishi_thermostat, kitchen, RelationshipType.LOCATED_IN,
                                          {"position": "wall", "height": "5ft"})
@@ -478,9 +494,10 @@ class GraphPopulator:
                 key="vacation_mode"
             )
 
-            # Schedule relationships
-            await self.create_relationship(session, vacation_mode, thermostat, RelationshipType.MANAGES)
-            await self.create_relationship(session, vacation_mode, doorbell, RelationshipType.MANAGES)
+            # Schedule relationships. `manages` starts at an `app` (ADR-013 §4);
+            # a schedule acting on a device is `controls`.
+            await self.create_relationship(session, vacation_mode, thermostat, RelationshipType.CONTROLS)
+            await self.create_relationship(session, vacation_mode, doorbell, RelationshipType.CONTROLS)
 
             # Create notes
             print("\n📝 Creating notes...")
@@ -542,12 +559,14 @@ class GraphPopulator:
                 key="comfort_app"
             )
 
-            # Link devices to apps
-            await self.create_relationship(session, thermostat, homekit_app, RelationshipType.CONTROLLED_BY_APP,
+            # Link apps to what they run. `controlled_by_app` was the exact
+            # inverse of `manages` and is deleted (ADR-013 §4); the app is the
+            # actor, so it is the subject.
+            await self.create_relationship(session, homekit_app, thermostat, RelationshipType.MANAGES,
                                          {"integration": "native"})
-            await self.create_relationship(session, living_room_lights, homekit_app, RelationshipType.CONTROLLED_BY_APP,
+            await self.create_relationship(session, homekit_app, living_room_lights, RelationshipType.MANAGES,
                                          {"integration": "hue_bridge"})
-            await self.create_relationship(session, mitsubishi_thermostat, comfort_app, RelationshipType.CONTROLLED_BY_APP,
+            await self.create_relationship(session, comfort_app, mitsubishi_thermostat, RelationshipType.MANAGES,
                                          {"integration": "wifi_adapter", "features": ["remote_control", "scheduling", "energy_monitoring"]})
 
             # Create user-generated content notes
@@ -579,7 +598,7 @@ class GraphPopulator:
                     # "has_blob" flag: the entity type already says it. One
                     # link only -- blob_id -- and it attaches via DOCUMENTED_BY.
                     "mime_type": "application/pdf",
-                    "blob_id": "pdf_manual_par42"
+                    "data_b64": _demo_bytes("pdf_manual_par42")
                 },
                 key="mitsubishi_manual"
             )
@@ -605,7 +624,7 @@ class GraphPopulator:
                     "description": "Photo of Mitsubishi PAR-42MAA thermostat installed in kitchen",
                     "filename": "PAR-42.jpeg",
                     "mime_type": "image/jpeg",
-                    "blob_id": "photo_par42"
+                    "data_b64": _demo_bytes("photo_par42")
                 },
                 key="thermostat_photo"
             )
@@ -617,7 +636,7 @@ class GraphPopulator:
                     "description": "Photo of PVFY air handler blower unit",
                     "filename": "PVFY-Blower.jpeg",
                     "mime_type": "image/jpeg",
-                    "blob_id": "photo_pvfy_blower"
+                    "data_b64": _demo_bytes("photo_pvfy_blower")
                 },
                 key="blower_photo"
             )
@@ -629,7 +648,7 @@ class GraphPopulator:
                     "description": "Photo of PVFY air handler serial number plate",
                     "filename": "PVFY-Serial_Number.jpeg",
                     "mime_type": "image/jpeg",
-                    "blob_id": "photo_pvfy_serial"
+                    "data_b64": _demo_bytes("photo_pvfy_serial")
                 },
                 key="blower_serial_photo"
             )
