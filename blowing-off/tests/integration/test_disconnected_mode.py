@@ -17,6 +17,24 @@ from inbetweenies.models import Entity, EntityType, SourceType
 
 
 @pytest.mark.integration
+
+async def _wait_for(condition, description, *, timeout=20.0, poll=0.05):
+    """Wait until `condition()` holds, or fail with what was being waited for.
+
+    Timing-based assertions in this file were `asyncio.sleep(n)` followed by an
+    assert, which fails on a slow runner for reasons that have nothing to do
+    with the behaviour under test. The timeout is deliberately generous: it is
+    a failure bound, not an expected wait, and the poll returns as soon as the
+    condition is true.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if condition():
+            return
+        await asyncio.sleep(poll)
+    raise AssertionError(f"timed out after {timeout:.0f}s waiting for {description}")
+
+
 class TestDisconnectedMode:
     """Test disconnected mode operations."""
 
@@ -145,21 +163,25 @@ class TestDisconnectedMode:
         # Start background sync with short interval
         await client.start_background_sync(interval=1)
 
-        # Wait for initial sync (background sync sleeps first, then syncs)
-        await asyncio.sleep(2)
-
-        # Should have successful sync
-        assert len(sync_events) > 0
-        assert any(event == "sync_complete" and success for event, success in sync_events)
+        # Poll rather than sleep(2). The background task sleeps `interval`
+        # BEFORE its first sync, so a fixed 2s wait leaves barely one interval
+        # of slack -- and a loaded CI runner spends it. This failed on exactly
+        # one of eight matrix legs, which is the signature of a wall-clock race
+        # rather than a defect. Waiting on the CONDITION is both faster in the
+        # normal case and immune to how busy the machine is.
+        await _wait_for(
+            lambda: any(event == "sync_complete" and success
+                        for event, success in sync_events),
+            "a successful background sync",
+        )
 
         # Simulate offline by changing URL
         client.sync_engine.base_url = "http://localhost:9999"
         sync_events.clear()
 
-        # Wait for offline sync attempt
-        await asyncio.sleep(2)
-
-        # Should have disconnected event
-        assert any(event == "sync_disconnected" for event, _ in sync_events)
+        await _wait_for(
+            lambda: any(event == "sync_disconnected" for event, _ in sync_events),
+            "a sync_disconnected event after going offline",
+        )
 
         await client.disconnect()

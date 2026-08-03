@@ -11,7 +11,6 @@ import asyncio
 import sys
 import os
 import pytest
-import tempfile
 
 # Add paths for imports (not needed with PYTHONPATH set correctly)
 
@@ -19,14 +18,15 @@ from blowingoff.client import BlowingOffClient
 
 
 @pytest.mark.asyncio
-async def test_local_mcp():
+async def test_local_mcp(tmp_path):
     """Test MCP functionality locally without server"""
     print("\n🔧 Testing Local MCP Functionality (Offline)")
     print("=" * 60)
 
-    # Create client with local storage in temp directory
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = f.name
+    # pytest's tmp_path, not NamedTemporaryFile(delete=False): the client derives
+    # its graph store from the database filename (`<db_path>.graph/`), so a
+    # never-deleted temp db left a whole directory tree behind on every run.
+    db_path = str(tmp_path / "client.db")
 
     client = BlowingOffClient(db_path)
 
@@ -184,14 +184,14 @@ async def test_local_mcp():
 
 
 @pytest.mark.asyncio
-async def test_graph_operations():
+async def test_graph_operations(tmp_path):
     """Test advanced graph operations"""
     print("\n🎯 Testing Advanced Graph Operations")
     print("=" * 60)
 
-    # Create client with temp database
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = f.name
+    # See test_local_mcp: tmp_path so the derived `<db_path>.graph/` store is
+    # cleaned up with it.
+    db_path = str(tmp_path / "client.db")
 
     client = BlowingOffClient(db_path)
 
