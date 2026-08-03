@@ -42,13 +42,12 @@ curl -sX POST localhost:8000/api/v1/auth/admin/login \
   -H 'Content-Type: application/json' -d '{"password":"..."}'
 ```
 
-Then send `Authorization: Bearer <token>` on every request. `kittenkong_helper.py`
-caches the token and refreshes it; prefer it over hand-rolling.
+Then send `Authorization: Bearer <token>` on every request.
 
 > The production server on port 8000 belongs to another account. Test against
 > your own instance on a different port.
 
-## MCP: the 12 tools
+## The tools
 
 ```bash
 # list them, with schemas
@@ -77,22 +76,33 @@ not the body.
 | `create_entity` | `entity_type`, `name`, `content?` |
 | `create_relationship` | `from_entity_id`, `to_entity_id`, `relationship_type`, `properties?` |
 | `update_entity` | `entity_id`, `changes`, `user_id` |
+| `attach_photo` | `parent_entity_id`, `filename`, `data_b64`, `mime_type?`, `description?`, `user_id?` |
+| `attach_document` | `parent_entity_id`, `filename`, `data_b64`, `mime_type?`, `description?`, `user_id?` |
+| `get_blob` | `blob_id`, `include_data?` |
+| `get_entity_versions` | `entity_id` |
+| `tombstone_entity` | `entity_id`, `reason`, `is_error?`, `user_id?` |
+| `get_statistics` | — |
 
 `update_entity` creates a **new version** — entities are immutable (ADR-002).
 Nothing is edited in place and nothing is destroyed.
 
-### Two gotchas
+**There is no delete tool, and that is the design.** The store is append-only.
+To remove something, `tombstone_entity` appends a tombstone version; to mark a
+record that was simply wrong, pass `is_error: true`. Earlier versions stay
+readable, and the reason is recorded. "This was removed" and "this was never
+here" are different facts and history keeps both.
 
-1. **The REST wrapper uses `parameters`, the MCP protocol uses `inputSchema`.**
-   `GET /api/v1/mcp/tools` returns each tool with a `parameters` key. A strict
-   MCP client expects `inputSchema`. The stdio MCP server in
-   `blowing-off/blowingoff/mcp/server.py` emits the correct `input_schema`; the
-   REST wrapper is a convenience surface, not a spec-conformant MCP transport.
+### One gotcha
 
-2. **The tool list exists twice.** `funkygibbon/mcp/tools.py` (REST) and
-   `blowing-off/blowingoff/mcp/server.py` (stdio) each hand-maintain all 12
-   schemas. They agree today — verified — but nothing enforces it. Change one,
-   change the other.
+**The REST wrapper says `parameters`; the MCP specification says `inputSchema`.**
+`GET /api/v1/mcp/tools` returns the former, for backward compatibility with
+callers that have always read it. The stdio MCP server emits the latter, which
+is what a spec-conformant client expects.
+
+Both are rendered from the same `ToolSpec` in `inbetweenies/mcp/catalog.py`, so
+a new tool lands in one place and appears on both transports. (They used to be
+two hand-maintained lists, which is how the surface came to lack any photo tool
+while the implementation had one.)
 
 ## The REST graph API
 
@@ -142,32 +152,31 @@ device --has_photo--> photo  --content.blob_id--> blobs     (images)
 device --documented_by--> manual --content.blob_id--> blobs (PDFs)
 ```
 
-Create the attachment entity with the image inline, and the server extracts it:
+One call does all of it — the entity, the blob row and the edge:
 
-```json
-POST /api/v1/graph/entities
-{
-  "entity_type": "photo",
-  "name": "keypad-workshop-door.jpg",
-  "content": {
-    "filename": "keypad-workshop-door.jpg",
-    "mime_type": "image/jpeg",
-    "data_b64": "...",
-    "description": "8-button Vantage keypad by the Workshop door"
-  }
-}
+```bash
+curl -sX POST localhost:8000/api/v1/mcp/tools/attach_photo \
+  -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+  -d '{"arguments": {
+        "parent_entity_id": "<device-id>",
+        "filename": "keypad-workshop-door.jpg",
+        "data_b64": "...",
+        "mime_type": "image/jpeg",
+        "description": "8-button Vantage keypad by the Workshop door"
+      }}'
 ```
 
-Then link it **from the thing, to the photo**:
+Use `attach_document` for a PDF: it creates a `manual` and links it with
+`documented_by`, because a PDF is not a photo. Routing one to `has_photo`
+produced `room --has_photo--> manual` in the Corfe install, which the
+vocabulary rejects.
 
-```json
-POST /api/v1/graph/relationships
-{ "from_entity_id": "<device-id>", "to_entity_id": "<photo-id>",
-  "relationship_type": "has_photo" }
-```
+Blob ids are the SHA-256 of the bytes, so a retried upload resolves to the same
+blob instead of doubling the store. Read bytes back with `get_blob`, which
+returns metadata only unless you pass `include_data`.
 
-A PDF is a `manual`, not a `photo`, and attaches with `documented_by` instead.
-Route on mime type.
+You do not construct the entity or the edge yourself. That is the point: every
+time a caller assembled these by hand, the assembly drifted.
 
 ### What not to write
 
