@@ -391,21 +391,27 @@ def test_attachment_notes_become_typed_attachment_entities(conn):
     assert all("blob_id" in img for img in _content(conn, "proc1")["images"])
 
 
-def test_has_blob_edges_become_has_photo_including_un_normalised_names(conn):
-    """Both spellings must be caught.
+def test_has_blob_edges_are_routed_by_what_the_target_turned_out_to_be(conn):
+    """A PDF is not a photo, so it must not become a has_photo edge.
 
-    Retiring HAS_BLOB from RelationshipType also removed the only thing that
-    knew how to rewrite rows still storing the enum *name*, so 'HAS_BLOB'
-    arrives at this step untranslated. Matching only 'has_blob' silently
-    reported 0 re-typed while leaving the edges behind.
+    Rewriting every has_blob edge to has_photo produced `room -> manual` in the
+    Corfe install, which violates the base rule that has_photo only ever points
+    at a photo. A PDF attaches by documented_by -- the relationship that already
+    meant this.
+
+    Also pins both spellings: retiring HAS_BLOB from RelationshipType removed the
+    only thing that knew how to rewrite rows still storing the enum *name*, so
+    'HAS_BLOB' arrives at this step untranslated, and matching only 'has_blob'
+    silently reported 0 re-typed while leaving the edges behind.
     """
     _seed_blob_shapes(conn)
     stats = run_migration(conn, apply=True)
 
     types = dict(conn.execute("SELECT id, relationship_type FROM entity_relationships").fetchall())
-    assert types["hb1"] == "has_photo"
-    assert types["hb2"] == "has_photo"
-    assert stats["has_blob_retyped_to_has_photo"] == 2
+    assert types["hb1"] == "has_photo"        # jpeg target
+    assert types["hb2"] == "documented_by"    # pdf target, and spelled 'HAS_BLOB'
+    assert stats["has_blob_retyped_to_has_photo"] == 1
+    assert stats["has_blob_retyped_to_documented_by"] == 1
 
 
 def test_redundant_blob_flags_are_dropped_but_real_data_is_kept(conn):
@@ -429,6 +435,8 @@ def test_blob_convergence_is_idempotent(conn):
 
     assert again["notes_retyped_to_photo"] == 0
     assert again["has_blob_retyped_to_has_photo"] == 0
+    assert again["has_blob_retyped_to_documented_by"] == 0
+    assert again["documentation_edges_flipped"] == 0
     assert again["blob_flags_dropped"] == 0
     assert _etype(conn, "photo1") == "photo"
 
@@ -460,3 +468,46 @@ def test_the_guard_tolerates_sync_status(conn):
     _seed_legacy_vocabulary(conn)
     run_migration(conn, apply=True)   # must not raise
     assert conn.execute("SELECT sync_status FROM blobs WHERE id='b1'").fetchone()[0] == "UPLOADED"
+
+
+def test_reversed_documentation_edges_are_flipped(conn):
+    """An attachment is never documented *by* the thing it documents.
+
+    Corfe has `manual -> device` and `manual -> procedure` alongside correct
+    `room -> note` edges in the same database. Nothing rejected either
+    direction, so both got written -- ADR-013 §5.
+    """
+    _seed_blob_shapes(conn)
+    conn.execute(
+        "INSERT INTO entities (id, version, entity_type, name, content, source_type, user_id) "
+        "VALUES (?,?,?,?,?,?,?)", ("dev2", CANON, "device", "Amp", "{}", "manual", "agent"))
+    conn.execute(
+        "INSERT INTO entity_relationships (id, from_entity_id, from_entity_version, "
+        "to_entity_id, to_entity_version, relationship_type) VALUES (?,?,?,?,?,?)",
+        ("rev1", "pdf1", CANON, "dev2", CANON, "documented_by"))
+    conn.commit()
+
+    stats = run_migration(conn, apply=True)
+
+    row = conn.execute(
+        "SELECT from_entity_id, to_entity_id FROM entity_relationships WHERE id='rev1'"
+    ).fetchone()
+    assert row == ("dev2", "pdf1")          # device -> manual, the readable direction
+    assert stats["documentation_edges_flipped"] == 1
+
+
+def test_correctly_directed_documentation_is_left_alone(conn):
+    """The flip must be narrow: it only fires when the *source* is an attachment."""
+    _seed_blob_shapes(conn)
+    conn.execute(
+        "INSERT INTO entity_relationships (id, from_entity_id, from_entity_version, "
+        "to_entity_id, to_entity_version, relationship_type) VALUES (?,?,?,?,?,?)",
+        ("ok1", "dev1", CANON, "textnote", CANON, "documented_by"))
+    conn.commit()
+
+    stats = run_migration(conn, apply=True)
+
+    assert conn.execute(
+        "SELECT from_entity_id, to_entity_id FROM entity_relationships WHERE id='ok1'"
+    ).fetchone() == ("dev1", "textnote")
+    assert stats["documentation_edges_flipped"] == 0

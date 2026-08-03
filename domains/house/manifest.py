@@ -97,8 +97,16 @@ RELATIONSHIP_RULES = [
     # -- Documentation and attachments ------------------------------------
     RelationshipRule(
         name="documented_by",
+        # How a `manual` (a PDF) attaches -- the counterpart to the base
+        # `has_photo`. The room-> and procedure->manual pairs come from the
+        # Corfe install, which unlike Roland actually has PDFs: a pool guide
+        # attached to the Swimming Pool room, and an instruction sheet for a
+        # procedure. Both read correctly in this direction and only in this
+        # direction; the reverse is what the migration flips.
         allowed_endpoints=(
             ("device", "manual"),
+            ("room", "manual"),
+            ("procedure", "manual"),
             ("device", "procedure"),
             ("device", "note"),
             ("room", "note"),

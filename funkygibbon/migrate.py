@@ -757,6 +757,8 @@ def _converge_blob_linking(cur) -> Dict[str, int]:
     stats = {
         "notes_retyped_to_photo": 0,
         "has_blob_retyped_to_has_photo": 0,
+        "has_blob_retyped_to_documented_by": 0,
+        "documentation_edges_flipped": 0,
         "blob_flags_dropped": 0,
     }
 
@@ -777,7 +779,14 @@ def _converge_blob_linking(cur) -> Dict[str, int]:
         cur.execute("UPDATE entities SET entity_type = ? WHERE id = ?", (new_type, eid))
         stats["notes_retyped_to_photo"] += 1
 
-    # -- 2. has_blob -> has_photo ------------------------------------------- #
+    # -- 2. has_blob -> the relationship that names the attachment's role ---- #
+    #
+    # Routed by what the target actually turned out to be. Rewriting every
+    # has_blob edge to has_photo regardless of target is wrong and was caught by
+    # the Corfe install, where two `pool-guide.pdf` notes become `manual`: a PDF
+    # is not a photo, and `room --has_photo--> manual` violates the base rule
+    # that has_photo only ever points at a photo. A PDF attaches by
+    # documented_by, which is the relationship that already meant this.
     # Runs after step 1 so the endpoint types already say `photo`, which is what
     # the manifest now constrains has_photo to. An edge whose target did not
     # carry a blob is left alone rather than silently pointed at a photo rule it
@@ -790,19 +799,57 @@ def _converge_blob_linking(cur) -> Dict[str, int]:
     # stored 'HAS_BLOB' -- rows arrive here still holding the enum NAME, and a
     # match on 'has_blob' silently finds nothing. Every future retirement has
     # this hazard; _assert_types_normalised below now makes it fail loudly.
-    for (rel_id,) in cur.execute(
-        """SELECT r.id FROM entity_relationships r
+    for rel_id, target_type in cur.execute(
+        """SELECT r.id, te.entity_type FROM entity_relationships r
            JOIN entities te ON te.id = r.to_entity_id AND te.is_latest = 1
            WHERE lower(r.relationship_type) = 'has_blob'
              AND te.entity_type IN ('photo', 'manual')"""
     ).fetchall():
+        new_type = "has_photo" if target_type == "photo" else "documented_by"
         cur.execute(
-            "UPDATE entity_relationships SET relationship_type = 'has_photo' WHERE id = ?",
+            "UPDATE entity_relationships SET relationship_type = ? WHERE id = ?",
+            (new_type, rel_id),
+        )
+        stats["has_blob_retyped_to_has_photo" if new_type == "has_photo"
+              else "has_blob_retyped_to_documented_by"] += 1
+
+    # -- 3. Flip reversed documentation edges -------------------------------- #
+    #
+    # `documented_by` means "X is documented by Y", so an attachment must never
+    # be the *source*: a manual is not documented by the device it documents.
+    # Corfe has four such edges (`manual -> device`, `manual -> procedure`)
+    # alongside three correct ones (`room -> note`) in the same database, and
+    # the seed data had the same defect in the opposite relationship. That is
+    # what an unenforced rule looks like -- nothing rejected either direction,
+    # so both were written (ADR-013 §5).
+    #
+    # Narrow on purpose: flips only when the source is an attachment and the
+    # target is not, which is unambiguous. Two attachments pointing at each
+    # other would have no correct answer and is left alone.
+    attachment = ("photo", "manual")
+    reversed_edges = cur.execute(
+        f"""SELECT r.id FROM entity_relationships r
+            JOIN entities fe ON fe.id = r.from_entity_id AND fe.is_latest = 1
+            JOIN entities te ON te.id = r.to_entity_id   AND te.is_latest = 1
+            WHERE r.relationship_type = 'documented_by'
+              AND fe.entity_type IN ({','.join('?' * len(attachment))})
+              AND te.entity_type NOT IN ({','.join('?' * len(attachment))})""",
+        attachment + attachment,
+    ).fetchall()
+
+    for (rel_id,) in reversed_edges:
+        cur.execute(
+            """UPDATE entity_relationships
+                  SET from_entity_id      = to_entity_id,
+                      from_entity_version = to_entity_version,
+                      to_entity_id        = from_entity_id,
+                      to_entity_version   = from_entity_version
+                WHERE id = ?""",
             (rel_id,),
         )
-        stats["has_blob_retyped_to_has_photo"] += 1
+        stats["documentation_edges_flipped"] += 1
 
-    # -- 3. Drop the redundant content flags -------------------------------- #
+    # -- 4. Drop the redundant content flags -------------------------------- #
     # `is_blob` / `has_blob` / an empty `screenshot_blob_ids` all restate what
     # the entity type and blob_id now say. Note this also clears the flag from
     # rows that claim `is_blob` while carrying no blob_id at all (there is one

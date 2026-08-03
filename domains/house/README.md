@@ -111,8 +111,40 @@ never been attached to anything.
 
 **One documented exception:** photos nested under `content.images[]` on the
 owning entity are normalised to blob references by `migrate.py::_extract_photos`
-rather than split into `photo` entities. Zero rows in either live install use
-this shape; it survives as an import-time form.
+rather than split into `photo` entities. Roland has none, but **Corfe has four**
+— step photos on a `procedure` — so this is a live inconsistency, not a dormant
+one. See ADR-013 §3.
+
+## Two installs, different halves of the vocabulary
+
+Counts above are Roland. Corfe is the second install — Home Assistant plus
+HomeKit, no Vantage — and it is not a smaller Roland. Each exercises parts the
+other does not, which is the strongest evidence available that the vocabulary is
+describing something real rather than one house's habits.
+
+| | Roland | Corfe |
+|---|---:|---:|
+| entities / relationships / blobs | 423 / 461 / 27 | 94 / 108 / 18 |
+| `home` | 1 | **0** — Corfe's top level is `zone` |
+| `zone` | **0** | 6 |
+| `device` | 289 | 25 |
+| `procedure` | **0** | 1 |
+| `manual` | **0** | 3 |
+| `app` | 1 | **0** |
+| `part_of` (composition) | 104 | **0** |
+| `procedure_for` | **0** | 1 |
+| blob types | jpeg only | jpeg **and pdf** |
+
+Three things only Corfe proves:
+
+- **`manual` is real.** Corfe has 3 PDFs — two `pool-guide.pdf` notes that the
+  migration re-types to `manual` by mime, and one instruction sheet. Roland has
+  no PDF at all, so the entire PDF branch of the attachment design is exercised
+  only here.
+- **A house need not have a `home`.** Corfe's containment tops out at `zone`.
+  Nothing in the vocabulary required a root, and nothing broke.
+- **Nested `images[]` is live.** A Corfe `procedure` carries 4 step photos that
+  way — see [How blobs are linked](#how-blobs-are-linked).
 
 ## Source types — 5 declared, 4 in use
 

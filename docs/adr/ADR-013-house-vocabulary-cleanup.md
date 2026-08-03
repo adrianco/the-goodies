@@ -82,11 +82,14 @@ were not competing — they were two halves of one chain:
 device --has_blob--> note --content.blob_id--> blobs
 ```
 
-| | Convention | Live |
+Counts are from the Roland install (the Corfe column differs and is noted
+below):
+
+| | Convention | Live (Roland) |
 |---|---|---:|
 | 1 | `has_blob` edge — pointing at a *note*, never at a blob | 26 |
 | 2 | top-level `content.blob_id` — the actual link | 27 |
-| 3 | nested `content.images[].blob_id` (`migrate.py::_extract_photos`) | 0 |
+| 3 | nested `content.images[].blob_id` (`migrate.py::_extract_photos`) | 0 — but **4 in Corfe** |
 | 4 | `content.screenshot_blob_ids` array | 0 (empty) |
 | 5 | `content.is_blob` boolean flag | 28 |
 | 6 | `content.has_blob` boolean flag — *the same flag under another name* | 0 (seed only) |
@@ -132,11 +135,20 @@ types, so `RelationshipRule` gained a wildcard: `("*", "photo")` says anything
 may have a photo without the engine knowing what "anything" is. That is a pair
 like any other — the three states of `allowed_endpoints` are unaffected.
 
-**One shape deliberately survives:** nested `content.images[]` on the owning
-entity. Converging it means splitting one entity into N, synthesising ids,
-versions and edges inside a migration, and there are zero such rows in either
-live install. It stays an import-time shape that `_extract_photos` normalises to
-blob references, and is the one documented exception to "one link".
+**One shape survives, and it is not unused.** An earlier version of this section
+said nested `content.images[]` had "zero rows in either live install". That was
+measured on Roland only and is **wrong**: the Corfe install has a `procedure`
+entity carrying four step photos as `images[]`, each already normalised to a
+`blob_id` by `_extract_photos`. So 4 of Corfe's 18 blobs are reachable only by
+the nested path, and `carries_blob()` plus any future integrity sweep has to
+know two shapes rather than one.
+
+Converging it means splitting one entity into N inside a migration —
+synthesising ids, versions and edges — and raises a real modelling question the
+top-level form does not: the images are *ordered steps*, so `step` would have to
+move onto the `has_photo` edge's properties. Left as the one documented
+exception to "one link", and recorded here as a known inconsistency rather than
+an absent one.
 
 ### 4. Automation provenance is an `app` entity, not a source type
 
