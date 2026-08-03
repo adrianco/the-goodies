@@ -234,3 +234,171 @@ class TestAtomicPushBatch:
 
         assert set(body["applied"]) == {"A", "B"}
         assert len(_rows()) == 2
+
+
+class TestPaginationAndDigest:
+    """ADR-002 §4 cursor pagination and ADR-011 §4 convergence digest."""
+
+    def _make(self, client, headers, count, prefix="P"):
+        _sync(client, headers, [
+            _change("create", id=f"{prefix}{i}", version=Entity.create_version("a"))
+            for i in range(count)
+        ])
+
+    def test_a_small_graph_fits_one_page_with_no_cursor(self, client, headers):
+        self._make(client, headers, 3)
+
+        body = _sync(client, headers).json()
+        assert len(body["changes"]) == 3
+        assert body["cursor"] is None, "nothing left to resume from"
+
+    def test_an_oversized_graph_is_capped_and_returns_a_cursor(self, client, headers, monkeypatch):
+        import funkygibbon.api.sync as syncmod
+        monkeypatch.setattr(syncmod, "PAGE_SIZE", 2)
+        self._make(client, headers, 5)
+
+        body = _sync(client, headers).json()
+        assert len(body["changes"]) == 2, "the page is capped"
+        assert body["cursor"] is not None, "and says where to resume"
+
+    def test_looping_on_the_cursor_drains_every_row_exactly_once(self, client, headers, monkeypatch):
+        """The property that matters: no row skipped, none delivered twice.
+
+        Ordering by server_seq is what makes this hold. Without a total order
+        the page boundary is whatever the database happened to return, and rows
+        fall through the gap between pages.
+        """
+        import funkygibbon.api.sync as syncmod
+        monkeypatch.setattr(syncmod, "PAGE_SIZE", 2)
+
+        # Ids deliberately sort AGAINST creation order (P6 created first, P0
+        # last). If the server paged by anything other than the replication
+        # axis, the first page would hold the highest server_seq values and the
+        # cursor would jump straight past the rest — so this fixture is what
+        # makes the test able to fail.
+        for i in reversed(range(7)):
+            _sync(client, headers,
+                  [_change("create", id=f"P{i}", version=Entity.create_version("a"))])
+
+        seen, cursor, pages = [], None, 0
+        while True:
+            body = client.post("/api/v1/sync/", headers=headers, json={
+                "protocol_version": "inbetweenies-v2", "device_id": "d",
+                "user_id": USER, "sync_type": "delta", "changes": [],
+                "cursor": cursor,
+            }).json()
+            seen += [c["entity"]["id"] for c in body["changes"] if c.get("entity")]
+            cursor = body["cursor"]
+            pages += 1
+            if cursor is None or pages > 20:
+                break
+
+        assert pages > 1, "the fixture must actually span multiple pages"
+        assert len(seen) == len(set(seen)), "no row delivered twice"
+        assert set(seen) == {f"P{i}" for i in range(7)}, "no row skipped"
+
+    def test_a_non_numeric_cursor_is_rejected(self, client, headers):
+        """Better a 400 than silently returning the whole graph."""
+        response = client.post("/api/v1/sync/", headers=headers, json={
+            "protocol_version": "inbetweenies-v2", "device_id": "d", "user_id": USER,
+            "sync_type": "delta", "changes": [], "cursor": "not-a-number",
+        })
+
+        assert response.status_code == 400
+
+    def test_the_legacy_timestamp_delta_still_works(self, client, headers):
+        """KittenKong and blowing-off both persist server_time today. Breaking
+        `filters.since` would strand a live client mid-upgrade."""
+        watermark = _sync(client, headers).json()["server_time"]
+        self._make(client, headers, 1, prefix="AFTER")
+
+        body = client.post("/api/v1/sync/", headers=headers, json={
+            "protocol_version": "inbetweenies-v2", "device_id": "d", "user_id": USER,
+            "sync_type": "delta", "changes": [], "filters": {"since": watermark},
+        }).json()
+
+        ids = {c["entity"]["id"] for c in body["changes"] if c.get("entity")}
+        assert "AFTER0" in ids
+
+    def test_the_digest_ignores_superseded_versions(self, client, headers):
+        """It covers current state, so history must not move it — otherwise two
+        replicas that agree on the present would report divergence."""
+        v1 = Entity.create_version("a")
+        _sync(client, headers, [_change("create", id="E", version=v1)])
+        with_one_version = _sync(client, headers).json()["state_digest"]
+
+        _sync(client, headers,
+              [_change("update", id="E", version=_ANCIENT, parents=[])])
+        after_a_loser = _sync(client, headers).json()["state_digest"]
+
+        assert after_a_loser == with_one_version, (
+            "storing a losing version changes history, not current state"
+        )
+
+
+class TestEveryWritePathMaintainsIsLatest:
+    """A column only one writer maintains is worse than no column.
+
+    Readers trust it, and the paths that skip it leave two rows both claiming
+    to be current with nothing to say which is right. That is not theoretical:
+    routing the graph index at is_latest immediately exposed the repository
+    write path as not maintaining it.
+    """
+
+    def test_the_repository_demotes_the_previous_version(self, client, headers):
+        """A freshly built Entity has is_latest=None until flush — the column
+        default is applied by the INSERT, not by __init__. A truth test on it
+        silently skips the demotion for the commonest case."""
+        import asyncio as _asyncio
+        from funkygibbon.repositories.graph import GraphRepository
+        from inbetweenies.models import EntityType, SourceType
+
+        def _store(name, version, entity_id):
+            async def _run():
+                async with dbmod.async_session() as session:
+                    stored = await GraphRepository(session).store_entity(Entity(
+                        id=entity_id, version=version, entity_type=EntityType.DEVICE,
+                        name=name, content={}, source_type=SourceType.MANUAL,
+                        user_id=USER, parent_versions=[],
+                    ))
+                    await session.commit()
+                    return stored
+            return _asyncio.run(_run())
+
+        v1 = Entity.create_version("a")
+        _store("first", v1, "R1")
+        v2 = Entity.create_version("b")
+        _store("second", v2, "R1")
+
+        rows = {r.version: r.is_latest for r in _rows("R1")}
+        assert rows == {v1: False, v2: True}
+
+    def test_the_repository_assigns_a_server_seq(self, client, headers):
+        import asyncio as _asyncio
+        from funkygibbon.repositories.graph import GraphRepository
+        from inbetweenies.models import EntityType, SourceType
+
+        async def _run():
+            async with dbmod.async_session() as session:
+                await GraphRepository(session).store_entity(Entity(
+                    id="R2", version=Entity.create_version("a"),
+                    entity_type=EntityType.DEVICE, name="n", content={},
+                    source_type=SourceType.MANUAL, user_id=USER, parent_versions=[],
+                ))
+                await session.commit()
+        _asyncio.run(_run())
+
+        assert _rows("R2")[0].server_seq is not None
+
+    def test_rest_and_sync_writes_share_one_sequence(self, client, headers):
+        """Two writers allocating stamps independently would collide, and a
+        client cursor would then skip whichever lost."""
+        client.post("/api/v1/graph/entities", headers=headers, json={
+            "entity_type": "device", "name": "via-rest", "content": {},
+            "source_type": "manual", "user_id": USER,
+        })
+        _sync(client, headers, [_change("create", id="VIA-SYNC",
+                                        version=Entity.create_version("a"))])
+
+        seqs = [r.server_seq for r in _rows()]
+        assert len(seqs) == len(set(seqs)), "stamps must be unique across writers"

@@ -5,6 +5,7 @@ Handles sync requests, conflict resolution, and delta synchronization
 between FunkyGibbon server and clients.
 """
 
+import hashlib
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
@@ -26,6 +27,10 @@ from inbetweenies.sync import (
 
 # Router
 logger = logging.getLogger(__name__)
+
+# ADR-002 §4. Sized so a first full sync of a house-scale graph is one or two
+# pages rather than one unbounded body; the loop is what matters, not the number.
+PAGE_SIZE = 500
 
 router = APIRouter(prefix="/api/v1/sync", tags=["sync"])
 
@@ -120,15 +125,7 @@ class SyncHandler:
         server_time = datetime.now(timezone.utc)
 
         # --- Compute outgoing (server -> client) changes ---
-        latest = await self._latest_entities()
-        entities = list(latest.values())
-
-        if request.sync_type == "delta":
-            since = _to_utc(request.filters.since) if (request.filters and request.filters.since) else None
-            if since is not None:
-                # Strictly greater than `since` (exclusive lower bound, §4).
-                entities = [e for e in entities
-                            if (_to_utc(e.updated_at) or datetime.min.replace(tzinfo=timezone.utc)) > since]
+        entities = await self._outgoing_entities(request)
 
         # Filters (apply to both full and delta).
         if request.filters:
@@ -138,6 +135,16 @@ class SyncHandler:
             if request.filters.modified_by:
                 wanted_users = set(request.filters.modified_by)
                 entities = [e for e in entities if e.user_id in wanted_users]
+
+        # ADR-002 §4: cap the page and hand back a resume point. Responses were
+        # unbounded — a first full sync returned the entire graph in one body.
+        # `cursor` is the highest server_seq in this page; the client loops
+        # until it comes back null.
+        more_remain = len(entities) > PAGE_SIZE
+        entities = entities[:PAGE_SIZE]
+        cursor = None
+        if more_remain and entities:
+            cursor = str(max(e.server_seq or 0 for e in entities))
 
         response_changes = []
         for entity in entities:
@@ -157,6 +164,8 @@ class SyncHandler:
             applied_relationships=applied_relationships,
             vector_clock=request.vector_clock,  # RESERVED — echoed, never read
             server_time=server_time.isoformat(),
+            cursor=cursor,
+            state_digest=await self._state_digest(),
             sync_stats=SyncStats(
                 # Counts stay consistent with the acknowledgement lists: they
                 # report what landed, not what was merely attempted.
@@ -166,6 +175,65 @@ class SyncHandler:
                 duration_ms=duration_ms,
             ),
         )
+
+    async def _outgoing_entities(self, request: SyncRequest) -> List[Entity]:
+        """The current rows this request should receive, in replication order.
+
+        Two delta mechanisms, deliberately:
+
+        * `cursor` — a server_seq watermark. Exact, clock-independent, and the
+          only one that can paginate, since it defines a total order over rows.
+        * `filters.since` — the original wall-clock bound, kept working because
+          KittenKong and blowing-off both persist `server_time` today
+          (PROTOCOL.md §4). Breaking it would strand a live client mid-upgrade.
+
+        A client sending both gets the cursor: it is the stronger statement, and
+        `updated_at` cannot separate rows written in the same microsecond.
+        """
+        stmt = select(Entity).where(Entity.is_latest.is_(True))
+
+        if request.sync_type == "delta":
+            if request.cursor:
+                try:
+                    stmt = stmt.where(Entity.server_seq > int(request.cursor))
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"cursor must be a server_seq integer, got {request.cursor!r}",
+                    )
+            elif request.filters and request.filters.since:
+                since = _to_utc(request.filters.since)
+                # Strictly greater than `since` (exclusive lower bound, §4).
+                stmt = stmt.where(Entity.updated_at > since)
+
+        # Ordered by the replication axis so paging is stable: without this the
+        # page boundary is whatever order the database happened to return, and a
+        # row can be skipped or repeated across pages.
+        stmt = stmt.order_by(Entity.server_seq)
+        result = await self.db_session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _state_digest(self) -> str:
+        """sha256 over the sorted (id, version) set of every current row.
+
+        ADR-011 §4. Divergence between a server and a replica is otherwise
+        undetectable: both sides believe they are in sync, because both applied
+        every change they were told about. A client compares this against the
+        same computation over its own cache and resyncs on mismatch.
+
+        Deliberately the degenerate form of the Merkle tree in the deleted sync
+        stack: at this scale one hash over the id/version pairs delivers the
+        verification value, and a tree would be machinery without a payload.
+        """
+        result = await self.db_session.execute(
+            select(Entity.id, Entity.version)
+            .where(Entity.is_latest.is_(True))
+            .order_by(Entity.id)
+        )
+        digest = hashlib.sha256()
+        for entity_id, version in result.all():
+            digest.update(f"{entity_id}\x1f{version}\x1e".encode())
+        return digest.hexdigest()
 
     async def _latest_entities(self) -> Dict[str, Entity]:
         """Return the current row per entity id, read from is_latest (ADR-002 §1).
@@ -271,8 +339,10 @@ class SyncHandler:
         if not change.entity:
             return False  # relationships-only change; nothing to apply here
 
-        latest = await self._latest_entities()
-        existing = latest.get(change.entity.id)
+        # ADR-002 §3: resolve THIS id, not the whole table. Scanning every
+        # version of every entity once per pushed change is what made a
+        # 50-change push cost O(history x changes).
+        existing = await self._current_row(change.entity.id)
 
         if existing is None:
             await self._insert_version(change)
@@ -371,8 +441,10 @@ class SyncHandler:
         """
         if not change.entity:
             return False
-        latest = await self._latest_entities()
-        existing = latest.get(change.entity.id)
+        # ADR-002 §3: resolve THIS id, not the whole table. Scanning every
+        # version of every entity once per pushed change is what made a
+        # 50-change push cost O(history x changes).
+        existing = await self._current_row(change.entity.id)
         if existing is None:
             return True  # nothing to delete - the desired state already holds
         if bool((existing.content or {}).get("deleted")):

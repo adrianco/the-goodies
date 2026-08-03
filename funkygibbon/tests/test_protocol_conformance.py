@@ -415,13 +415,48 @@ class TestReservedFields:
 
         assert "vector_clock" in body
 
-    def test_cursor_is_absent_because_pagination_is_unimplemented(self, client, headers):
-        """§9: pinned deliberately. ADR-002 implements pagination in Stage C;
-        when it does, this test should fail and be rewritten to assert the
-        cursor contract rather than its absence."""
+    def test_cursor_is_null_when_the_stream_is_drained(self, client, headers):
+        """No longer reserved — ADR-002 §4 implemented it, as the previous
+        version of this test predicted it would.
+
+        Null means "drained", which is the client's signal to stop looping. An
+        empty `changes` list is NOT that signal: a filtered page can be empty
+        while rows remain beyond it.
+        """
+        v1 = Entity.create_version("a")
+        sync(client, headers, changes=[entity_change("create", id="E", version=v1)])
+
+        body = sync(client, headers, "full")
+        assert body.get("cursor") is None, "one small page: nothing left to resume from"
+
+    def test_a_digest_accompanies_every_response(self, client, headers):
+        """ADR-011 §4: divergence must be detectable.
+
+        Without this a client and server can both believe they are in sync
+        because both applied every change they were told about, while holding
+        different state.
+        """
         body = sync(client, headers, "full")
 
-        assert body.get("cursor") is None
+        assert body.get("state_digest"), "every response carries a state digest"
+
+    def test_the_digest_changes_when_state_changes(self, client, headers):
+        before = sync(client, headers, "full")["state_digest"]
+        sync(client, headers, changes=[
+            entity_change("create", id="NEW", version=Entity.create_version("a"))
+        ])
+        after = sync(client, headers, "full")["state_digest"]
+
+        assert before != after
+
+    def test_the_digest_is_stable_for_unchanged_state(self, client, headers):
+        """It must depend on state alone — not on time, or request order."""
+        sync(client, headers, changes=[
+            entity_change("create", id="E", version=Entity.create_version("a"))
+        ])
+
+        assert sync(client, headers, "full")["state_digest"] == \
+               sync(client, headers, "full")["state_digest"]
 
 
 # --------------------------------------------------------------------------- #
