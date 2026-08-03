@@ -6,109 +6,124 @@ accept, what has actually been created, and where the two diverge.
 Adding a domain means writing one of these. Nothing in `funkygibbon`,
 `inbetweenies` or `blowing-off` may import it — see [No domain leakage](#no-domain-leakage).
 
-> **Usage counts** are from the development database (25 entities, 35
-> relationships). The live instance is roughly 17× larger (423 entities, 461
-> relationships per the 2026-08 design review) and its *distribution* has not
-> been measured — a type showing 0 here could be in use there. Treat the zeros
-> as "worth checking", not as proof. Every "unusable" claim below is about the
-> code, not the data, and holds regardless.
+> **Usage counts are from the live instance** — 423 entities (510 version
+> rows), 461 relationships, taken from the 2026-08-03 production backup. Counts
+> are of *current* rows only; history would double-count edits.
+>
+> An earlier version of this document used the development database and drew
+> largely wrong conclusions from it. That database is `populate_graph_db.py`
+> seed data — a demo of the whole model — so it exercised nearly every type and
+> made the vocabulary look well used. The real house uses less than half of it,
+> and uses different parts. Where the two disagree, this table is right.
 
 ---
 
-## Entity types — 12 declared, 10 in use
+## Entity types — 12 declared, 6 in use
 
-| Type | Used | Notes |
+| Type | Live | Notes |
 |---|---:|---|
-| `home` | 1 | Root of the containment hierarchy. |
-| `room` | 6 | |
-| `zone` | 3 | Groups rooms; sits between room and home. |
-| `device` | 6 | |
-| `door` | 1 | |
-| `window` | 0 | **Gap.** Declared alongside `door`, which is used. Either the model wants windows and nothing creates them, or it is aspirational. |
-| `procedure` | 2 | |
-| `manual` | 1 | |
-| `note` | 2 | |
-| `schedule` | 1 | |
-| `automation` | 2 | |
-| `app` | 0 | **Unused feature.** Added for "HomeKit, Comfort app, etc." Its partner relationship `controlled_by_app` is also unused, so the whole app-attribution feature is declared and never exercised. |
+| `device` | 289 | 68% of everything. |
+| `note` | 53 | |
+| `room` | 50 | |
+| `door` | 29 | |
+| `home` | 1 | |
+| `app` | 1 | Used, but see `controlled_by_app` and `manages` below — both 0. |
+| `zone` | 0 | **Unused.** Declared as the layer between room and home; the real house is flat. `located_in` and `part_of` both have zone rules that nothing exercises. |
+| `automation` | 0 | **Unused.** |
+| `schedule` | 0 | **Unused.** |
+| `procedure` | 0 | **Unused.** |
+| `manual` | 0 | **Unused**, though `documented_by` is used 16× — so documentation attaches to `note`, not `manual`. |
+| `window` | 0 | **Unused**, while `door` has 29. |
 
-## Relationship types — 14 declared, 9 in use
+**The automation half of the model does not exist in practice.** `automation`,
+`schedule` and `procedure` have no instances, and every relationship type that
+connects them — `automates`, `controls`, `triggered_by`, `procedure_for`,
+`monitors`, `manages` — is also at zero. That is six of fourteen relationship
+types and three of twelve entity types forming one unused subsystem, not
+scattered gaps.
 
-| Type | Used | Allowed endpoints | Notes |
+## Relationship types — 14 declared, 5 in use
+
+| Type | Live | Allowed endpoints | Notes |
 |---|---:|---|---|
-| `located_in` | 11 | device→room, device→zone, room→zone, room→home, zone→home | The containment spine. |
-| `part_of` | 9 | room→home, zone→home, device→zone | Overlaps `located_in` — see [Two hierarchies](#two-hierarchies-doing-one-job). |
-| `connects_to` | 3 | room→room, door→room, window→room | The only place `window` appears in a rule. |
-| `documented_by` | 3 | device→manual, device→procedure, device→note, … | |
-| `controls` | 2 | device→device, automation→device, schedule→device, schedule→automation | |
-| `automates` | 2 | automation→device, schedule→device | Overlaps `controls`. |
-| `manages` | 2 | app→device, app→automation | Uses `app`, which has no instances. |
-| `procedure_for` | 2 | procedure→device | |
-| `monitors` | 1 | device→device, device→room | |
-| `has_blob` | 0 | *(unconstrained)* | **Dead in practice.** Blobs are referenced by `content.blob_id` instead — see `funkygibbon/migrate.py::_extract_photos`. Two mechanisms, one used. |
-| `triggered_by` | 0 | automation→device, schedule→automation | |
-| `controlled_by_app` | 0 | device→app | Half of the unused app feature. |
+| `located_in` | 252 | device→room, device→zone, room→zone, room→home, zone→home | The containment spine. |
+| `part_of` | 152 | room→home, zone→home, device→zone | Overlaps `located_in` — see below. |
+| `has_blob` | 26 | *(unconstrained)* | **In active use.** Blobs are linked by relationship *and* by `content.blob_id` (see `migrate.py::_extract_photos`) — two mechanisms, both live. |
+| `documented_by` | 16 | device→manual, device→procedure, device→note, … | Attaches to `note`; `manual` and `procedure` have no instances. |
+| `connects_to` | 15 | room→room, door→room, window→room | The 29 doors. |
+| `controls` | 0 | device→device, automation→device, … | Unused — no automations exist. |
+| `automates` | 0 | automation→device, schedule→device | Unused. |
+| `triggered_by` | 0 | automation→device, schedule→automation | Unused. |
+| `procedure_for` | 0 | procedure→device | Unused. |
+| `monitors` | 0 | device→device, device→room | Unused. |
+| `manages` | 0 | app→device, app→automation | Unused, despite one `app` entity existing. |
+| `controlled_by_app` | 0 | device→app | Unused — the app is present but connected to nothing. |
 | `contained_in` | 0 | **none** | **Unusable.** See below. |
 | `depends_on` | 0 | **none** | **Unusable.** See below. |
 
 ### `contained_in` and `depends_on` cannot be created
 
 Both declare *no* permitted endpoint pairs, and `create_relationship` rejects
-any edge whose pair is not permitted (`inbetweenies/mcp/tools.py:243`). So every
-attempt to create one fails, for every combination of entity types.
+any edge whose pair is not permitted (`inbetweenies/mcp/tools.py:243`). Every
+attempt fails, for every combination of entity types. This is a code fact and
+holds regardless of the data.
 
-This was invisible while the rules lived as a dict literal inside a method; it
-is obvious now that the vocabulary is data. The manifest reproduces it exactly
-rather than quietly granting them endpoints, because the abstraction's premise
-is that behaviour does not change — fixing it is a deliberate edit to the house
-vocabulary, not a side effect of moving it.
+Invisible while the rules lived as a dict literal inside a method; obvious now
+the vocabulary is data. The manifest reproduces it exactly rather than quietly
+granting them endpoints, because the abstraction's premise is that behaviour
+does not change — fixing it is a deliberate edit to the house vocabulary.
 
 **Decide:** give them endpoints, mark them explicitly unconstrained
 (`allowed_endpoints=None`), or delete them.
 
-### Two hierarchies doing one job
+### Two hierarchies doing one job — 404 edges between them
 
-`located_in` and `part_of` both express containment and share the pairs
-room→home, zone→home, device→zone. Both are in active use (11 and 9). A
-traversal asking "what is in this room" gets a different answer depending on
-which it follows, and nothing declares which is canonical.
+`located_in` (252) and `part_of` (152) both express containment and share the
+pairs room→home, zone→home, device→zone. Together they are 88% of all
+relationships. A traversal asking "what is in this room" gets a different answer
+depending on which it follows, and nothing declares which is canonical.
 
 `inbetweenies/graph/traversal.py` treats both as child→parent for ancestry, so
-they are already interchangeable to the engine. Worth collapsing to one, or
-documenting the distinction if there is one.
+they are already interchangeable to the engine. This is the most consequential
+open question in the vocabulary.
 
-## Source types — 5 declared, 1 in use
+## Source types — 5 declared, 4 in use
 
-| Type | Used | Notes |
+| Type | Live | Notes |
 |---|---:|---|
-| `generated` | 25 | Everything. |
-| `homekit` | 0 | |
-| `matter` | 0 | |
-| `manual` | 0 | |
-| `imported` | 0 | |
+| `imported` | 265 | The bulk of the graph. |
+| `homekit` | 72 | |
+| `manual` | 69 | Human-entered. |
+| `generated` | 17 | |
+| `matter` | 0 | **Unused.** The only unused source type. |
 
-**The provenance feature is entirely unexercised.** `source_type` exists to
-record where a fact came from — HomeKit discovery, Matter, a human, an import —
-and 100% of the development data says `generated`, because it came from
-`populate_graph_db.py`. Nothing is wrong; it has simply never been used for its
-purpose, which is worth knowing before building on it. This is the field most
-likely to differ on the live instance.
+The provenance feature *is* exercised — four of five in real use, with a
+meaningful spread. (An earlier draft of this document called it "entirely
+unexercised" on the strength of seed data, where everything is `generated`.)
 
 ---
 
 ## What this suggests
 
-**Could create, cheaply:** `window` entities (`connects_to` already has rules
-for them); `triggered_by` edges (rules exist, automations and schedules exist).
+**Should decide, in rough order of consequence:**
 
-**Should decide:** the `contained_in` / `depends_on` gap; whether `located_in`
-and `part_of` are one concept; whether `has_blob` should replace
-`content.blob_id` or be deleted; whether the `app` feature is wanted.
+1. **`located_in` vs `part_of`** — 404 edges, 88% of the graph, no declared
+   canonical. Collapse to one, or document the distinction.
+2. **The automation subsystem** — `automation`, `schedule`, `procedure` and the
+   six relationship types serving them are entirely unused. Either the house
+   has not reached that feature yet, or the model anticipated something that did
+   not happen. Half the relationship vocabulary rests on the answer.
+3. **`contained_in` / `depends_on`** — unusable as declared.
+4. **`app`** — one entity, connected by nothing. `manages` and
+   `controlled_by_app` are both zero.
+5. **Two blob-linking mechanisms** — `has_blob` (26) and `content.blob_id` are
+   both live. Pick one.
+6. **`window` and `matter`** — declared, no instances, rules exist for both.
 
-**Worth measuring:** the same table against the live instance. Five of the
-fourteen relationship types and two of the twelve entity types have no
-development instances at all, and a vocabulary carrying ~35% unused surface is
-either aspirational or has features nobody found.
+**Overall: 6 of 12 entity types, 5 of 14 relationship types and 4 of 5 source
+types are in use.** A little over half the vocabulary is load-bearing. That is
+not itself a problem — vocabularies are meant to outrun their data — but it is
+worth knowing which half before a second domain is modelled on this one.
 
 ---
 
