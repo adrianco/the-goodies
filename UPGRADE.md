@@ -67,7 +67,9 @@ mid-upgrade, then **loads** it to bring the new one back.
 3. **Back up** the database file (plus `-wal`/`-shm`) to
    `…/funkygibbon.db.backup-upgrade-<timestamp>`.
 4. **Checkout** the release tag.
-5. **Install** dependencies from `funkygibbon/requirements.txt`.
+5. **Install** dependencies — `pip install -e .` from the repo root
+   (one uv workspace since v0.3.0; the per-component requirements.txt
+   files are gone).
 6. **Migrate** data — `python -m funkygibbon.migrate --apply` (idempotent; safe
    to re-run; verifies counts before committing).
 7. **Set up auth** — only if you passed `--admin-password`/`--test-mode`:
@@ -102,7 +104,7 @@ Every step is idempotent; re-running the whole script is safe.
 # stop the service first, then:
 cp funkygibbon.db funkygibbon.db.backup-upgrade-$(date -u +%Y%m%d-%H%M%S)
 git fetch --tags && git checkout vX.Y.Z
-python -m pip install -r funkygibbon/requirements.txt
+python -m pip install -e .
 python -m funkygibbon.migrate --apply
 python -m funkygibbon.setup_auth --admin-password 'strong-password'
 # start the service, then verify:
