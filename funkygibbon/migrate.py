@@ -236,6 +236,10 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
     # ('PART_OF'), so a query matching 'part_of' silently finds nothing and
     # reports 0 re-typed while leaving the data untouched.
     stats.update(_split_containment_from_composition(cur))
+    # Same ordering constraint as above, for the same reason: this matches
+    # 'has_blob', which is still 'HAS_BLOB' until normalisation has run.
+    stats.update(_converge_blob_linking(cur))
+    _assert_types_normalised(cur)
 
     if apply:
         conn.commit()
@@ -673,6 +677,158 @@ def _split_containment_from_composition(cur) -> Dict[str, int]:
             (rel_id,),
         )
         stats["part_of_retyped_to_located_in"] += 1
+
+    return stats
+
+
+def _assert_types_normalised(cur) -> None:
+    """Fail if any domain type column still holds an un-normalised enum name.
+
+    ``_normalise_domain_type_values`` translates stored enum *names* to *values*
+    using a map built from the enum classes, and deliberately leaves values it
+    does not recognise alone. That is the right behaviour -- guessing at an
+    unknown domain type would be worse -- but it fails silently, and silence is
+    what makes it dangerous: **retiring a member from an enum also removes the
+    only thing that knew how to migrate rows still holding its name.**
+
+    That is not hypothetical. Renaming HAS_BLOB to HAS_PHOTO left 26 rows
+    reading 'HAS_BLOB', the re-typing step matched 'has_blob' and reported 0,
+    and the migration exited claiming success. Every subsequent query filtering
+    on a relationship type would have missed those edges.
+
+    Domain type *values* are lowercase by convention and enum *names* are
+    uppercase, so a stored value containing an uppercase letter is the
+    signature of a name that nothing translated. Cheap to check, and it turns a
+    silent no-op into a loud stop -- which is the whole point, since the
+    migration is the last place this is still fixable.
+    """
+    offenders = []
+    for table, column in (
+        ("entities", "entity_type"),
+        ("entities", "source_type"),
+        ("entity_relationships", "relationship_type"),
+        ("blobs", "blob_type"),
+    ):
+        if not _table_has_column(cur, table, column):
+            continue
+        # GLOB is case-sensitive in SQLite where LIKE is not, so this genuinely
+        # tests for an uppercase letter rather than matching everything.
+        rows = cur.execute(
+            f'SELECT DISTINCT "{column}" FROM "{table}" WHERE "{column}" GLOB "*[A-Z]*"'
+        ).fetchall()
+        offenders += [f"{table}.{column}={v!r}" for (v,) in rows]
+
+    if offenders:
+        raise RuntimeError(
+            "post-migration check failed: un-normalised domain type values remain: "
+            + ", ".join(sorted(offenders))
+            + ". This usually means a vocabulary member was retired from its enum "
+            "without a migration step to re-type the rows still using it."
+        )
+
+
+def _converge_blob_linking(cur) -> Dict[str, int]:
+    """Collapse six ways of linking a blob into one (ADR-013 §3).
+
+    A blob had accumulated six linking conventions, four of them live or
+    supported:
+
+    1. a ``has_blob`` edge -- which pointed at a *note*, never at a blob
+    2. top-level ``content.blob_id`` on that note -- the actual link
+    3. nested ``content.images[].blob_id`` (see ``_extract_photos``)
+    4. a ``content.screenshot_blob_ids`` array
+    5. a ``content.is_blob`` boolean flag
+    6. a ``content.has_blob`` boolean flag -- the same flag under another name
+
+    So ``has_blob`` was misnamed: the real shape was two hops,
+    ``device --has_blob--> note --content.blob_id--> blobs``, and the note was
+    a generic attachment wrapper doing double duty as a text note.
+
+    ADR-013 keeps exactly one rule: **an entity that carries a blob is an
+    attachment entity, and top-level ``content.blob_id`` is the only link to
+    the blobs table.** The entity type says what kind of document it is --
+    ``photo`` for images, ``manual`` for PDFs -- which makes the boolean flags
+    redundant, because the type *is* the flag. No relationship ever points at
+    a blob; relationships only say what role the attachment plays
+    (``has_photo`` for an image of a thing, ``documented_by`` for a manual).
+
+    Idempotent: every step selects on the shape being wrong.
+    """
+    stats = {
+        "notes_retyped_to_photo": 0,
+        "has_blob_retyped_to_has_photo": 0,
+        "blob_flags_dropped": 0,
+    }
+
+    # -- 1. Attachment notes become typed attachment entities --------------- #
+    # Routed by mime, so a PDF lands on `manual` rather than being called a
+    # photo. Current rows only: history keeps what it said at the time.
+    for eid, content_json in cur.execute(
+        "SELECT id, content FROM entities WHERE is_latest = 1 AND lower(entity_type) = 'note'"
+    ).fetchall():
+        try:
+            content = json.loads(content_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(content, dict) or not content.get("blob_id"):
+            continue
+        mime = (content.get("mime_type") or "").lower()
+        new_type = "manual" if mime == "application/pdf" else "photo"
+        cur.execute("UPDATE entities SET entity_type = ? WHERE id = ?", (new_type, eid))
+        stats["notes_retyped_to_photo"] += 1
+
+    # -- 2. has_blob -> has_photo ------------------------------------------- #
+    # Runs after step 1 so the endpoint types already say `photo`, which is what
+    # the manifest now constrains has_photo to. An edge whose target did not
+    # carry a blob is left alone rather than silently pointed at a photo rule it
+    # would violate -- there are none in either install, and inventing a
+    # rewrite for a case that does not exist is how migrations go wrong.
+    #
+    # `lower(...)` is load-bearing, not defensive noise. _normalise_domain_type_values
+    # builds its name->value map *from the enums*, so retiring HAS_BLOB from
+    # RelationshipType also removed the only thing that knew how to rewrite the
+    # stored 'HAS_BLOB' -- rows arrive here still holding the enum NAME, and a
+    # match on 'has_blob' silently finds nothing. Every future retirement has
+    # this hazard; _assert_types_normalised below now makes it fail loudly.
+    for (rel_id,) in cur.execute(
+        """SELECT r.id FROM entity_relationships r
+           JOIN entities te ON te.id = r.to_entity_id AND te.is_latest = 1
+           WHERE lower(r.relationship_type) = 'has_blob'
+             AND te.entity_type IN ('photo', 'manual')"""
+    ).fetchall():
+        cur.execute(
+            "UPDATE entity_relationships SET relationship_type = 'has_photo' WHERE id = ?",
+            (rel_id,),
+        )
+        stats["has_blob_retyped_to_has_photo"] += 1
+
+    # -- 3. Drop the redundant content flags -------------------------------- #
+    # `is_blob` / `has_blob` / an empty `screenshot_blob_ids` all restate what
+    # the entity type and blob_id now say. Note this also clears the flag from
+    # rows that claim `is_blob` while carrying no blob_id at all (there is one
+    # such test leftover in production): those are not attachments, and leaving
+    # a flag that lies is worse than the flag being absent.
+    redundant = ("is_blob", "has_blob", "screenshot_blob_ids")
+    for eid, content_json in cur.execute(
+        "SELECT id, content FROM entities WHERE is_latest = 1"
+    ).fetchall():
+        try:
+            content = json.loads(content_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(content, dict):
+            continue
+        # Only drop screenshot_blob_ids when it is empty: a populated one would
+        # be real data, and discarding it here would lose blob references with
+        # nothing to recover them from.
+        drop = [k for k in redundant if k in content
+                and (k != "screenshot_blob_ids" or not content[k])]
+        if not drop:
+            continue
+        for k in drop:
+            content.pop(k)
+        cur.execute("UPDATE entities SET content = ? WHERE id = ?", (json.dumps(content), eid))
+        stats["blob_flags_dropped"] += len(drop)
 
     return stats
 

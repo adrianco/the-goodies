@@ -500,14 +500,13 @@ class TestPhotoDocumentation:
         photo_note = Entity(
             id=str(uuid4()),
             version=Entity.create_version("test-user"),
-            entity_type=EntityType.NOTE,
-            name="Equipment Photos",
+            entity_type=EntityType.PHOTO,
+            name="unit1.jpeg",
             content={
-                "content": "Photos of HVAC equipment",
-                "category": "photo_documentation",
-                "photo_filenames": ["unit1.jpeg", "unit2.jpeg"],
-                "has_blob": True,
-                "blob_references": ["blob_unit1", "blob_unit2"]
+                "description": "Photo of HVAC equipment",
+                "filename": "unit1.jpeg",
+                "mime_type": "image/jpeg",
+                "blob_id": "blob_unit1"
             },
             source_type=SourceType.MANUAL,
             user_id="test-user",
@@ -520,19 +519,21 @@ class TestPhotoDocumentation:
         # Verify photo note was created
         result = await async_session.execute(
             select(Entity).where(
-                Entity.name == "Equipment Photos"
+                Entity.name == "unit1.jpeg"
             )
         )
         notes = result.scalars().all()
 
         assert len(notes) == 1
-        assert notes[0].content["category"] == "photo_documentation"
-        assert notes[0].content["has_blob"] is True
-        assert len(notes[0].content["blob_references"]) == 2
+        # The type is the flag (ADR-013 3): a photo needs no "has_blob": True,
+        # and carries exactly one blob_id rather than a list of references.
+        assert notes[0].entity_type == EntityType.PHOTO
+        assert notes[0].content["blob_id"] == "blob_unit1"
+        assert "has_blob" not in notes[0].content
 
     @pytest.mark.asyncio
     async def test_link_photo_to_device_with_blob(self, async_session):
-        """Test linking photo documentation to device with HAS_BLOB relationship"""
+        """Test linking a photo to a device with the HAS_PHOTO relationship"""
         # Create device
         device = Entity(
             id=str(uuid4()),
@@ -545,15 +546,16 @@ class TestPhotoDocumentation:
             parent_versions=[]
         )
 
-        # Create photo note
+        # Create photo
         photo_note = Entity(
             id=str(uuid4()),
             version=Entity.create_version("test-user"),
-            entity_type=EntityType.NOTE,
-            name="Unit Photos",
+            entity_type=EntityType.PHOTO,
+            name="unit.jpeg",
             content={
-                "category": "photo_documentation",
-                "has_blob": True
+                "filename": "unit.jpeg",
+                "mime_type": "image/jpeg",
+                "blob_id": "blob_unit"
             },
             source_type=SourceType.MANUAL,
             user_id="test-user",
@@ -564,15 +566,16 @@ class TestPhotoDocumentation:
         async_session.add(photo_note)
         await async_session.flush()
 
-        # Create HAS_BLOB relationship
+        # device -> photo. The old fixture ran this backwards, against the
+        # relationship's own declared endpoints (ADR-013 3).
         relationship = EntityRelationship(
             id=str(uuid4()),
-            from_entity_id=photo_note.id,
-            from_entity_version=photo_note.version,
-            to_entity_id=device.id,
-            to_entity_version=device.version,
-            relationship_type=RelationshipType.HAS_BLOB,
-            properties={"blob_type": "photo"},
+            from_entity_id=device.id,
+            from_entity_version=device.version,
+            to_entity_id=photo_note.id,
+            to_entity_version=photo_note.version,
+            relationship_type=RelationshipType.HAS_PHOTO,
+            properties={},
             user_id="test-user"
         )
 
@@ -582,15 +585,15 @@ class TestPhotoDocumentation:
         # Verify relationship
         result = await async_session.execute(
             select(EntityRelationship).where(
-                EntityRelationship.relationship_type == RelationshipType.HAS_BLOB
+                EntityRelationship.relationship_type == RelationshipType.HAS_PHOTO
             )
         )
         relationships = result.scalars().all()
 
         assert len(relationships) == 1
-        assert relationships[0].from_entity_id == photo_note.id
-        assert relationships[0].to_entity_id == device.id
-        assert relationships[0].properties["blob_type"] == "photo"
+        assert relationships[0].from_entity_id == device.id
+        assert relationships[0].to_entity_id == photo_note.id
+        assert relationships[0].is_valid_for_entities(device, photo_note)
 
 
 if __name__ == "__main__":

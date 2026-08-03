@@ -7,85 +7,102 @@ Adding a domain means writing one of these. Nothing in `funkygibbon`,
 `inbetweenies` or `blowing-off` may import it — see [No domain leakage](#no-domain-leakage).
 
 > **Usage counts are from the live instance** — 423 entities (510 version
-> rows), 461 relationships, taken from the 2026-08-03 production backup. Counts
-> are of *current* rows only; history would double-count edits.
+> rows), 461 relationships, taken from the 2026-08-03 production backup **after
+> the ADR-013 migration**. Counts are of *current* rows only; history would
+> double-count edits.
 >
 > An earlier version of this document used the development database and drew
 > largely wrong conclusions from it. That database is `populate_graph_db.py`
 > seed data — a demo of the whole model — so it exercised nearly every type and
-> made the vocabulary look well used. The real house uses less than half of it,
-> and uses different parts. Where the two disagree, this table is right.
+> made the vocabulary look well used. The real house uses about half of it, and
+> uses different parts. Where the two disagree, this table is right.
 
 ---
 
-## Entity types — 12 declared, 6 in use
+## Entity types — 13 declared, 7 in use
 
 | Type | Live | Notes |
 |---|---:|---|
 | `device` | 289 | 68% of everything. |
-| `note` | 53 | |
 | `room` | 50 | |
 | `door` | 29 | |
+| `photo` | 27 | Every blob in the database. Created by ADR-013 §3 from notes that were wrapping images. |
+| `note` | 26 | Now only genuine text notes — walk/edit session records. |
 | `home` | 1 | |
-| `app` | 1 | Used, but see `controlled_by_app` and `manages` below — both 0. |
-| `zone` | 0 | **Unused.** Declared as the layer between room and home; the real house is flat. `located_in` and `part_of` both have zone rules that nothing exercises. |
-| `automation` | 0 | **Unused.** |
-| `schedule` | 0 | **Unused.** |
-| `procedure` | 0 | **Unused.** |
-| `manual` | 0 | **Unused**, though `documented_by` is used 16× — so documentation attaches to `note`, not `manual`. |
+| `app` | 1 | One `Alexa` entity. `manages` is still 0 — see below. |
+| `zone` | 0 | **Unused.** Declared as the layer between room and home; the real house is flat. `located_in` has zone rules that nothing exercises. |
+| `manual` | 0 | **Unused.** The PDF attachment type (ADR-013 §3). Nothing has attached a PDF yet; `documented_by` is used 16× but always onto `note`. |
+| `automation` | 0 | **Undescribed** — see below. |
+| `schedule` | 0 | **Undescribed.** |
+| `procedure` | 0 | **Undescribed.** |
 | `window` | 0 | **Unused**, while `door` has 29. |
 
-**The automation half of the model does not exist in practice.** `automation`,
-`schedule` and `procedure` have no instances, and every relationship type that
-connects them — `automates`, `controls`, `triggered_by`, `procedure_for`,
-`monitors`, `manages` — is also at zero. That is six of fourteen relationship
-types and three of twelve entity types forming one unused subsystem, not
-scattered gaps.
+**The automation vocabulary is undescribed, not unbuilt.** `automation`,
+`schedule` and `procedure` have no instances, and the relationship types serving
+them are also at zero. That is not a feature that was modelled and abandoned:
+the Vantage system at one site and Home Assistant at the other physically exist
+and simply have not been entered into the graph. The vocabulary is waiting for
+them, which is why ADR-013 kept it.
 
-## Relationship types — 14 declared, 5 in use
+## Relationship types — 12 declared, 5 in use
 
 | Type | Live | Allowed endpoints | Notes |
 |---|---:|---|---|
-| `located_in` | 252 | device→room, device→zone, room→zone, room→home, zone→home | The containment spine. |
-| `part_of` | 152 | room→home, zone→home, device→zone | Overlaps `located_in` — see below. |
-| `has_blob` | 26 | *(unconstrained)* | **In active use.** Blobs are linked by relationship *and* by `content.blob_id` (see `migrate.py::_extract_photos`) — two mechanisms, both live. |
-| `documented_by` | 16 | device→manual, device→procedure, device→note, … | Attaches to `note`; `manual` and `procedure` have no instances. |
+| `located_in` | 300 | device→room, device→zone, room→zone, room→home, zone→home, door→room, window→room | The containment spine. Gained 48 edges from `part_of` in the ADR-013 split. |
+| `part_of` | 104 | device→device | Composition only, since the split. |
+| `has_photo` | 26 | device→photo, door→photo, window→photo, room→photo, home→photo, app→photo, note→photo, manual→photo | Replaces `has_blob` (ADR-013 §3). |
+| `documented_by` | 16 | device→manual, device→procedure, device→note, room→note, home→note, door→note | Attaches to `note` in practice; `manual` and `procedure` have no instances. |
 | `connects_to` | 15 | room→room, door→room, window→room | The 29 doors. |
-| `controls` | 0 | device→device, automation→device, … | Unused — no automations exist. |
-| `automates` | 0 | automation→device, schedule→device | Unused. |
-| `triggered_by` | 0 | automation→device, schedule→automation | Unused. |
-| `procedure_for` | 0 | procedure→device | Unused. |
-| `monitors` | 0 | device→device, device→room | Unused. |
-| `manages` | 0 | app→device, app→automation | Unused, despite one `app` entity existing. |
-| `controlled_by_app` | 0 | device→app | Unused — the app is present but connected to nothing. |
-| `contained_in` | 0 | **none** | **Unusable.** See below. |
-| `depends_on` | 0 | **none** | **Unusable.** See below. |
+| `controls` | 0 | device→device, automation→device, … | Awaiting the automation description. |
+| `automates` | 0 | automation→device, schedule→device | Awaiting. |
+| `triggered_by` | 0 | automation→device, schedule→automation | Awaiting. |
+| `procedure_for` | 0 | procedure→device, procedure→room | Awaiting. |
+| `monitors` | 0 | device→device, device→room, automation→device | Awaiting. |
+| `manages` | 0 | app→device, app→automation, app→schedule, app→room | How an automation records which system runs it (ADR-013 §4). The `Alexa` app exists; nothing links to it yet. |
+| `depends_on` | 0 | *(unconstrained)* | Was uncreatable — declared no endpoints, so every attempt failed. Now explicitly unconstrained (ADR-013 §2). |
 
-### `contained_in` and `depends_on` cannot be created
+**Every live edge conforms to these rules** — verified against the migrated
+production copy. Before ADR-013 there were 107 violations, because the endpoint
+check ran on one write path of three.
 
-Both declare *no* permitted endpoint pairs, and `create_relationship` rejects
-any edge whose pair is not permitted (`inbetweenies/mcp/tools.py:243`). Every
-attempt fails, for every combination of entity types. This is a code fact and
-holds regardless of the data.
+### Deleted by ADR-013
 
-Invisible while the rules lived as a dict literal inside a method; obvious now
-the vocabulary is data. The manifest reproduces it exactly rather than quietly
-granting them endpoints, because the abstraction's premise is that behaviour
-does not change — fixing it is a deliberate edit to the house vocabulary.
+| Was | Why |
+|---|---|
+| `contained_in` | Duplicated `located_in`, declared no endpoints, never creatable. |
+| `controlled_by_app` | The exact inverse of `manages`. Both unused, so there was no cost to choosing one; the app is the actor, so it reads as the subject. |
+| `has_blob` | Never pointed at a blob — it pointed at a note that carried one. Replaced by `has_photo`. See below. |
 
-**Decide:** give them endpoints, mark them explicitly unconstrained
-(`allowed_endpoints=None`), or delete them.
+## How blobs are linked
 
-### Two hierarchies doing one job — 404 edges between them
+**One rule: an entity that carries a blob is an attachment entity, and top-level
+`content.blob_id` is the only link to the `blobs` table.**
 
-`located_in` (252) and `part_of` (152) both express containment and share the
-pairs room→home, zone→home, device→zone. Together they are 88% of all
-relationships. A traversal asking "what is in this room" gets a different answer
-depending on which it follows, and nothing declares which is canonical.
+The entity type says what kind of document it is, so no boolean "this has a
+blob" flag is needed — the type *is* the flag. Relationships never point at a
+blob; they only say what role the attachment plays.
 
-`inbetweenies/graph/traversal.py` treats both as child→parent for ancestry, so
-they are already interchangeable to the engine. This is the most consequential
-open question in the vocabulary.
+```
+device --has_photo--> photo --content.blob_id--> blobs   (images)
+device --documented_by--> manual --content.blob_id--> blobs   (PDFs)
+```
+
+Adding a further kind — video, wiring diagram — is a new entity type, not new
+plumbing.
+
+This replaced **six** accumulated conventions (a `has_blob` edge, top-level
+`blob_id`, nested `images[].blob_id`, a `screenshot_blob_ids` array, and two
+differently-named boolean flags meaning the same thing). ADR-013 §3 has the full
+inventory and the migration.
+
+Current state: 27 blobs, 27 `photo` entities, no dangling references and no
+orphaned blobs. 26 of the 27 photos are linked by a `has_photo` edge; one has
+never been attached to anything.
+
+**One documented exception:** photos nested under `content.images[]` on the
+owning entity are normalised to blob references by `migrate.py::_extract_photos`
+rather than split into `photo` entities. Zero rows in either live install use
+this shape; it survives as an import-time form.
 
 ## Source types — 5 declared, 4 in use
 
@@ -101,26 +118,32 @@ The provenance feature *is* exercised — four of five in real use, with a
 meaningful spread. (An earlier draft of this document called it "entirely
 unexercised" on the strength of seed data, where everything is `generated`.)
 
+`source_type` answers *how did this record reach the graph*, and deliberately
+nothing more. Which system *runs* an automation is a separate fact that stays
+true however the record arrived, and belongs on an `app` entity — see ADR-013 §4
+for why extending this list per vendor does not scale.
+
 ---
 
 ## What this suggests
 
-**Should decide, in rough order of consequence:**
+Everything from the previous edition of this list has been decided in ADR-013:
+the `located_in`/`part_of` conflation is split, `contained_in` and
+`controlled_by_app` are deleted, `depends_on` is usable, the automation
+vocabulary is retained as undescribed-not-absent, and blob linking has converged
+on one mechanism.
 
-1. **`located_in` vs `part_of`** — 404 edges, 88% of the graph, no declared
-   canonical. Collapse to one, or document the distinction.
-2. **The automation subsystem** — `automation`, `schedule`, `procedure` and the
-   six relationship types serving them are entirely unused. Either the house
-   has not reached that feature yet, or the model anticipated something that did
-   not happen. Half the relationship vocabulary rests on the answer.
-3. **`contained_in` / `depends_on`** — unusable as declared.
-4. **`app`** — one entity, connected by nothing. `manages` and
-   `controlled_by_app` are both zero.
-5. **Two blob-linking mechanisms** — `has_blob` (26) and `content.blob_id` are
-   both live. Pick one.
-6. **`window` and `matter`** — declared, no instances, rules exist for both.
+**Still open:**
 
-**Overall: 6 of 12 entity types, 5 of 14 relationship types and 4 of 5 source
+1. **Enforcement on every write path** (ADR-013 §5). The endpoint rules run on
+   the MCP path only; REST has the check commented out and sync never checks.
+   The data now conforms, so enabling it is safe — that ordering was the point.
+2. **`window` and `matter`** — declared, no instances, rules exist for both.
+3. **`manual` has no instances** while `documented_by` is used 16×, always onto
+   `note`. Either PDFs have not been added yet, or documentation genuinely is
+   all free text.
+
+**Overall: 7 of 13 entity types, 5 of 12 relationship types and 4 of 5 source
 types are in use.** A little over half the vocabulary is load-bearing. That is
 not itself a problem — vocabularies are meant to outrun their data — but it is
 worth knowing which half before a second domain is modelled on this one.
@@ -136,13 +159,14 @@ assumed: `tests/test_domain_isolation.py` asserts that no module under
 A second domain is the real proof. If `domains/garage` can be added with no
 engine change, the abstraction is real; if the engine needs a line, it is not.
 
-## Deriving, not transcribing
+## Declared, not derived
 
-The house vocabulary is currently *derived* from the `EntityType`,
+The house vocabulary was originally *derived* from the `EntityType`,
 `SourceType` and `RelationshipType` definitions it replaces, and from the
 predicate that owned the endpoint rules — verified equal across all 2016
-`(relationship_type, from_type, to_type)` triples.
+`(relationship_type, from_type, to_type)` triples. That proved ADR-012 changed
+only *where* the rules lived.
 
-That is deliberate for the migration step: retyping 31 names and ~40 endpoint
-pairs by hand would put "byte-identical" at the mercy of a typo. A new domain
-declares its vocabulary directly, having nothing to derive from.
+ADR-013 changes what they *say*, so deriving them is no longer possible. This
+manifest is now the source of truth and the enums it came from are legacy. A new
+domain declares its vocabulary directly, having nothing to derive from.

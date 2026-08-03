@@ -42,7 +42,11 @@ class EntityType(str, Enum):
     DOOR = "door"
     WINDOW = "window"
     PROCEDURE = "procedure"
+    # Attachment entities. Both carry a blob via top-level content.blob_id,
+    # which is the only link to the blobs table (ADR-013 §3). The type says
+    # what kind of document it is: MANUAL is a PDF, PHOTO is an image.
     MANUAL = "manual"
+    PHOTO = "photo"
     NOTE = "note"
     SCHEDULE = "schedule"
     AUTOMATION = "automation"

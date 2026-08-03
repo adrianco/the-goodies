@@ -72,15 +72,56 @@ described (an automation depending on a device, a schedule on an automation).
 Declared `allowed_endpoints=None` rather than `()`, so it is usable rather than
 silently rejected.
 
-### 3. `has_blob` is explicitly unconstrained
+### 3. One blob link: an attachment entity carrying `content.blob_id`
 
-Anything may have a blob attached; `door → note` and `note → note` are
-legitimate. Recording that as `None` is the accurate statement, where the
-current empty tuple happens to be permissive only because nothing enforces it.
+An earlier draft recorded this as "two competing mechanisms, choice left open".
+That was wrong on both counts. There were **six** conventions, and the first two
+were not competing — they were two halves of one chain:
 
-**Not resolved here:** blobs are linked both by `has_blob` edges (26) and by
-`content.blob_id`. Both are live. Choosing one is a data-model question beyond
-vocabulary and is left open.
+```
+device --has_blob--> note --content.blob_id--> blobs
+```
+
+| | Convention | Live |
+|---|---|---:|
+| 1 | `has_blob` edge — pointing at a *note*, never at a blob | 26 |
+| 2 | top-level `content.blob_id` — the actual link | 27 |
+| 3 | nested `content.images[].blob_id` (`migrate.py::_extract_photos`) | 0 |
+| 4 | `content.screenshot_blob_ids` array | 0 (empty) |
+| 5 | `content.is_blob` boolean flag | 28 |
+| 6 | `content.has_blob` boolean flag — *the same flag under another name* | 0 (seed only) |
+
+So `has_blob` was misnamed: it meant "has an attached note that carries a blob".
+And `note` was doing double duty — a walk-session transcript and a JPEG were the
+same entity type, told apart only by which edge happened to point at them.
+
+**The rule is now one sentence: an entity that carries a blob is an attachment
+entity, and top-level `content.blob_id` is the only link to the blobs table.**
+
+The entity type says what kind of document it is — `photo` for an image,
+`manual` for a PDF — which makes the boolean flags redundant, because the type
+*is* the flag. No relationship ever points at a blob; relationships only say
+what role the attachment plays:
+
+| | Attachment type | Reached by |
+|---|---|---|
+| image | `photo` (new) | `has_photo` |
+| PDF | `manual` (already declared, 0 live) | `documented_by` — unchanged |
+
+`has_blob` is therefore deleted rather than renamed. "Blob" is a storage word,
+not a domain word. Further kinds — video, wiring diagram — become new entity
+types, not new plumbing.
+
+Because a photo is now its own type, `has_photo` can be **constrained**
+(`device→photo`, `door→photo`, …) where `has_blob` had to be unconstrained. The
+earlier "anything may have a blob attached" was a statement about storage
+mechanics, not about the domain.
+
+**One shape deliberately survives:** nested `content.images[]` on the owning
+entity. Converging it means splitting one entity into N, synthesising ids,
+versions and edges inside a migration, and there are zero such rows in either
+live install. It stays an import-time shape that `_extract_photos` normalises to
+blob references, and is the one documented exception to "one link".
 
 ### 4. Automation provenance is an `app` entity, not a source type
 
@@ -129,8 +170,19 @@ Enforcing first would reject 107 existing edges and break both servers.
 
 ## Consequences
 
-- One data migration, on top of the ADR-002 backfill: re-type 48 edges. Small,
-  reversible, and both installs are controlled.
+- Two data migrations, on top of the ADR-002 backfill: re-type 48 `part_of`
+  edges, and converge blob linking (27 notes → `photo`, 26 `has_blob` →
+  `has_photo`, 29 redundant flags dropped). Small, reversible, and both
+  installs are controlled.
+- **Retiring a vocabulary member is now a two-part change.**
+  `_normalise_domain_type_values` builds its name→value map *from the enums*, so
+  removing a member also removes the only thing that knew how to migrate rows
+  still storing its name. Renaming `HAS_BLOB` left 26 rows reading `'HAS_BLOB'`
+  while the re-typing step matched `'has_blob'`, reported 0, and exited claiming
+  success — every later query filtering on that type would have missed them
+  silently. `migrate.py::_assert_types_normalised` now fails the migration if any
+  domain type column still holds an uppercase (i.e. untranslated) value, which
+  turns the whole class of mistake from silent to loud.
 - The house manifest stops being *derived* from `EntityType` and
   `is_valid_for_entities` and starts being *declared*, because it now says
   something they do not. The 2016-triple equivalence check retires with it.

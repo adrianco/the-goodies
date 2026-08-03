@@ -316,3 +316,147 @@ def test_check_removal_is_idempotent(constrained_conn):
     conn = constrained_conn
     run_migration(conn, apply=True)
     assert run_migration(conn, apply=True)["type_checks_dropped"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Blob linking converges on one mechanism (ADR-013 §3)
+# --------------------------------------------------------------------------- #
+
+def _seed_blob_shapes(conn):
+    """Every way a blob was linked, as found in the live database.
+
+    Six conventions had accumulated: a `has_blob` edge (which pointed at a note,
+    never at a blob), top-level `content.blob_id`, nested `content.images[]`,
+    a `screenshot_blob_ids` array, and *two* differently-named boolean flags
+    saying the same thing.
+    """
+    def ent(eid, etype, content):
+        conn.execute(
+            "INSERT INTO entities (id, version, entity_type, name, content, source_type, user_id) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (eid, CANON, etype, eid, json.dumps(content), "manual", "agent"),
+        )
+
+    ent("photo1", "note", {"is_blob": True, "mime_type": "image/jpeg",
+                           "filename": "a.jpg", "blob_id": "b-photo"})
+    ent("pdf1", "note", {"is_blob": True, "mime_type": "application/pdf",
+                         "filename": "manual.pdf", "blob_id": "b-pdf"})
+    ent("textnote", "note", {"session_id": "s1", "transcript": "walked the room"})
+    ent("probe", "note", {"is_blob": True, "test": True})   # flag but no blob
+    ent("dev1", "device", {"has_blob": True, "screenshot_blob_ids": []})
+    ent("app1", "app", {"screenshot_blob_ids": ["b-keep"]})  # populated: real data
+
+    for rid, src, dst, rtype in (
+        ("hb1", "dev1", "photo1", "has_blob"),
+        ("hb2", "dev1", "pdf1", "HAS_BLOB"),   # legacy enum NAME, un-normalised
+    ):
+        conn.execute(
+            "INSERT INTO entity_relationships (id, from_entity_id, from_entity_version, "
+            "to_entity_id, to_entity_version, relationship_type) VALUES (?,?,?,?,?,?)",
+            (rid, src, CANON, dst, CANON, rtype))
+    conn.commit()
+
+
+def _content(conn, eid):
+    return json.loads(conn.execute("SELECT content FROM entities WHERE id=?", (eid,)).fetchone()[0])
+
+
+def _etype(conn, eid):
+    return conn.execute("SELECT entity_type FROM entities WHERE id=?", (eid,)).fetchone()[0]
+
+
+def test_attachment_notes_become_typed_attachment_entities(conn):
+    """The entity type says what kind of document it is, routed by mime.
+
+    A `note` was doing double duty: a walk-session transcript and a JPEG were
+    the same type, distinguishable only by which edge happened to point at them.
+    """
+    _seed_blob_shapes(conn)
+    stats = run_migration(conn, apply=True)
+
+    assert _etype(conn, "photo1") == "photo"
+    assert _etype(conn, "pdf1") == "manual"      # a PDF is a manual, not a photo
+    assert _etype(conn, "textnote") == "note"    # carries no blob: untouched
+    assert _etype(conn, "probe") == "note"       # flag but no blob_id: not an attachment
+    # note1 comes from the base fixture as an inline data_b64 photo; _extract_photos
+    # turns it into a top-level blob_id, so it converges here too -- 3, not 2.
+    assert _etype(conn, "note1") == "photo"
+    assert stats["notes_retyped_to_photo"] == 3
+
+    # proc1 carries photos NESTED under content.images[]. That shape is not
+    # converged: splitting one entity into N photo entities means synthesising
+    # ids, versions and edges inside a migration, and there are zero such rows
+    # in either live install. It stays an import-time shape -- see ADR-013 3.
+    assert _etype(conn, "proc1") == "note"
+    assert all("blob_id" in img for img in _content(conn, "proc1")["images"])
+
+
+def test_has_blob_edges_become_has_photo_including_un_normalised_names(conn):
+    """Both spellings must be caught.
+
+    Retiring HAS_BLOB from RelationshipType also removed the only thing that
+    knew how to rewrite rows still storing the enum *name*, so 'HAS_BLOB'
+    arrives at this step untranslated. Matching only 'has_blob' silently
+    reported 0 re-typed while leaving the edges behind.
+    """
+    _seed_blob_shapes(conn)
+    stats = run_migration(conn, apply=True)
+
+    types = dict(conn.execute("SELECT id, relationship_type FROM entity_relationships").fetchall())
+    assert types["hb1"] == "has_photo"
+    assert types["hb2"] == "has_photo"
+    assert stats["has_blob_retyped_to_has_photo"] == 2
+
+
+def test_redundant_blob_flags_are_dropped_but_real_data_is_kept(conn):
+    """The type is the flag; a populated array is not a flag."""
+    _seed_blob_shapes(conn)
+    run_migration(conn, apply=True)
+
+    assert "is_blob" not in _content(conn, "photo1")
+    assert _content(conn, "photo1")["blob_id"] == "b-photo"   # the one real link survives
+    assert "is_blob" not in _content(conn, "probe")
+    assert _content(conn, "dev1") == {}                       # flag + empty array both go
+    # A populated screenshot_blob_ids is data, not a restatement of the type.
+    # Dropping it would lose blob references with nothing to recover them from.
+    assert _content(conn, "app1")["screenshot_blob_ids"] == ["b-keep"]
+
+
+def test_blob_convergence_is_idempotent(conn):
+    _seed_blob_shapes(conn)
+    run_migration(conn, apply=True)
+    again = run_migration(conn, apply=True)
+
+    assert again["notes_retyped_to_photo"] == 0
+    assert again["has_blob_retyped_to_has_photo"] == 0
+    assert again["blob_flags_dropped"] == 0
+    assert _etype(conn, "photo1") == "photo"
+
+
+def test_migration_refuses_to_finish_with_un_normalised_types(conn):
+    """A retired vocabulary member must fail loudly, not silently persist.
+
+    This is the guard for the bug above, generalised: normalisation maps names
+    to values using the enums, so anything retired from an enum stops being
+    translated and stays in the database as an uppercase name that every type
+    filter will miss.
+    """
+    conn.execute(
+        "INSERT INTO entity_relationships (id, from_entity_id, from_entity_version, "
+        "to_entity_id, to_entity_version, relationship_type) VALUES (?,?,?,?,?,?)",
+        ("rel-retired", "note1", OLD, "proc1", OLD, "RETIRED_TYPE"))
+    conn.commit()
+
+    with pytest.raises(RuntimeError, match="un-normalised domain type values"):
+        run_migration(conn, apply=True)
+
+
+def test_the_guard_tolerates_sync_status(conn):
+    """blobs.sync_status is engine state and still an SQLEnum: it keeps names.
+
+    Without this the guard would reject every database, since 'UPLOADED' is
+    uppercase by design.
+    """
+    _seed_legacy_vocabulary(conn)
+    run_migration(conn, apply=True)   # must not raise
+    assert conn.execute("SELECT sync_status FROM blobs WHERE id='b1'").fetchone()[0] == "UPLOADED"

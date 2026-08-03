@@ -575,8 +575,11 @@ class GraphPopulator:
                     "document_type": "instruction_manual",
                     "original_filename": "PAR-42MAAUB_Instruction Book.pdf",
                     "summary": "Complete instruction manual for Mitsubishi PAR-42MAAUB thermostat including installation, operation, and maintenance procedures.",
-                    "has_blob": True,
-                    "blob_reference": "pdf_manual_par42"
+                    # A `manual` IS a PDF attachment (ADR-013 §3), so no
+                    # "has_blob" flag: the entity type already says it. One
+                    # link only -- blob_id -- and it attaches via DOCUMENTED_BY.
+                    "mime_type": "application/pdf",
+                    "blob_id": "pdf_manual_par42"
                 },
                 key="mitsubishi_manual"
             )
@@ -591,38 +594,55 @@ class GraphPopulator:
             await self.create_relationship(session, mitsubishi_user_note, pvfy_blower, RelationshipType.DOCUMENTED_BY,
                                          {"note_type": "user_provided"})
 
-            # Create photo documentation notes
-            thermostat_photo_note = await self.create_entity(
-                session, EntityType.NOTE,
-                "Thermostat Photo Documentation",
+            # Photos are their own entity type (ADR-013 §3). One photo per blob,
+            # rather than a note listing several filenames: a photo entity that
+            # claims two images has no single blob_id, which is how the
+            # "blob_references" plural crept in and made the link ambiguous.
+            thermostat_photo = await self.create_entity(
+                session, EntityType.PHOTO,
+                "PAR-42.jpeg",
                 {
-                    "content": "Photo of Mitsubishi PAR-42MAA thermostat installed in kitchen",
-                    "category": "photo_documentation",
-                    "photo_filename": "PAR-42.jpeg",
-                    "has_blob": True,
-                    "blob_reference": "photo_par42"
+                    "description": "Photo of Mitsubishi PAR-42MAA thermostat installed in kitchen",
+                    "filename": "PAR-42.jpeg",
+                    "mime_type": "image/jpeg",
+                    "blob_id": "photo_par42"
                 },
-                key="thermostat_photo_note"
+                key="thermostat_photo"
             )
 
-            blower_photo_note = await self.create_entity(
-                session, EntityType.NOTE,
-                "Air Handler Photo Documentation",
+            blower_photo = await self.create_entity(
+                session, EntityType.PHOTO,
+                "PVFY-Blower.jpeg",
                 {
-                    "content": "Photos of PVFY air handler blower unit and serial number plate",
-                    "category": "photo_documentation",
-                    "photo_filenames": ["PVFY-Blower.jpeg", "PVFY-Serial_Number.jpeg"],
-                    "has_blob": True,
-                    "blob_references": ["photo_pvfy_blower", "photo_pvfy_serial"]
+                    "description": "Photo of PVFY air handler blower unit",
+                    "filename": "PVFY-Blower.jpeg",
+                    "mime_type": "image/jpeg",
+                    "blob_id": "photo_pvfy_blower"
                 },
-                key="blower_photo_note"
+                key="blower_photo"
             )
 
-            # Link photo documentation to devices
-            await self.create_relationship(session, thermostat_photo_note, mitsubishi_thermostat, RelationshipType.HAS_BLOB,
-                                         {"blob_type": "photo"})
-            await self.create_relationship(session, blower_photo_note, pvfy_blower, RelationshipType.HAS_BLOB,
-                                         {"blob_type": "photo"})
+            blower_serial_photo = await self.create_entity(
+                session, EntityType.PHOTO,
+                "PVFY-Serial_Number.jpeg",
+                {
+                    "description": "Photo of PVFY air handler serial number plate",
+                    "filename": "PVFY-Serial_Number.jpeg",
+                    "mime_type": "image/jpeg",
+                    "blob_id": "photo_pvfy_serial"
+                },
+                key="blower_serial_photo"
+            )
+
+            # device -> photo, not photo -> device. The old edges ran backwards
+            # against their own declared endpoints, which nothing caught because
+            # the rule was enforced on one write path of three (ADR-013 §5).
+            await self.create_relationship(session, mitsubishi_thermostat, thermostat_photo,
+                                           RelationshipType.HAS_PHOTO, {})
+            await self.create_relationship(session, pvfy_blower, blower_photo,
+                                           RelationshipType.HAS_PHOTO, {})
+            await self.create_relationship(session, pvfy_blower, blower_serial_photo,
+                                           RelationshipType.HAS_PHOTO, {})
 
             # Commit all changes
             await session.commit()

@@ -299,7 +299,7 @@ The system supports comprehensive User Generated Content functionality for stori
 - Store installation photos and serial numbers
 - Extract metadata from photo files
 - Categorize photos by type (serial_number, installation, etc.)
-- Link photos to devices with `HAS_BLOB` relationship
+- Link photos to devices with the `HAS_PHOTO` relationship
 - Support for JPEG and PNG formats
 
 #### Mitsubishi Thermostat Integration
@@ -331,31 +331,46 @@ pdf_blob = Blob(
     blob_metadata={"pages": 50, "model": "PAR-42MAAUB"}
 )
 
-# Create a user NOTE with photo references
-photo_note = Entity(
-    entity_type=EntityType.NOTE,
-    name="Installation Photos",
+# Create a PHOTO. An attachment entity carries exactly one blob, via
+# top-level content.blob_id -- the only link to the blobs table (ADR-013 3).
+# The entity type is the flag: no "has_blob": True is needed or accepted.
+photo = Entity(
+    entity_type=EntityType.PHOTO,
+    name="install-01.jpg",
     content={
-        "content": "Photos from HVAC installation",
-        "category": "photo_documentation",
-        "has_blob": True,
-        "blob_references": ["blob_id_1", "blob_id_2"]
+        "description": "Photo from HVAC installation",
+        "filename": "install-01.jpg",
+        "mime_type": "image/jpeg",
+        "blob_id": "blob_id_1"
     }
 )
 
-# Link device to app
+# Link device to photo. Note the direction: the device HAS the photo.
 relationship = EntityRelationship(
     from_entity_id=device.id,
-    to_entity_id=app.id,
-    relationship_type=RelationshipType.CONTROLLED_BY_APP,
+    to_entity_id=photo.id,
+    relationship_type=RelationshipType.HAS_PHOTO,
+    properties={}
+)
+
+# Link device to the app that manages it. `manages` runs app -> device;
+# `controlled_by_app` was its exact inverse and is deleted (ADR-013 4).
+relationship = EntityRelationship(
+    from_entity_id=app.id,
+    to_entity_id=device.id,
+    relationship_type=RelationshipType.MANAGES,
     properties={"integration": "wifi_adapter"}
 )
 ```
 
 ### UGC Relationship Types
-- **CONTROLLED_BY_APP** - Device controlled by mobile/web app
-- **DOCUMENTED_BY** - Entity documented by note or manual
-- **HAS_BLOB** - Entity has associated binary data
+- **MANAGES** - App manages a device, automation or schedule
+- **DOCUMENTED_BY** - Entity documented by a note or a `manual` (PDF)
+- **HAS_PHOTO** - Entity has an attached `photo`
+
+See [domains/house/README.md](domains/house/README.md) for the complete
+vocabulary, and [ADR-013](docs/adr/ADR-013-house-vocabulary-cleanup.md) for how
+blobs are linked.
 
 ## 🔐 Security Features (Phase 5)
 

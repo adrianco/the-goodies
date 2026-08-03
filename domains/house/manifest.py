@@ -36,7 +36,13 @@ ENTITY_TYPES = [
     "window",
     "app",
     "note",
+    # Attachment entities: both carry a blob via top-level `content.blob_id`,
+    # which since ADR-013 §3 is the *only* link to the blobs table. The type
+    # says what kind of document it is -- `manual` a PDF, `photo` an image --
+    # so no boolean "this is a blob" flag is needed: the type is the flag.
+    # Further kinds (video, diagram) are new entity types, not new plumbing.
     "manual",
+    "photo",
     "procedure",
     "schedule",
     "automation",
@@ -113,10 +119,22 @@ RELATIONSHIP_RULES = [
         allowed_endpoints=(("procedure", "device"), ("procedure", "room")),
     ),
     RelationshipRule(
-        name="has_blob",
-        # Anything may carry an attachment; door->note and note->note are both
-        # live. Unconstrained is the accurate statement (ADR-013 §3).
-        allowed_endpoints=None,
+        name="has_photo",
+        # Replaces has_blob, which was misnamed: it pointed at a note carrying
+        # a blob, never at a blob. Now that a photo is its own entity type this
+        # can be *constrained* rather than unconstrained -- the earlier "anything
+        # may have a blob" was a statement about plumbing, not about the domain.
+        # A PDF is not here: it is a `manual`, and attaches via documented_by.
+        allowed_endpoints=(
+            ("device", "photo"),
+            ("door", "photo"),
+            ("window", "photo"),
+            ("room", "photo"),
+            ("home", "photo"),
+            ("app", "photo"),
+            ("note", "photo"),
+            ("manual", "photo"),
+        ),
     ),
     # -- Control and automation -------------------------------------------
     # Undescribed at both sites so far. Retained and shaped to serve Vantage
@@ -186,6 +204,11 @@ RELATIONSHIP_RULES = [
     # this ADR exists to fix. Both were unused, so there was no cost to
     # choosing. `manages` wins: the app is the actor, so it reads as the
     # subject.
+    # NOTE: `has_blob` is deliberately absent (ADR-013 §3), replaced by
+    # `has_photo`. "Blob" is a storage word, not a domain word, and the edge
+    # never pointed at a blob anyway. There is now exactly one link to the blobs
+    # table -- `content.blob_id` on an attachment entity -- and relationships
+    # only say what role the attachment plays.
     # NOTE: `contained_in` is deliberately absent (ADR-013 §1). It duplicated
     # located_in, declared no endpoints, and so was never creatable. No data
     # uses it and none could.

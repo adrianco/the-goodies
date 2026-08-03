@@ -39,7 +39,11 @@ class RelationshipType(str, Enum):
     MONITORS = "monitors"
     AUTOMATES = "automates"
     CONTROLLED_BY_APP = "controlled_by_app"  # New: Links devices to controlling apps
-    HAS_BLOB = "has_blob"  # New: Links entities to binary data (photos, PDFs)
+    # ADR-013 §3: replaces HAS_BLOB, which never pointed at a blob -- it pointed
+    # at a note that carried one. A relationship names the attachment's role;
+    # the blob itself is reached only by content.blob_id on the attachment
+    # entity. PDFs are `manual` entities and attach via DOCUMENTED_BY.
+    HAS_PHOTO = "has_photo"
 
 
 class EntityRelationship(Base, InbetweeniesTimestampMixin):
@@ -192,11 +196,15 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
                 (EntityType.HOME, EntityType.APP),
                 (EntityType.AUTOMATION, EntityType.APP),
             ],
-            RelationshipType.HAS_BLOB: [
-                (EntityType.DEVICE, EntityType.NOTE),  # Photos of devices
-                (EntityType.MANUAL, EntityType.NOTE),  # PDF manuals
-                (EntityType.APP, EntityType.NOTE),     # App icons
-                (EntityType.HOME, EntityType.NOTE),    # Home photos
+            RelationshipType.HAS_PHOTO: [
+                (EntityType.DEVICE, EntityType.PHOTO),
+                (EntityType.DOOR, EntityType.PHOTO),
+                (EntityType.WINDOW, EntityType.PHOTO),
+                (EntityType.ROOM, EntityType.PHOTO),
+                (EntityType.HOME, EntityType.PHOTO),
+                (EntityType.APP, EntityType.PHOTO),     # App icons / screenshots
+                (EntityType.NOTE, EntityType.PHOTO),
+                (EntityType.MANUAL, EntityType.PHOTO),
             ],
         }
 
