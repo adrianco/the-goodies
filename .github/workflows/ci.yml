@@ -24,7 +24,12 @@ jobs:
         # locking / WAL issues that the project does not target (see issue #7,
         # parked). The deployment target is Linux/macOS house servers.
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12"]
+        # requires-python is ">=3.11" with no upper bound, so every version
+        # from 3.11 up is a supported claim. Test the ends of that range, not
+        # just the bottom: the fastapi>=0.133.0 floor exists solely because on
+        # 3.14 mcp>=2 requires starlette>=0.48, a constraint that was
+        # previously unverified by CI because 3.14 was never in the matrix.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         
     steps:
       - name: Checkout code
@@ -270,12 +275,38 @@ jobs:
           PY
 
           # 3. No member subpackage or test tree installed as a top-level name.
+          # Report WHERE a leaked name resolves from, not just that it does.
+          # A bare pass/fail cannot distinguish "our package discovery leaked a
+          # subpackage" from "some third-party wheel ships a top-level tests/"
+          # -- and those need opposite fixes. This check failed in CI while
+          # being unreproducible on macOS across 3.11 and 3.14, which is exactly
+          # the case where the origin path is the whole diagnosis.
+          leaked=0
           for mod in mcp.tools models sync graph repositories utils auth search api tests; do
-            if "$VENV_PY" -c "import $mod" 2>/dev/null; then
-              echo "FAIL: top-level '$mod' is importable -- packaging has leaked"
-              exit 1
+            origin=$("$VENV_PY" -c "
+          import importlib.util as u
+          try:
+              s = u.find_spec('$mod')
+          except Exception:
+              s = None
+          print(s.origin if s and s.origin else '')
+          " 2>/dev/null || true)
+            if [ -n "$origin" ]; then
+              echo "FAIL: top-level '$mod' is importable -- resolves to: $origin"
+              leaked=1
             fi
           done
+          if [ "$leaked" = "1" ]; then
+            echo "--- installed distributions owning a top-level 'tests' ---"
+            "$VENV_PY" - <<'PY'
+          import importlib.metadata as md
+          for dist in md.distributions():
+              tops = (dist.read_text("top_level.txt") or "").split()
+              if "tests" in tops:
+                  print(f"  {dist.metadata['Name']} {dist.version} declares top-level 'tests'")
+          PY
+            exit 1
+          fi
           echo "No top-level leakage."
 
           # 4. Dependency set is internally consistent.
