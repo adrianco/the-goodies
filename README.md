@@ -89,7 +89,7 @@ export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
 # their source trees from the root put the repo root on sys.path, which leaked
 # every top-level directory (tests/ included) as an importable package -- see
 # the comment in pyproject.toml.
-pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
 # Or, with uv (resolves from the committed uv.lock instead of pip's resolver):
 #   uv sync

@@ -61,7 +61,7 @@ jobs:
           python -m pip install --upgrade pip
           # Root ships no code (see pyproject.toml): install the members from
           # their own directories, plus the root for the shared dev deps.
-          pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+          pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
       - name: Run tests
         # No `|| true`: this step used to swallow the exit code, so the Test
@@ -129,7 +129,7 @@ jobs:
           # One workspace, one install (ADR-010 section 6).
           # Root ships no code (see pyproject.toml): install the members from
           # their own directories, plus the root for the shared dev deps.
-          pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+          pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
       - name: Run Security Checks
         run: |
@@ -191,7 +191,7 @@ jobs:
           # One workspace, one install (ADR-010 section 6).
           # Root ships no code (see pyproject.toml): install the members from
           # their own directories, plus the root for the shared dev deps.
-          pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+          pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
       - name: Setup and test components
         run: |
@@ -256,7 +256,7 @@ jobs:
           python -m venv test_env
           VENV_PY="$GITHUB_WORKSPACE/test_env/bin/python"
           "$VENV_PY" -m pip install --upgrade pip setuptools wheel
-          "$VENV_PY" -m pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+          "$VENV_PY" -m pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
           mkdir -p "$RUNNER_TEMP/importcheck"
           cd "$RUNNER_TEMP/importcheck"
