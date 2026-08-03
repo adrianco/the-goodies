@@ -31,7 +31,14 @@ from funkygibbon.models import (
 
 async def _store_entity(db, name, *, entity_type=EntityType.DEVICE, content=None,
                         entity_id=None, parent=None):
-    """Insert an entity version straight into storage (what sync does)."""
+    """Store an entity version the way every write path does.
+
+    Goes through GraphRepository.store_entity rather than db.add(): that is
+    where is_latest and server_seq are maintained (ADR-002 §1-2). Adding the row
+    directly leaves two versions both marked current, which is a state the
+    system cannot produce and which no reader is expected to cope with.
+    """
+    from funkygibbon.repositories.graph import GraphRepository
     entity = Entity(
         id=entity_id or str(uuid.uuid4()),
         version=Entity.create_version("test-user"),
@@ -42,9 +49,9 @@ async def _store_entity(db, name, *, entity_type=EntityType.DEVICE, content=None
         user_id="test-user",
         parent_versions=[parent] if parent else [],
     )
-    db.add(entity)
+    stored = await GraphRepository(db).store_entity(entity)
     await db.commit()
-    return entity
+    return stored
 
 
 async def _store_relationship(db, source, target,

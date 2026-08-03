@@ -30,9 +30,9 @@ with an application-owned service:
 
 STAGE-C NOTE ON THE GENERATION MARKER
 -------------------------------------
-ADR-003 decision 3 specifies the ADR-002 ``server_seq`` as the generation tag.
-``server_seq`` does not exist yet (it lands in Stage C), so the stand-in below
-is ``StorageMarker``: row counts plus ``max(updated_at)`` for entities and
+ADR-003 decision 3 specifies the ADR-002 ``server_seq`` as the generation tag,
+and since Stage C that is what ``StorageMarker`` carries: ``max(server_seq)``
+for entities, plus row count and ``max(updated_at)`` for
 relationships, which is one cheap aggregate query per table and is enough to
 notice any insert, update or tombstone. When ADR-002 lands, replace
 ``StorageMarker``/``_read_marker`` with a single ``max(server_seq)`` read and
@@ -109,33 +109,38 @@ def assert_single_worker_posture() -> None:
 
 @dataclass(frozen=True)
 class StorageMarker:
-    """Cheap fingerprint of graph storage.
+    """Generation tag for the index: ADR-002's ``server_seq`` (ADR-003 §3).
 
-    Stand-in for ADR-002's ``server_seq`` (see module docstring). Equality is the
-    only operation used: any insert, in-place update or tombstone changes either
-    a row count or a ``max(updated_at)``.
+    ``max(server_seq)`` is the generation the index was built at. It is
+    monotonic and assigned in apply order, so a single integer comparison
+    answers "has anything been written since?".
+
+    This replaces a stand-in of row counts plus ``max(updated_at)``, used while
+    ``server_seq`` did not exist. That stand-in had a real blind spot: an
+    in-place update that changed neither the row count nor a timestamp within
+    the clock's resolution was invisible to it, so drift could go undetected —
+    the exact failure it exists to catch.
+
+    Relationships are not versioned and carry no ``server_seq``, so their count
+    and ``max(updated_at)`` are still the best available signal for that table.
     """
 
-    entity_rows: int
-    relationship_rows: int
-    latest_entity_update: Optional[Any] = None
+    entity_seq: Optional[int] = None
+    relationship_rows: int = 0
     latest_relationship_update: Optional[Any] = None
 
 
 async def _read_marker(db: AsyncSession) -> StorageMarker:
-    """Read the storage marker. Two aggregate queries, no row scan."""
-    entities = (
-        await db.execute(select(func.count(Entity.id), func.max(Entity.updated_at)))
-    ).one()
+    """Read the generation tag. Two aggregates, no row scan."""
+    entity_seq = (await db.execute(select(func.max(Entity.server_seq)))).scalar()
     relationships = (
         await db.execute(
             select(func.count(EntityRelationship.id), func.max(EntityRelationship.updated_at))
         )
     ).one()
     return StorageMarker(
-        entity_rows=entities[0] or 0,
+        entity_seq=entity_seq,
         relationship_rows=relationships[0] or 0,
-        latest_entity_update=_as_marker_value(entities[1]),
         latest_relationship_update=_as_marker_value(relationships[1]),
     )
 
@@ -164,8 +169,8 @@ class GraphIndexService:
         self.enabled = graph_index_enabled() if enabled is None else enabled
         self.loaded = False
         # Monotonic counter bumped on every write-through and every rebuild.
-        # Cheap observability hook (tests assert on it, logs report it) and the
-        # natural place for ADR-002's server_seq to slot in during Stage C.
+        # Purely an observability hook (tests assert on it, logs report it) —
+        # drift detection uses StorageMarker's server_seq, not this.
         self.generation = 0
         self.rebuild_count = 0
         self._marker: Optional[StorageMarker] = None

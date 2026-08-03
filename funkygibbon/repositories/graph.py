@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,12 +31,37 @@ class GraphRepository(BaseRepository[Entity]):
         """
         Store entity with version tracking.
 
+        Maintains is_latest and server_seq (ADR-002 §1-2), so every write path
+        keeps the invariant "exactly one current row per id" — not just the sync
+        apply path. A column that only one writer maintains is worse than no
+        column: readers trust it, and the paths that skip it leave two rows
+        claiming to be current with nothing to say which is right.
+
         Args:
             entity: Entity to store
 
         Returns:
             Stored entity
         """
+        # `is not False`, not a truth test: a freshly constructed Entity has
+        # is_latest=None until flush, because the column default is applied by
+        # the INSERT rather than by __init__. A plain `if entity.is_latest:`
+        # therefore skips the demotion for exactly the common case — a new
+        # version — and leaves two rows marked current.
+        if entity.is_latest is not False:
+            entity.is_latest = True
+            # Demote the incumbent in the same transaction as the insert.
+            await self.db.execute(
+                update(Entity)
+                .where(Entity.id == entity.id,
+                       Entity.version != entity.version,
+                       Entity.is_latest.is_(True))
+                .values(is_latest=False)
+            )
+        if entity.server_seq is None:
+            next_seq = (await self.db.execute(select(func.max(Entity.server_seq)))).scalar()
+            entity.server_seq = (next_seq or 0) + 1
+
         self.db.add(entity)
         await self.db.flush()
         return entity
@@ -58,23 +83,15 @@ class GraphRepository(BaseRepository[Entity]):
                 and_(Entity.id == entity_id, Entity.version == version)
             )
         else:
-            # Latest = greatest version string, NOT greatest created_at.
+            # ADR-002 §1: read the recorded answer.
             #
-            # Version strings carry a UTC ISO-8601 prefix, so lexical order is
-            # chronological by *edit* time. created_at is the row's *insert*
-            # time, and the two diverge whenever a version arrives out of
-            # order — which sync does routinely: an offline edit synced later,
-            # or a losing version preserved into history (ADR-011 §2). Ordering
-            # by created_at made the most recently *inserted* row win, so
-            # preserving a superseded version would silently promote it here
-            # while api/sync.py::_latest_entities() still reported the correct
-            # one. Two disagreeing definitions of "latest" over the same table.
-            #
-            # This matches _latest_entities(). ADR-002 replaces both with an
-            # is_latest column in Stage C.
+            # This has now been three rules in three commits — created_at, then
+            # the version string, now is_latest — which is the argument for the
+            # column. The first two INFERRED which version won; only conflict
+            # resolution knows, and it now writes it down.
             stmt = select(Entity).where(
-                Entity.id == entity_id
-            ).order_by(Entity.version.desc()).limit(1)
+                Entity.id == entity_id, Entity.is_latest.is_(True)
+            ).limit(1)
 
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -89,43 +106,17 @@ class GraphRepository(BaseRepository[Entity]):
         Returns:
             List of entities
         """
-        # Subquery to get latest version for each entity ID
-        subquery = (
-            select(Entity.id, Entity.version, Entity.created_at)
-            .where(Entity.entity_type == entity_type)
-            .subquery()
-        )
-
-        # Window function to rank versions by created_at
-        from sqlalchemy import func
-        ranked = (
-            select(
-                subquery.c.id,
-                subquery.c.version,
-                func.row_number().over(
-                    partition_by=subquery.c.id,
-                    order_by=subquery.c.created_at.desc()
-                ).label("rn")
-            ).subquery()
-        )
-
-        # Get only the latest version (rn=1) for each entity
-        latest_versions = (
-            select(ranked.c.id, ranked.c.version)
-            .where(ranked.c.rn == 1)
-            .subquery()
-        )
-
-        # Join with Entity table to get full entity data
+        # ADR-002 §1: is_latest, not a window function over created_at.
+        #
+        # This was the FOURTH place inferring "latest", and the last one still
+        # using created_at — the rule Stage A already had to correct in
+        # get_entity(). It matters more now than it did then: a losing version
+        # is preserved with a later created_at than the winner it lost to
+        # (ADR-011 §2), so ranking by insert time would load the LOSER into the
+        # graph index and serve it from every traversal.
         stmt = (
             select(Entity)
-            .join(
-                latest_versions,
-                and_(
-                    Entity.id == latest_versions.c.id,
-                    Entity.version == latest_versions.c.version
-                )
-            )
+            .where(Entity.entity_type == entity_type, Entity.is_latest.is_(True))
             .options(selectinload(Entity.outgoing_relationships))
             .options(selectinload(Entity.incoming_relationships))
         )

@@ -89,7 +89,17 @@ class SyncResponse(BaseModel):
     changes: List[SyncChange] = Field(default_factory=list)
     conflicts: List[ConflictInfo] = Field(default_factory=list)
     vector_clock: VectorClock = Field(default_factory=VectorClock)
+    # Pagination watermark: the highest server_seq included in `changes`. Send
+    # it back as SyncRequest.cursor to resume. Null means the stream is drained
+    # — that is the signal to stop looping, not an empty `changes` list, since a
+    # filtered page can be empty while more rows remain (ADR-002 §4).
     cursor: Optional[str] = None
+    # sha256 over the sorted (id, version) set of every current row, so a client
+    # can tell whether its replica actually matches (ADR-011 §4). Divergence is
+    # otherwise undetectable: both sides believe they are in sync because both
+    # applied every change they were told about. Compared, never merged — a
+    # mismatch means resync, not a repair attempt.
+    state_digest: Optional[str] = None
     sync_stats: SyncStats = Field(default_factory=SyncStats)
     # UTC ISO-8601 server clock at response time. The client persists this and
     # sends it back as filters.since on the next delta sync (PROTOCOL.md §4).

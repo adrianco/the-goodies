@@ -213,10 +213,66 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
             f"{remaining_inline} inline photos remain"
         )
 
+    stats.update(_backfill_access_columns(cur))
+
     if apply:
         conn.commit()
     else:
         conn.rollback()
+    return stats
+
+
+def _backfill_access_columns(cur) -> Dict[str, int]:
+    """Add and populate is_latest / server_seq on an existing database (ADR-002).
+
+    Idempotent: adds each column only if absent, and recomputes the values from
+    the rows themselves, so re-running cannot corrupt an already-migrated file.
+
+    Which row is "latest" is decided here by the greatest version string. That
+    is the rule the server used before this column existed, so the backfill
+    reproduces the state the database was already being served under rather
+    than silently re-deciding history. From now on the value is written by
+    conflict resolution, which is the only place that actually knows.
+    """
+    stats = {"is_latest_set": 0, "server_seq_set": 0}
+    existing = {row[1] for row in cur.execute("PRAGMA table_info(entities)").fetchall()}
+
+    if "is_latest" not in existing:
+        cur.execute("ALTER TABLE entities ADD COLUMN is_latest BOOLEAN NOT NULL DEFAULT 1")
+    if "server_seq" not in existing:
+        cur.execute("ALTER TABLE entities ADD COLUMN server_seq INTEGER")
+
+    # is_latest: exactly one per id, the greatest version.
+    cur.execute("UPDATE entities SET is_latest = 0")
+    cur.execute("""
+        UPDATE entities SET is_latest = 1
+        WHERE (id, version) IN (SELECT id, MAX(version) FROM entities GROUP BY id)
+    """)
+    stats["is_latest_set"] = cur.execute(
+        "SELECT COUNT(*) FROM entities WHERE is_latest = 1"
+    ).fetchone()[0]
+
+    # server_seq: dense, in the closest thing to apply order we can reconstruct
+    # (created_at, then version as a tiebreak). Exact ordering of history is
+    # unrecoverable after the fact; what matters is that the stamps are unique
+    # and monotonic so a client cursor cannot skip or repeat a row.
+    rows = cur.execute(
+        "SELECT id, version FROM entities ORDER BY created_at, version"
+    ).fetchall()
+    for seq, (eid, version) in enumerate(rows, start=1):
+        cur.execute(
+            "UPDATE entities SET server_seq = ? WHERE id = ? AND version = ?",
+            (seq, eid, version),
+        )
+    stats["server_seq_set"] = len(rows)
+
+    # Indexes are created by SQLAlchemy's metadata on a fresh database; add them
+    # here for a file that predates them.
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_entities_is_latest_server_seq "
+                "ON entities (is_latest, server_seq)")
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_entities_server_seq ON entities (server_seq)")
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_entities_id_version ON entities (id, version)")
+
     return stats
 
 
