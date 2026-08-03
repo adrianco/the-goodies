@@ -135,20 +135,36 @@ types, so `RelationshipRule` gained a wildcard: `("*", "photo")` says anything
 may have a photo without the engine knowing what "anything" is. That is a pair
 like any other — the three states of `allowed_endpoints` are unaffected.
 
-**One shape survives, and it is not unused.** An earlier version of this section
-said nested `content.images[]` had "zero rows in either live install". That was
-measured on Roland only and is **wrong**: the Corfe install has a `procedure`
-entity carrying four step photos as `images[]`, each already normalised to a
-`blob_id` by `_extract_photos`. So 4 of Corfe's 18 blobs are reachable only by
-the nested path, and `carries_blob()` plus any future integrity sweep has to
-know two shapes rather than one.
+#### One attachment is an entity; an ordered sequence stays inline
 
-Converging it means splitting one entity into N inside a migration —
-synthesising ids, versions and edges — and raises a real modelling question the
-top-level form does not: the images are *ordered steps*, so `step` would have to
-move onto the `has_photo` edge's properties. Left as the one documented
-exception to "one link", and recorded here as a known inconsistency rather than
-an absent one.
+An earlier version of this section said nested `content.images[]` had "zero rows
+in either live install". That was measured on Roland only and is **wrong**: the
+Corfe install has a `procedure` entity carrying four step photos as `images[]`,
+each already normalised to a `blob_id` by `_extract_photos`.
+
+Looked at again, that is not a stray second mechanism — it is a different shape
+of fact, and the rule is:
+
+| Shape | How to model it |
+|---|---|
+| One attachment, or several with no meaningful order | An attachment **entity** per blob (`photo`, `manual`), linked by `has_photo` / `documented_by` |
+| An **ordered sequence** belonging to one entity | An inline list on that entity, each element carrying `blob_id` |
+
+**Relationships are an unordered set.** Splitting four step photos into four
+`photo` entities would put their order nowhere it belongs — it would have to be
+smuggled into edge properties as a `step` integer, and every reader would have to
+know to sort by it. The sequence is a property of the procedure, not four
+independent facts about it. Keeping it inline says that directly.
+
+The cost is real and worth naming: those four blobs are reachable only by the
+nested path, so `carries_blob()` and any future integrity sweep must know both
+shapes. That is the price of modelling order honestly, and it is bounded — the
+inline form is only ever a list on one owning entity, never a general escape
+hatch.
+
+**The test for next time:** if removing an item would change what the *remaining*
+items mean, it is a sequence — keep it inline. If each attachment stands alone,
+it is an entity.
 
 ### 4. Automation provenance is an `app` entity, not a source type
 

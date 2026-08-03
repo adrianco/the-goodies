@@ -77,6 +77,13 @@ house adds `manual` for an appliance PDF, a vehicles domain might add `service_r
 Anything listed there is automatically an entity type too, and
 `manifest.carries_blob(entity_type)` is the single question the engine asks.
 
+**One attachment is an entity; an ordered sequence stays inline.** Relationships
+are an unordered set, so a sequence split into entities has nowhere to put its
+order except a `step` integer in edge properties that every reader must know to
+sort by. Keep ordered runs as `content.images[]` on the owning entity, each
+element carrying its own `blob_id`. The test: if removing an item would change
+what the remaining items mean, it is a sequence.
+
 A domain **narrows** a base relationship rule by redeclaring it under the same
 name. The house narrows `manages` from `app → *` to four specific pairs. Do not
 widen one — that makes the base rule decorative.

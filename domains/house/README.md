@@ -109,11 +109,26 @@ Current state: 27 blobs, 27 `photo` entities, no dangling references and no
 orphaned blobs. 26 of the 27 photos are linked by a `has_photo` edge; one has
 never been attached to anything.
 
-**One documented exception:** photos nested under `content.images[]` on the
-owning entity are normalised to blob references by `migrate.py::_extract_photos`
-rather than split into `photo` entities. Roland has none, but **Corfe has four**
-— step photos on a `procedure` — so this is a live inconsistency, not a dormant
-one. See ADR-013 §3.
+### Ordered attachments stay inline
+
+One attachment is an entity. An **ordered sequence** of them is an inline list
+on the entity that owns it, each element carrying its own `blob_id`:
+
+| Shape | How to model it |
+|---|---|
+| One attachment, or several unordered | An entity per blob (`photo`, `manual`) + `has_photo` / `documented_by` |
+| An ordered sequence | `content.images[]` on the owning entity |
+
+Relationships are an unordered set, so splitting a sequence into entities puts
+its order nowhere it belongs — it ends up as a `step` integer in edge properties
+that every reader has to know to sort by. Corfe's `procedure` "Cinema 60 All
+Zone Stereo Mode" carries 4 step photos this way, and should.
+
+**The test:** if removing an item would change what the remaining items mean,
+it is a sequence — keep it inline. Otherwise it is an entity.
+
+The cost, named honestly: those blobs are reachable only by the nested path, so
+`carries_blob()` and any integrity sweep must know both shapes. See ADR-013 §3.
 
 ## Two installs, different halves of the vocabulary
 
