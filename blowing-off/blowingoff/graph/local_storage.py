@@ -86,6 +86,28 @@ class LocalGraphStorage:
         else:
             self._rebuild_index()
 
+    def _write_json(self, path: Path, payload, **dump_kwargs):
+        """Write JSON so a concurrent reader never sees a partial file.
+
+        Writing in place leaves a window in which the file is truncated or
+        half-written, and a reader that lands in it fails with a
+        JSONDecodeError. Writing to a sibling temp file and renaming makes the
+        replacement atomic, so a reader sees either the old file or the new one.
+        """
+        tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            with open(tmp_path, 'w') as f:
+                json.dump(payload, f, **dump_kwargs)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        except BaseException:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+            raise
+
     def _save_data(self):
         """Save data to disk"""
         # Save entities
@@ -95,27 +117,23 @@ class LocalGraphStorage:
                 self._entity_to_dict(v) for v in versions
             ]
 
-        with open(self.entities_file, 'w') as f:
-            json.dump(entities_data, f, indent=2, default=str)
+        self._write_json(self.entities_file, entities_data, indent=2, default=str)
 
         # Save relationships
         relationships_data = [
             self._relationship_to_dict(r) for r in self._relationships
         ]
 
-        with open(self.relationships_file, 'w') as f:
-            json.dump(relationships_data, f, indent=2, default=str)
+        self._write_json(self.relationships_file, relationships_data, indent=2, default=str)
 
         # Save index
-        with open(self.index_file, 'w') as f:
-            json.dump(self._index, f, indent=2)
+        self._write_json(self.index_file, self._index, indent=2)
 
         # Save pending local changes
-        with open(self.pending_file, 'w') as f:
-            json.dump({
-                "entities": self._pending_entities,
-                "relationships": self._pending_relationships,
-            }, f, indent=2)
+        self._write_json(self.pending_file, {
+            "entities": self._pending_entities,
+            "relationships": self._pending_relationships,
+        }, indent=2)
 
     def _entity_to_dict(self, entity: Entity) -> dict:
         """Convert entity to dictionary for JSON serialization"""

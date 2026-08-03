@@ -22,10 +22,15 @@ class SearchResult:
 
     def to_dict(self) -> dict:
         """Convert to dictionary representation"""
+        # entity_type may be an EntityType or a plain string, exactly as in
+        # Entity.to_dict.
+        entity_type = self.entity.entity_type
+        entity_type_value = entity_type.value if hasattr(entity_type, 'value') else str(entity_type)
+
         return {
             "id": self.entity.id,
             "version": self.entity.version,
-            "entity_type": self.entity.entity_type.value,
+            "entity_type": entity_type_value,
             "name": self.entity.name,
             "score": self.score,
             "highlights": self.highlights,

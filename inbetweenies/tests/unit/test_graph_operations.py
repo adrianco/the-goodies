@@ -66,17 +66,6 @@ class TestUpdateEntity:
         with pytest.raises(ValueError, match="Entity no-such-entity not found"):
             await house.update_entity("no-such-entity", {"name": "x"}, "alice")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG (entity.py:170-173, reached via operations.py:67): create_new_version "
-            "writes the merged content back into the caller's `changes` dict "
-            "(`changes[\"content\"] = merged_content`) instead of into a copy. The "
-            "caller's argument is mutated, and MCPTools.update_entity_tool then reports "
-            "the whole merged content as `changes_applied` (tools.py:475) rather than "
-            "the delta that was requested."
-        ),
-    )
     async def test_does_not_mutate_the_callers_changes_dict(self, house):
         changes = {"content": {"watts": 9}}
 
@@ -210,14 +199,6 @@ class TestGetSubgraph:
         assert set(subgraph["entities"]) == {"device-light"}
         assert subgraph["relationships"] == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG (operations.py:167-168): rel_types is a List but only rel_types[0] is "
-            "ever used -- every relationship type after the first is silently ignored, "
-            "so a caller asking for two types gets the edges of one."
-        ),
-    )
     async def test_all_requested_relationship_types_are_included(self, house):
         subgraph = await house.get_subgraph(
             "device-light",
@@ -230,20 +211,51 @@ class TestGetSubgraph:
             "rel-auto-light",
         }
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG (operations.py:170-171): every edge between two entities that are both "
-            "expanded is appended twice -- once as the first entity's outgoing edge and "
-            "once as the second's incoming edge. The relationships list is not "
-            "de-duplicated, so any caller counting edges over-counts at depth >= 2."
-        ),
-    )
     async def test_relationships_are_not_duplicated(self, house):
         subgraph = await house.get_subgraph("device-light", depth=2)
 
         ids = [r.id for r in subgraph["relationships"]]
         assert len(ids) == len(set(ids))
+
+    async def test_a_self_loop_is_reported_once(self, house):
+        # A self-loop is both an outgoing and an incoming edge of the same
+        # entity, so it is the one edge a single expansion sees twice.
+        house.connect("rel-hub-hub", "device-hub", "device-hub", RelationshipType.CONTROLS)
+
+        subgraph = await house.get_subgraph("device-hub", depth=1)
+
+        ids = [r.id for r in subgraph["relationships"]]
+        assert ids.count("rel-hub-hub") == 1
+
+    async def test_every_requested_type_survives_the_second_hop(self, house):
+        # The per-type queries are re-issued for each expanded entity, so a
+        # type that only appears further out must still be picked up.
+        subgraph = await house.get_subgraph(
+            "device-hub",
+            depth=2,
+            rel_types=[RelationshipType.CONTROLS, RelationshipType.DOCUMENTED_BY],
+        )
+
+        assert {r.id for r in subgraph["relationships"]} == {
+            "rel-hub-light",  # hop 1, CONTROLS
+            "rel-light-manual",  # hop 2, DOCUMENTED_BY
+        }
+
+    async def test_relationship_types_may_be_given_in_any_order(self, house):
+        forwards = await house.get_subgraph(
+            "device-light",
+            depth=1,
+            rel_types=[RelationshipType.CONTROLS, RelationshipType.AUTOMATES],
+        )
+        backwards = await house.get_subgraph(
+            "device-light",
+            depth=1,
+            rel_types=[RelationshipType.AUTOMATES, RelationshipType.CONTROLS],
+        )
+
+        assert {r.id for r in forwards["relationships"]} == {
+            r.id for r in backwards["relationships"]
+        }
 
 
 class TestGetStatistics:

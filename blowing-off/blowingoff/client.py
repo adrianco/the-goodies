@@ -43,8 +43,10 @@ All MCP tools working locally with server data."""
 import os
 import asyncio
 import gc
+import logging
+import shutil
 import uuid
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Union
 from datetime import datetime, UTC
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -59,6 +61,169 @@ from .mcp import LocalMCPClient
 from .graph import LocalGraphStorage, LocalGraphOperations
 from .repositories import SyncMetadataRepository
 from .auth import AuthManager
+
+
+logger = logging.getLogger(__name__)
+
+
+# ----------------------------------------------------------------------
+# Graph-store location
+#
+# The client's graph store used to be derived from the database file's PARENT
+# directory (`<parent>/.blowing-off-graph`). That is not a function of the
+# client: two clients whose databases merely sit in the same directory got the
+# same store, and so shared one entity set, one index and — worst — one set of
+# pending (unpushed) marks, letting one client's push clear another's pending
+# flag. It also made the test suite non-reentrant, because every client built
+# on a NamedTemporaryFile landed in $TMPDIR/.blowing-off-graph.
+#
+# The store is now derived from the database file's IDENTITY: the full file
+# NAME plus a suffix, as a sibling of the database.
+#
+#     /var/lib/home/client.db  ->  /var/lib/home/client.db.graph/
+#
+# The full name is used rather than the stem (`<dir>/.blowing-off-graph-client`)
+# precisely because the stem is not unique: `client.db` and `client.sqlite`
+# share the stem `client` and would collide again. Appending to the whole name
+# is injective over a directory, so two distinct database files in one
+# directory always get two distinct stores. Keeping the store adjacent to the
+# database also means the pair is obvious to a human and travels together when
+# a deployment is copied or backed up.
+# ----------------------------------------------------------------------
+
+GRAPH_DIR_SUFFIX = ".graph"
+
+#: The pre-fix, shared-per-directory store. Read for migration only.
+LEGACY_GRAPH_DIR_NAME = ".blowing-off-graph"
+
+#: Dropped into a legacy store once some database has adopted its contents, so
+#: a second database cannot later adopt the same data a second time.
+LEGACY_CLAIM_MARKER = "adopted-by.json"
+
+_STORE_FILES = ("entities.json", "relationships.json", "index.json", "pending.json")
+_DATABASE_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+
+
+def graph_storage_path(db_path: Union[str, Path]) -> Path:
+    """Return the graph-store directory belonging to `db_path`.
+
+    Collision-free by construction: the directory name contains the database
+    file's whole name, so distinct databases in one directory never share one.
+    """
+    db_file = Path(db_path).expanduser()
+    return db_file.parent / (db_file.name + GRAPH_DIR_SUFFIX)
+
+
+def _sibling_databases(directory: Path, db_name: str) -> set:
+    """Names of database files in `directory`, including `db_name` itself.
+
+    The client is often constructed before its database file exists, so the
+    client's own name is always counted whether or not it is on disk yet.
+    """
+    names = {db_name}
+    try:
+        for path in directory.iterdir():
+            if path.is_file() and path.suffix.lower() in _DATABASE_SUFFIXES:
+                names.add(path.name)
+    except OSError:
+        pass
+    return names
+
+
+def migrate_legacy_graph_store(
+    db_path: Union[str, Path],
+    store_dir: Optional[Union[str, Path]] = None,
+) -> str:
+    """Adopt a pre-fix shared store into this database's own store, if safe.
+
+    Returns a short status string naming what was decided; the client keeps it
+    on `.graph_store_migration` so operators (and tests) can see it.
+
+    The decision has to thread between two unacceptable outcomes. Requiring
+    manual action would silently strand an existing install: it would come up
+    against an empty graph, and — the sharp edge — any change written while
+    offline but never pushed would sit unreachable in the old directory. But
+    adopting unconditionally is worse, because the old directory is shared, so
+    its contents may belong to a *different* database entirely; adopting would
+    silently import a stranger's entities and, through their pending marks,
+    push them to the server under this client's identity.
+
+    So adoption happens automatically only where ownership is not in question:
+    when this database is the only database in the directory, the shared store
+    can only ever have been written by it. Where more than one database shares
+    the directory, ownership is genuinely unknowable from what is on disk, and
+    the migration declines, warns, and leaves the old directory untouched — no
+    data is destroyed, and a human can move the right store into place.
+
+    Adoption copies rather than moves, and stamps the legacy directory with a
+    marker, so the original remains available and a second database cannot
+    adopt the same data later.
+    """
+    db_file = Path(db_path).expanduser()
+    target = Path(store_dir) if store_dir is not None else graph_storage_path(db_file)
+    legacy_dir = db_file.parent / LEGACY_GRAPH_DIR_NAME
+
+    if not legacy_dir.is_dir():
+        return "no-legacy-store"
+
+    if target.exists():
+        # This database already has a store of its own; it is authoritative.
+        # (The directory outliving a clear_graph_data() is deliberate — an
+        # explicit clear must not be undone by resurrecting legacy data.)
+        return "own-store-exists"
+
+    payload = [legacy_dir / name for name in _STORE_FILES]
+    payload = [path for path in payload if path.is_file()]
+    if not payload:
+        return "legacy-store-empty"
+
+    marker = legacy_dir / LEGACY_CLAIM_MARKER
+    if marker.is_file():
+        owner = "another database"
+        try:
+            owner = json.loads(marker.read_text()).get("adopted_by") or owner
+        except (OSError, ValueError):
+            pass
+        logger.warning(
+            "Legacy graph store %s was already adopted by %s; not adopting it "
+            "again for %s, which starts with an empty graph. Copy the store "
+            "into %s by hand if it really belongs to this database.",
+            legacy_dir, owner, db_file.name, target,
+        )
+        return "declined-already-claimed"
+
+    siblings = _sibling_databases(db_file.parent, db_file.name)
+    if len(siblings) > 1:
+        logger.warning(
+            "Legacy graph store %s is shared by %d databases (%s), so it "
+            "cannot be attributed to %s. Leaving it untouched and starting "
+            "with an empty graph rather than importing data that may belong "
+            "to another client. If it is this client's, copy its *.json into "
+            "%s.",
+            legacy_dir, len(siblings), ", ".join(sorted(siblings)),
+            db_file.name, target,
+        )
+        return "declined-ambiguous"
+
+    target.mkdir(parents=True, exist_ok=True)
+    for path in payload:
+        shutil.copy2(path, target / path.name)
+
+    try:
+        marker.write_text(json.dumps({
+            "adopted_by": db_file.name,
+            "adopted_into": str(target),
+            "adopted_at": datetime.now(UTC).isoformat(),
+        }, indent=2))
+    except OSError as exc:  # read-only legacy dir: the copy still stands
+        logger.warning("Could not mark %s as adopted: %s", legacy_dir, exc)
+
+    logger.info(
+        "Adopted legacy graph store %s into %s (the original is left in "
+        "place; it is the only database in that directory).",
+        legacy_dir, target,
+    )
+    return "adopted"
 
 
 class BlowingOffClient:
@@ -76,10 +241,14 @@ class BlowingOffClient:
         self._is_offline = False  # Track offline status
         self._offline_changes_count = 0  # Track pending changes
 
-        # Initialize MCP and graph functionality
-        # Use a subdirectory of the database path for graph storage
-        graph_storage_dir = Path(db_path).parent / ".blowing-off-graph"
-        self.graph_storage = LocalGraphStorage(str(graph_storage_dir))
+        # Initialize MCP and graph functionality.
+        # The store belongs to THIS database file, not to its directory — see
+        # graph_storage_path() for why the directory was the wrong key.
+        self.graph_storage_dir = graph_storage_path(db_path)
+        self.graph_store_migration = migrate_legacy_graph_store(
+            db_path, self.graph_storage_dir
+        )
+        self.graph_storage = LocalGraphStorage(str(self.graph_storage_dir))
         self.graph_operations = LocalGraphOperations(self.graph_storage)
         self.mcp_client = LocalMCPClient(self.graph_storage)
 
@@ -309,7 +478,17 @@ class BlowingOffClient:
         return self.mcp_client.get_available_tools()
 
     def clear_graph_data(self):
-        """Clear all graph data from storage."""
+        """Clear this client's graph data, including its pending marks.
+
+        Scoped to this client's own store (`<db_path>.graph`). It used to reach
+        into the store shared by every database in the directory, so one
+        client's clear wiped the others' entities and dropped their unpushed
+        changes.
+
+        The store directory itself is kept, empty: its existence is what tells
+        a later start that this database has a store of its own, so a deliberate
+        clear is not undone by adopting a legacy store on the next run.
+        """
         if hasattr(self, 'graph_storage'):
             self.graph_storage.clear()
 

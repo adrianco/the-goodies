@@ -24,7 +24,9 @@ REVISION HISTORY:
 """
 
 import asyncio
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -54,3 +56,34 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture
+def private_db_path():
+    """Allocate client database paths inside a directory private to this test.
+
+    Call it once per client: `private_db_path()`, or `private_db_path("a.db")`
+    when a test wants two clients with recognisable names.
+
+    Every integration test used to build its database with
+    `tempfile.NamedTemporaryFile(suffix=".db")`, which puts the file in the
+    SHARED system temp directory. That was enough to make the whole suite share
+    one graph store back when the client derived it from the database's parent
+    directory -- $TMPDIR/.blowing-off-graph, across tests and across runs -- so
+    state leaked between tests, stale pending marks survived into later runs,
+    and two concurrent runs corrupted each other's half-written JSON. The store
+    is now keyed on the database file, but a private directory is still the
+    right habit: it keeps each test's database, WAL files and graph store
+    together and disposes of all of them at teardown.
+    """
+    work_dirs = []
+
+    def _allocate(name: str = "client.db") -> str:
+        work_dir = tempfile.mkdtemp(prefix="blowingoff-test-")
+        work_dirs.append(work_dir)
+        return str(Path(work_dir) / name)
+
+    yield _allocate
+
+    for work_dir in work_dirs:
+        shutil.rmtree(work_dir, ignore_errors=True)

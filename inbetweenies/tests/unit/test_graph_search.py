@@ -75,17 +75,6 @@ class TestSearchResult:
             make_entity("e", EntityType.DEVICE, "Device", {}), 1.0, {}
         ).to_dict()["content_preview"] is None
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG (search.py:28): SearchResult.to_dict does `self.entity.entity_type.value` "
-            "unguarded, so it raises AttributeError when entity_type is a plain string. "
-            "Entity.to_dict (entity.py:103) and EntityRelationship.to_dict "
-            "(relationship.py:106) both defend against exactly this with hasattr/getattr, "
-            "so a string-valued entity serializes everywhere except here. Directly "
-            "relevant to the strings-for-enums refactor."
-        ),
-    )
     def test_to_dict_accepts_a_string_entity_type(self):
         entity = Entity(
             id="e",

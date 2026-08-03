@@ -23,8 +23,6 @@ import asyncio
 from datetime import datetime, timedelta
 import json
 import httpx
-from pathlib import Path
-import tempfile
 import uuid
 import sys
 import os
@@ -36,32 +34,33 @@ class TestSyncConflicts:
     """Test conflict resolution scenarios."""
 
     @pytest_asyncio.fixture
-    async def two_clients(self, server_url, auth_token):
-        """Create two clients to simulate conflicts."""
+    async def two_clients(self, server_url, auth_token, private_db_path):
+        """Create two clients to simulate conflicts.
+
+        Each gets its own private directory. These are meant to be two
+        SEPARATE clients that only ever learn about each other through the
+        server, so they must not share a graph store -- which is exactly what
+        they did while the store was keyed on the database's parent directory
+        and both databases sat in the system temp dir.
+        """
         clients = []
 
         for i in range(2):
-            with tempfile.NamedTemporaryFile(suffix=f"-{i}.db", delete=False) as f:
-                db_path = f.name
-
+            db_path = private_db_path(f"client-{i}.db")
             client = BlowingOffClient(db_path)
             await client.connect(server_url, auth_token, f"test-client-{i}")
             clients.append((client, db_path))
 
         yield clients
 
-        # Cleanup with delay for Windows
+        # Cleanup with delay for Windows; private_db_path removes the files.
         import time
         for client, db_path in clients:
             try:
                 await client.disconnect()
-            except:
+            except Exception:
                 pass
             time.sleep(0.1)  # Give Windows time to release handles
-            try:
-                Path(db_path).unlink(missing_ok=True)
-            except:
-                pass
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(sys.platform == "win32" and os.environ.get('CI') == 'true',
