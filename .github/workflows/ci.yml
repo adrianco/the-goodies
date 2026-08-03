@@ -283,13 +283,23 @@ jobs:
           # the case where the origin path is the whole diagnosis.
           leaked=0
           for mod in mcp.tools models sync graph repositories utils auth search api tests; do
+            # MUST report namespace packages too. A directory without
+            # __init__.py (repo-root tests/ is one) yields a spec whose .origin
+            # is None while `import` still succeeds -- so checking .origin alone
+            # silently passes the exact leak this gate exists to catch.
             origin=$("$VENV_PY" -c "
           import importlib.util as u
           try:
               s = u.find_spec('$mod')
           except Exception:
               s = None
-          print(s.origin if s and s.origin else '')
+          if s is None:
+              print('')
+          elif s.origin:
+              print(s.origin)
+          else:
+              locs = list(s.submodule_search_locations or [])
+              print('namespace package: ' + ', '.join(locs) if locs else 'namespace package')
           " 2>/dev/null || true)
             if [ -n "$origin" ]; then
               echo "FAIL: top-level '$mod' is importable -- resolves to: $origin"
