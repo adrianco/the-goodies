@@ -59,7 +59,9 @@ jobs:
         # with funkygibbon/requirements.txt by hand.
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          # Root ships no code (see pyproject.toml): install the members from
+          # their own directories, plus the root for the shared dev deps.
+          pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
       - name: Run tests
         # No `|| true`: this step used to swallow the exit code, so the Test
@@ -125,7 +127,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install safety bandit
           # One workspace, one install (ADR-010 section 6).
-          pip install -e .
+          # Root ships no code (see pyproject.toml): install the members from
+          # their own directories, plus the root for the shared dev deps.
+          pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
       - name: Run Security Checks
         run: |
@@ -185,7 +189,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # One workspace, one install (ADR-010 section 6).
-          pip install -e .
+          # Root ships no code (see pyproject.toml): install the members from
+          # their own directories, plus the root for the shared dev deps.
+          pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
       - name: Setup and test components
         run: |
@@ -250,7 +256,7 @@ jobs:
           python -m venv test_env
           VENV_PY="$GITHUB_WORKSPACE/test_env/bin/python"
           "$VENV_PY" -m pip install --upgrade pip setuptools wheel
-          "$VENV_PY" -m pip install -e .
+          "$VENV_PY" -m pip install -e . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
 
           mkdir -p "$RUNNER_TEMP/importcheck"
           cd "$RUNNER_TEMP/importcheck"

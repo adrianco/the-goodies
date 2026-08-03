@@ -102,33 +102,27 @@ dependencies = [
 # subpackage needs adding in both places.
 # ---------------------------------------------------------------------------
 [tool.setuptools]
-package-dir = { "funkygibbon" = "funkygibbon", "inbetweenies" = "inbetweenies", "blowingoff" = "blowing-off/blowingoff", "oook" = "oook/oook" }
-packages = [
-    "funkygibbon",
-    "funkygibbon.api",
-    "funkygibbon.api.routers",
-    "funkygibbon.auth",
-    "funkygibbon.graph",
-    "funkygibbon.mcp",
-    "funkygibbon.models",
-    "funkygibbon.repositories",
-    "funkygibbon.search",
-    "inbetweenies",
-    "inbetweenies.graph",
-    "inbetweenies.mcp",
-    "inbetweenies.models",
-    "inbetweenies.repositories",
-    "inbetweenies.sync",
-    "inbetweenies.utils",
-    "blowingoff",
-    "blowingoff.cli",
-    "blowingoff.graph",
-    "blowingoff.mcp",
-    "blowingoff.models",
-    "blowingoff.repositories",
-    "blowingoff.sync",
-    "oook",
-]
+# The root distribution deliberately ships NO code.
+#
+# It previously mapped the four member source trees here via package-dir. That
+# makes the repo root the package search root, and setuptools' editable install
+# then falls back on some platforms to a path-based mode that puts the repo root
+# on sys.path -- exposing every top-level directory, `tests/` included, as an
+# importable namespace package.
+#
+# CI's Validate Dependencies gate caught exactly that:
+#   FAIL: top-level 'tests' is importable -- resolves to: namespace package:
+#         /home/runner/work/the-goodies/the-goodies/tests
+# It reproduced on ubuntu and not on macOS, which is the tell: the strict
+# import-finder was generated locally and the lenient path mode in CI. Such an
+# install also exercises the working tree rather than the packaging it claims
+# to verify, so the leak was hiding as a pass.
+#
+# Members are installed from their own directories instead (see README and
+# ci.yml) -- the layout the 2a6284f packaging fix depends on, and the one the
+# workspace migration verified clean under pip, per-member editable, and uv.
+# This root remains the uv workspace declaration and dev-dependency aggregator.
+packages = []
 
 [project.scripts]
 # Mirrors the members' own console scripts so the one-step install is usable.
