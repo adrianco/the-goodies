@@ -2,8 +2,9 @@
 
 How to read and write the knowledge graph from a skill, a script or an agent.
 
-There are **two surfaces**, and they are not equivalent. Read [Which surface](#which-surface)
-before writing anything.
+**MCP is the interface.** Not one of two options — the one way. Every read and
+every write goes through the tools below. Do not build a REST helper; that is
+how the system got into the state ADR-013 had to migrate out of.
 
 > **The vocabulary changed in ADR-013.** `has_blob` no longer exists, a photo is
 > its own entity type, and the boolean `is_blob` / `has_blob` content flags are
@@ -14,30 +15,21 @@ before writing anything.
 
 ---
 
-## Which surface
+## Why there is only one way
 
-| | MCP tools | REST API |
+Every gap in this surface has been filled by invention, and each invention
+became a de-facto schema that took a migration to undo:
+
+| The gap | What got invented | Cost |
 |---|---|---|
-| Path | `/api/v1/mcp/tools/{name}` | `/api/v1/graph/...` |
-| Read the graph | ✅ 12 tools | ✅ |
-| Create entity / relationship | ✅ | ✅ |
-| Update entity | ✅ | ✅ |
-| **Delete** anything | ❌ | ✅ |
-| **Blobs / photos** | ❌ **nothing** | ✅ (see below) |
-| Entity version history | ❌ | ✅ `/entities/{id}/versions` |
-| Aliases, status | ❌ | ✅ |
-| Graph statistics | ❌ | ✅ `/statistics` |
+| No way to attach a photo | `entity_type=note` + inline base64 + a `has_blob` edge pointing at the note | Six blob-linking conventions across two installs; ADR-013 §3 |
+| MCP writes silently discarded (see below) | a whole parallel REST helper | Two ways to write, only one enforced |
+| No delete (by design) | a `DELETE /relationships/{id}` call to a route that has never existed | Silent 404s |
 
-**Use MCP when** an agent is exploring or reasoning about the graph — the tools
-are shaped as questions (`get_devices_in_room`, `find_path`,
-`get_procedures_for_device`) and return summarised results ready to reason over.
+The tools now cover the whole job, so there is no gap left to paper over. If you
+find one, say so — do not route around it.
 
-**Use REST when** you need anything in the ❌ column. In particular **anything
-involving a photo or a PDF must use REST** — there is no blob tool in MCP at all.
-This is why `room-walk` and `room-edit` use `kittenkong_helper.py` rather than
-MCP: their core job is attaching photos.
-
-Never touch the SQLite file directly. Both surfaces maintain `is_latest`,
+**Never touch the SQLite file directly.** The tools maintain `is_latest`,
 `server_seq` and the version chain (ADR-002); a direct write corrupts them
 silently.
 
@@ -102,7 +94,13 @@ Nothing is edited in place and nothing is destroyed.
    schemas. They agree today — verified — but nothing enforces it. Change one,
    change the other.
 
-## REST: what MCP cannot do
+## The REST graph API
+
+Still mounted, and still used by the sync protocol, but **not the interface for
+skills or agents**. Do not add new callers. `kittenkong_helper.py` is being
+retired, not replaced.
+
+For reference, what it exposes:
 
 ```
 GET    /api/v1/graph/entities?entity_type=room
@@ -216,14 +214,34 @@ Briefly, for the house: entities are `home`, `zone`, `room`, `device`, `door`,
 
 ---
 
-## Known gaps
+## Fixed, and worth knowing about
 
-- **No blob capability in MCP.** Any photo workflow must use REST. If MCP is to
-  become the primary surface, this is the gap to close first.
-- **Endpoint validation runs on one write path of three** (ADR-013 §5). Until
-  that is fixed, a malformed relationship is accepted by REST and by sync.
-- **`kittenkong_helper.upload_blob()` writes the pre-ADR-013 shape** — an
-  `entity_type=note` with inline base64 plus a `has_blob` edge. It needs updating
-  to the shape above before the next photo is uploaded; its own docstring already
-  flags the guess ("FunkyGibbon's blob schema may differ").
-- **Tool schemas are duplicated** between the REST wrapper and the stdio server.
+- **MCP writes were never committed.** `get_db` never commits and the graph
+  operations only *flush*, so every write through `/api/v1/mcp/tools/{name}` was
+  rolled back when the request ended: `create_entity` and `create_relationship`
+  returned success and persisted nothing. The graph router always committed; the
+  two disagreed and MCP lost. That is the most likely reason a REST helper was
+  written in the first place — the documented surface did not work. Fixed, with
+  a test.
+- **Attachments wrote a null author.** The sync wire model declares
+  `user_id: str`, so an author-less entity broke *reads* for every client that
+  later pulled it. Fixed.
+- **Tool schemas were maintained twice** and have been collapsed into one
+  catalog (`inbetweenies/mcp/catalog.py`) rendered for both transports.
+
+## Still open
+
+- **Endpoint validation runs on one write path of three** (ADR-013 §5). The data
+  now conforms, so enabling it on REST and sync is safe — and is what makes "one
+  way" enforced rather than merely documented.
+- **Local-first attachments.** The intended design is that KittenKong writes
+  through MCP into its own local store and syncs to FunkyGibbon in the
+  background. Attachments cannot do that yet: the Inbetweenies protocol has no
+  blob carriage, so `attach_photo` currently goes to the server and arrives back
+  on the next sync. Closing this means adding blobs to the sync protocol — not
+  a local blob store bolted on beside it.
+- **Replica size.** Clients hold the whole graph, which is comfortably small
+  today (423 and 94 entities). If it outgrows memory, the answer is a per-client
+  filter that hides old or irrelevant parts — not a partial, ad-hoc replica.
+- **`kittenkong_helper.py` is being retired.** Nothing should gain a new
+  dependency on it.
