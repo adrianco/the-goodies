@@ -10,7 +10,9 @@ import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Any, Optional
-from sqlalchemy import Column, String, JSON, DateTime, Enum as SQLEnum
+from sqlalchemy import (
+    Boolean, Column, Index, Integer, JSON, String, DateTime, Enum as SQLEnum, text
+)
 from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
@@ -75,6 +77,37 @@ class Entity(Base, InbetweeniesTimestampMixin):
 
     # Version tracking for immutability
     parent_versions = Column(JSON, default=list)
+
+    # --- Server-maintained bookkeeping (ADR-002) ---------------------------
+    # Both are assigned by the server when it stores a row. Clients replicate
+    # them but never author them, and neither appears on the wire.
+    #
+    # is_latest records which version won, rather than leaving it to be
+    # re-derived. Three places used to infer it independently and disagree:
+    # api/sync.py took the lexically greatest version, GraphRepository took the
+    # greatest created_at, and conflict resolution decided by LWW on
+    # updated_at. That let a preserved losing version be served as current by
+    # the REST API while sync correctly reported the winner. A resolution
+    # outcome is a fact about a row, so it is stored on the row.
+    is_latest = Column(Boolean, nullable=False, default=True, server_default=text("1"))
+
+    # server_seq is the replication axis (ADR-004 §2): a gap-free monotonic
+    # stamp assigned in server apply order, used for delta cursors and
+    # pagination. Deliberately NOT wall-clock: `updated_at > since` cannot
+    # distinguish rows written in the same microsecond, and is hostage to clock
+    # adjustment. Queries never consult it; sync never consults client time.
+    server_seq = Column(Integer, nullable=True)
+
+    __table_args__ = (
+        # The delta scan: `where is_latest and server_seq > :cursor`.
+        Index("ix_entities_is_latest_server_seq", "is_latest", "server_seq"),
+        # `max(server_seq)` for the next stamp and for ADR-003's generation
+        # check. The composite above cannot serve this: its leading column is
+        # is_latest, so a bare server_seq aggregate would have to scan.
+        Index("ix_entities_server_seq", "server_seq"),
+        # Resolving one entity's history.
+        Index("ix_entities_id_version", "id", "version"),
+    )
 
     # Relationships defined in EntityRelationship model
     outgoing_relationships = relationship(
