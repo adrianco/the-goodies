@@ -219,7 +219,7 @@ class GraphOperations(ABC):
         # Get all relationships and count by type
         all_relationships = await self.get_relationships()
         for rel in all_relationships:
-            rel_type = rel.relationship_type.value
+            rel_type = getattr(rel.relationship_type, "value", rel.relationship_type)
             relationship_counts[rel_type] = relationship_counts.get(rel_type, 0) + 1
 
         # Calculate average degree

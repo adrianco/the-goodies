@@ -7,7 +7,7 @@ between entities in the knowledge graph.
 
 from enum import Enum
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from sqlalchemy import Column, String, JSON, Enum as SQLEnum, ForeignKeyConstraint
+from sqlalchemy import Column, String, JSON, ForeignKeyConstraint
 from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
@@ -17,7 +17,15 @@ if TYPE_CHECKING:
 
 
 class RelationshipType(str, Enum):
-    """Types of relationships between entities"""
+    """Types of relationships between entities.
+
+    ADR-012 §1: the house domain's edge vocabulary. The column below is a plain
+    String, so this class names constants rather than constraining the schema.
+    ``(str, Enum)`` means ``RelationshipType.LOCATED_IN == "located_in"``, so the
+    valid_combinations table further down keys correctly whether it is handed an
+    enum member or the plain string a query now returns.
+    """
+
     LOCATED_IN = "located_in"
     CONTROLS = "controls"
     CONNECTS_TO = "connects_to"
@@ -56,8 +64,10 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     to_entity_id = Column(String(36), nullable=False)
     to_entity_version = Column(String(255), nullable=False)
 
-    # Relationship metadata
-    relationship_type = Column(SQLEnum(RelationshipType), nullable=False, index=True)
+    # Relationship metadata. Plain String, not SQLEnum (ADR-012 §1) — see the
+    # note on Entity.entity_type. Reads yield a plain str; `.value` on this
+    # attribute must be guarded.
+    relationship_type = Column(String, nullable=False, index=True)
     properties = Column(JSON, default=dict)
 
     # Tracking

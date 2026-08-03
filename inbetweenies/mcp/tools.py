@@ -90,7 +90,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                     controlled_devices.append({
                         "id": controlled.id,
                         "name": controlled.name,
-                        "type": controlled.entity_type.value
+                        "type": getattr(controlled.entity_type, "value", controlled.entity_type)
                     })
 
             return ToolResult(True, {
@@ -244,8 +244,10 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                 return ToolResult(
                     False,
                     None,
-                    f"Invalid relationship: {from_entity.entity_type.value} "
-                    f"cannot have {relationship_type} relationship to {to_entity.entity_type.value}"
+                    f"Invalid relationship: "
+                    f"{getattr(from_entity.entity_type, 'value', from_entity.entity_type)} "
+                    f"cannot have {relationship_type} relationship to "
+                    f"{getattr(to_entity.entity_type, 'value', to_entity.entity_type)}"
                 )
 
             stored = await self.store_relationship(relationship)
@@ -286,7 +288,11 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             return ToolResult(True, {
                 "from": from_entity_id,
                 "to": to_entity_id,
-                "path": [{"id": e.id, "name": e.name, "type": e.entity_type.value} for e in path],
+                "path": [
+                    {"id": e.id, "name": e.name,
+                     "type": getattr(e.entity_type, "value", e.entity_type)}
+                    for e in path
+                ],
                 "length": len(path) - 1,
                 "found": True
             })
@@ -314,14 +320,14 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                     "outgoing": [
                         {
                             "to": r.to_entity_id,
-                            "type": r.relationship_type.value,
+                            "type": getattr(r.relationship_type, "value", r.relationship_type),
                             "properties": r.properties
                         } for r in outgoing
                     ],
                     "incoming": [
                         {
                             "from": r.from_entity_id,
-                            "type": r.relationship_type.value,
+                            "type": getattr(r.relationship_type, "value", r.relationship_type),
                             "properties": r.properties
                         } for r in incoming
                     ]

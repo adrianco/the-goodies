@@ -13,6 +13,19 @@ Brings an existing knowledge-graph database into line with PROTOCOL.md:
   2. Inline photos: entity content carrying a base64 ``data_b64`` blob is moved
      into the ``blobs`` table (decoded, sized, SHA-256 checksummed) and the
      content is rewritten to reference the blob by id instead of inlining it.
+  3. Domain-vocabulary columns (ADR-012 §1): ``entity_type``, ``source_type``,
+     ``relationship_type`` and ``blob_type`` stopped being ``SQLEnum`` columns
+     and became plain strings. This *does* need a data migration, contrary to
+     the obvious guess: SQLAlchemy's ``Enum`` persists a PEP-435 member's
+     ``.name``, not its ``.value``, so existing rows hold ``'DEVICE'`` and
+     ``'LOCATED_IN'`` while every other layer — the wire format, ``to_dict()``,
+     the enum comparisons throughout the code — speaks ``'device'`` and
+     ``'located_in'``. The SQLEnum type was silently translating between the two
+     on every read and write. Take it away and the rows must be rewritten, or
+     the graph goes dark: nothing matches ``EntityType.DEVICE`` any more.
+     See ``_normalise_domain_type_values``, and ``_relax_type_column_constraints``
+     for the CHECK constraints that would otherwise reject the rewrite (and,
+     later, a second domain's vocabulary).
 
 Safe by design: **dry-run by default** (pass ``--apply`` to write), backs up the
 database file first, runs in a single transaction, idempotent (re-running is a
@@ -214,6 +227,11 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
         )
 
     stats.update(_backfill_access_columns(cur))
+    # Order matters: the CHECK constraints (where they exist) enumerate the enum
+    # *names*, so they would reject the lowercase values the normalisation
+    # writes. Drop first, rewrite second.
+    stats.update(_relax_type_column_constraints(cur))
+    stats.update(_normalise_domain_type_values(cur))
 
     if apply:
         conn.commit()
@@ -274,6 +292,283 @@ def _backfill_access_columns(cur) -> Dict[str, int]:
     cur.execute("CREATE INDEX IF NOT EXISTS ix_entities_id_version ON entities (id, version)")
 
     return stats
+
+
+# The four domain-vocabulary columns of ADR-012 §1, as {table: (columns,)}.
+# Deliberately excludes blobs.sync_status: pending_upload/uploaded is the blob
+# transfer state machine, which is engine state and identical in every domain,
+# so it stays an SQLEnum and stays constrained.
+_DOMAIN_TYPE_COLUMNS = {
+    "entities": ("entity_type", "source_type"),
+    "entity_relationships": ("relationship_type",),
+    "blobs": ("blob_type",),
+}
+
+
+def _split_table_body(body: str):
+    """Split a CREATE TABLE body into its top-level comma-separated clauses.
+
+    Commas nested inside parentheses (``CHECK (x IN ('a', 'b'))``, composite FK
+    column lists) or inside quotes do not separate clauses, so a plain
+    ``body.split(",")`` is wrong. Tracks paren depth and quoting instead.
+    """
+    clauses, current, depth, quote = [], [], 0, None
+    for ch in body:
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"`":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            clauses.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    if "".join(current).strip():
+        clauses.append("".join(current))
+    return clauses
+
+
+# An optionally-named CHECK: `[CONSTRAINT foo] CHECK` up to its opening paren.
+_CHECK_HEAD = re.compile(
+    r"(?:CONSTRAINT\s+(?:\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|\w+)\s+)?CHECK\s*(?=\()",
+    re.IGNORECASE,
+)
+# The column name a column-definition clause starts with, quoted or bare.
+_LEADING_NAME = re.compile(r'^\s*(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|(\w+))')
+
+
+def _matching_paren(text: str, open_at: int) -> int:
+    """Index of the ')' closing the '(' at `open_at`, or -1. Quote-aware."""
+    depth, quote = 0, None
+    for i in range(open_at, len(text)):
+        ch = text[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"`":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _clause_column(clause: str):
+    """The column a column-definition clause defines, or None for a constraint."""
+    match = _LEADING_NAME.match(clause)
+    if not match:
+        return None
+    name = next(g for g in match.groups() if g is not None)
+    if name.upper() in ("CONSTRAINT", "CHECK", "PRIMARY", "FOREIGN", "UNIQUE"):
+        return None
+    return name
+
+
+def _strip_checks(clause: str):
+    """Remove every CHECK constraint from `clause`; returns (clause, count).
+
+    SQLite accepts a CHECK in two places and this has to handle both: as its own
+    table-level clause (what SQLAlchemy emits) and inline inside a column
+    definition (legal SQL, and what a hand-written or tool-generated schema may
+    contain). Handling only the first would leave the constraint in place while
+    reporting success — the worst possible outcome for a migration whose entire
+    job is removing it.
+    """
+    count = 0
+    while True:
+        match = _CHECK_HEAD.search(clause)
+        if not match:
+            return clause, count
+        close = _matching_paren(clause, clause.index("(", match.end() - 1))
+        if close == -1:
+            return clause, count      # malformed; leave well alone
+        clause = clause[:match.start()] + " " + clause[close + 1:]
+        count += 1
+
+
+def _rebuild_without(cur, table: str, new_sql: str) -> None:
+    """Recreate `table` from `new_sql`, preserving every row and index.
+
+    SQLite has no ``ALTER TABLE ... DROP CONSTRAINT``, so removing a CHECK means
+    the documented table-rebuild dance. Two details matter:
+
+    * ``legacy_alter_table`` is turned ON for the rename. Modern SQLite helpfully
+      rewrites *other* tables' foreign keys to follow a renamed table — which
+      here would silently repoint ``entity_relationships``' FKs at the temporary
+      table we are about to drop. Legacy mode is what the SQLite documentation
+      prescribes for exactly this procedure.
+    * Explicit indexes are captured before the rename and recreated after the
+      temporary table is dropped; ``DROP TABLE`` takes its indexes with it, and
+      recreating them earlier would collide on the index name.
+    """
+    columns = [row[1] for row in cur.execute(f'PRAGMA table_info("{table}")').fetchall()]
+    col_list = ", ".join(f'"{c}"' for c in columns)
+    # sql IS NULL for the implicit indexes behind UNIQUE/PRIMARY KEY; those come
+    # back on their own with the table definition.
+    index_sql = [
+        row[0] for row in cur.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? "
+            "AND sql IS NOT NULL", (table,)
+        ).fetchall()
+    ]
+    tmp = f"{table}__adr012_old"
+
+    cur.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        cur.execute(f'ALTER TABLE "{table}" RENAME TO "{tmp}"')
+        cur.execute(new_sql)
+        cur.execute(f'INSERT INTO "{table}" ({col_list}) SELECT {col_list} FROM "{tmp}"')
+        cur.execute(f'DROP TABLE "{tmp}"')
+    finally:
+        cur.execute("PRAGMA legacy_alter_table = OFF")
+    for sql in index_sql:
+        cur.execute(sql)
+
+
+def _relax_type_column_constraints(cur) -> Dict[str, int]:
+    """Drop CHECK constraints pinning the domain-vocabulary columns (ADR-012 §1).
+
+    The columns became plain ``String`` so that a new domain is a manifest rather
+    than a schema migration. A leftover ``CHECK (entity_type IN ('home', ...))``
+    would defeat that entirely: the *database* would reject ``'car'`` no matter
+    what the manifest declared, and the failure would surface as an opaque
+    IntegrityError on first write.
+
+    On the installs that exist today this is a no-op, and that is a finding
+    rather than an assumption: SQLAlchemy has defaulted ``Enum(create_constraint
+    =False)`` since 1.4, so both the live ``funkygibbon.db`` and a freshly
+    created one declare these columns as bare ``VARCHAR(n)`` with no CHECK — and
+    SQLite does not enforce VARCHAR lengths, so the declared width is not a
+    barrier either. The function stays because a file created under SQLAlchemy
+    1.3 (or by anything that passed ``create_constraint=True``) *would* carry the
+    constraint, and it is cheap to be certain rather than hopeful.
+
+    Idempotent: it rebuilds a table only when a matching CHECK is actually
+    present, so a second run finds nothing to do.
+    """
+    stats = {"type_checks_dropped": 0}
+
+    for table, columns in _DOMAIN_TYPE_COLUMNS.items():
+        row = cur.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        if not row or not row[0]:
+            continue  # table absent on this file; nothing to relax
+        sql = row[0]
+
+        open_paren = sql.find("(")
+        close_paren = sql.rfind(")")
+        if open_paren == -1 or close_paren <= open_paren:
+            continue
+        head, body, tail = sql[:open_paren + 1], sql[open_paren + 1:close_paren], sql[close_paren:]
+
+        kept, dropped = [], 0
+        for clause in _split_table_body(body):
+            column = _clause_column(clause)
+            relevant = (
+                column in columns if column is not None
+                else any(re.search(rf"\b{re.escape(col)}\b", clause) for col in columns)
+            )
+            if not relevant:
+                kept.append(clause)          # another column, or an unrelated constraint
+                continue
+
+            stripped, removed = _strip_checks(clause)
+            if not removed:
+                kept.append(clause)          # relevant but not a CHECK: a FK, UNIQUE, ...
+                continue
+            dropped += removed
+            if stripped.strip():
+                kept.append(stripped)        # column definition minus its inline CHECK
+            # else the clause was nothing but a table-level CHECK: drop it whole.
+
+        if not dropped:
+            continue
+
+        _rebuild_without(cur, table, head + ",".join(kept) + tail)
+        stats["type_checks_dropped"] += dropped
+
+    return stats
+
+
+def _domain_vocabulary_maps():
+    """{(table, column): {ENUM_NAME: enum_value}} for the four ADR-012 columns.
+
+    Derived from the enum classes rather than hardcoded, so the mapping cannot
+    drift away from the vocabulary it is translating. Members whose name already
+    equals their value contribute nothing and are skipped.
+    """
+    from inbetweenies.models.blob import BlobType
+    from inbetweenies.models.entity import EntityType, SourceType
+    from inbetweenies.models.relationship import RelationshipType
+
+    targets = {
+        ("entities", "entity_type"): EntityType,
+        ("entities", "source_type"): SourceType,
+        ("entity_relationships", "relationship_type"): RelationshipType,
+        ("blobs", "blob_type"): BlobType,
+    }
+    return {
+        key: {m.name: m.value for m in enum_cls if m.name != m.value}
+        for key, enum_cls in targets.items()
+    }
+
+
+def _normalise_domain_type_values(cur) -> Dict[str, int]:
+    """Rewrite stored enum *names* to enum *values* (ADR-012 §1).
+
+    ``SQLEnum(EntityType)`` persisted ``EntityType.DEVICE`` as the string
+    ``'DEVICE'`` — SQLAlchemy uses a PEP-435 member's ``.name`` — and converted
+    it back to the member on read. Everything above the ORM speaks the *value*:
+    the wire ``EntityChange.entity_type`` is ``'device'``, ``to_dict()`` emits
+    ``.value``, and ``EntityType.DEVICE == 'device'`` is what the comparisons
+    throughout the codebase rely on. That gap was invisible only because the
+    column type closed it on every read.
+
+    With the column a plain String there is no translator left, so an
+    un-migrated row would come back as the literal ``'DEVICE'`` and match
+    nothing: every type filter would return empty and the graph would look
+    wiped while the rows sat there intact. Hence this runs on every migration.
+
+    Idempotent by construction: names are uppercase, values lowercase, and the
+    two sets are disjoint, so an already-migrated row matches no key and is left
+    alone. Unrecognised values (a domain type this build has never heard of) are
+    likewise left alone rather than being guessed at.
+
+    Note ``blobs.sync_status`` is absent from the mapping. It is still an
+    SQLEnum — engine state, not domain vocabulary — so it must keep storing
+    names. Rewriting it would break exactly the column this change does not touch.
+    """
+    stats = {"type_values_normalised": 0}
+
+    for (table, column), name_to_value in _domain_vocabulary_maps().items():
+        if not _table_has_column(cur, table, column):
+            continue
+        for name, value in name_to_value.items():
+            cur.execute(
+                f'UPDATE "{table}" SET "{column}" = ? WHERE "{column}" = ?',
+                (value, name),
+            )
+            stats["type_values_normalised"] += cur.rowcount
+
+    return stats
+
+
+def _table_has_column(cur, table: str, column: str) -> bool:
+    """True if `table` exists on this file and carries `column`."""
+    return any(row[1] == column
+               for row in cur.execute(f'PRAGMA table_info("{table}")').fetchall())
 
 
 def backup_db(db_path: Path) -> Path:

@@ -14,8 +14,16 @@ identical code.
 - **Sync protocol correctness** — canonical version strings, a `server_time`
   delta watermark, deterministic conflict resolution, and tombstone deletes.
 - **Backup/restore** with an automated scheduler.
-- A **data migration** that rewrites legacy version strings and moves inline
-  photos into the blobs table.
+- A **data migration** that rewrites legacy version strings, moves inline
+  photos into the blobs table, and normalises the type columns (`entity_type`,
+  `source_type`, `relationship_type`, `blob_type` stored the enum's *name*,
+  `DEVICE`; they now store its value, `device`, matching the wire format).
+
+  That last one is **not optional**. Those columns stopped being database enums
+  (ADR-012 §1) and nothing translates on read any more, so a server started
+  against an un-migrated database will find no entities of any known type — the
+  graph looks empty while the rows sit there intact. Migrate before starting the
+  new server.
 
 ## Prerequisites
 

@@ -15,7 +15,12 @@ from .base import Base, InbetweeniesTimestampMixin
 
 
 class BlobType(str, Enum):
-    """Types of binary data stored"""
+    """Types of binary data stored.
+
+    Domain vocabulary per ADR-012 §1 — a garage may want WARRANTY or DYNO_CHART.
+    The column below is a plain String; this class names the house values.
+    """
+
     PDF = "pdf"
     JPEG = "jpeg"
     PNG = "png"
@@ -25,7 +30,15 @@ class BlobType(str, Enum):
 
 
 class BlobStatus(str, Enum):
-    """Sync status of the blob"""
+    """Sync status of the blob.
+
+    Deliberately NOT converted to a String column by ADR-012 §1. pending_upload
+    /uploaded is *engine* state — the transfer state machine, identical for every
+    domain — not domain vocabulary. A garage manifest declares its blob types; it
+    has no opinion about whether a file has finished uploading. Keeping this one
+    an SQLEnum is what makes the distinction visible in the schema.
+    """
+
     PENDING_UPLOAD = "pending_upload"
     UPLOADED = "uploaded"
     PENDING_DOWNLOAD = "pending_download"
@@ -49,7 +62,9 @@ class Blob(Base, InbetweeniesTimestampMixin):
 
     # Blob metadata
     name = Column(String(255), nullable=False)
-    blob_type = Column(SQLEnum(BlobType), nullable=False, index=True)
+    # Plain String, not SQLEnum (ADR-012 §1) — domain vocabulary. Contrast
+    # sync_status below, which stays an SQLEnum because it is engine state.
+    blob_type = Column(String, nullable=False, index=True)
     mime_type = Column(String(100), nullable=True)
     size = Column(Integer, nullable=False)  # Size in bytes
 
@@ -72,7 +87,8 @@ class Blob(Base, InbetweeniesTimestampMixin):
     summary = Column(String(2000), nullable=True)
 
     def __repr__(self):
-        return f"<Blob(id={self.id}, name={self.name}, type={self.blob_type.value if self.blob_type else None}, size={self.size})>"
+        blob_type_str = getattr(self.blob_type, "value", self.blob_type)
+        return f"<Blob(id={self.id}, name={self.name}, type={blob_type_str}, size={self.size})>"
 
     def to_dict(self, include_data: bool = False) -> Dict[str, Any]:
         """Convert blob to dictionary for API responses"""

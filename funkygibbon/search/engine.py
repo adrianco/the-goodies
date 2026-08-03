@@ -279,7 +279,8 @@ class SearchEngine:
                 matched_fields.append("name")
 
         # Score entity type
-        if any(token in entity.entity_type.value for token in query_tokens):
+        entity_type_value = getattr(entity.entity_type, "value", entity.entity_type)
+        if any(token in entity_type_value for token in query_tokens):
             score += 1.0
             matched_fields.append("entity_type")
 
@@ -340,7 +341,7 @@ class SearchEngine:
         tokens.update(self._tokenize(entity.name))
 
         # Add type
-        tokens.add(entity.entity_type.value)
+        tokens.add(getattr(entity.entity_type, "value", entity.entity_type))
 
         # Extract from content
         def extract_text(obj: Any):

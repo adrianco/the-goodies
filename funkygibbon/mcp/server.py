@@ -139,7 +139,7 @@ class FunkyGibbonMCPServer:
                 to_id=to_entity_id
             )
             for rel in rels:
-                if rel.relationship_type.value == relationship_type:
+                if getattr(rel.relationship_type, "value", rel.relationship_type) == relationship_type:
                     self.graph._add_relationship(rel)
                     break
             return result.result
@@ -174,7 +174,9 @@ class FunkyGibbonMCPServer:
                 result.result["connected_entities"] = [
                     {
                         "entity": conn["entity"].to_dict(),
-                        "relationship_type": conn["relationship"].relationship_type.value,
+                        "relationship_type": getattr(
+                            conn["relationship"].relationship_type, "value",
+                            conn["relationship"].relationship_type),
                         "direction": conn["direction"]
                     }
                     for conn in connected

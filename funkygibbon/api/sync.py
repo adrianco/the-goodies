@@ -522,10 +522,10 @@ class SyncHandler:
         return EntityChange(
             id=entity.id,
             version=entity.version,
-            entity_type=entity.entity_type.value,
+            entity_type=getattr(entity.entity_type, "value", entity.entity_type),
             name=entity.name,
             content=entity.content or {},
-            source_type=entity.source_type.value,
+            source_type=getattr(entity.source_type, "value", entity.source_type),
             user_id=entity.user_id,
             parent_versions=entity.parent_versions or [],
         )

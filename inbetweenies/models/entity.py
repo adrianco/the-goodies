@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Any, Optional
 from sqlalchemy import (
-    Boolean, Column, Index, Integer, JSON, String, DateTime, Enum as SQLEnum, text
+    Boolean, Column, Index, Integer, JSON, String, DateTime, text
 )
 from sqlalchemy.orm import relationship
 
@@ -23,7 +23,17 @@ _version_counter = itertools.count()
 
 
 class EntityType(str, Enum):
-    """Types of entities in the knowledge graph"""
+    """Types of entities in the knowledge graph.
+
+    ADR-012 §1: this is the *house domain's* vocabulary, not the engine's. The
+    columns that used to be ``SQLEnum(EntityType)`` are plain strings now, so a
+    second domain is a manifest rather than a schema migration. The class stays
+    because house code (and the future house manifest) still needs names for
+    these constants — but nothing in the store depends on it. Being a
+    ``(str, Enum)`` subclass, ``EntityType.DEVICE == "device"`` holds, which is
+    why comparisons across the codebase survive the column change untouched.
+    """
+
     # Core entity types
     HOME = "home"
     ROOM = "room"
@@ -64,15 +74,22 @@ class Entity(Base, InbetweeniesTimestampMixin):
     id = Column(String(36), primary_key=True)
     version = Column(String(255), primary_key=True)
 
-    # Entity metadata
-    entity_type = Column(SQLEnum(EntityType), nullable=False, index=True)
+    # Entity metadata.
+    #
+    # ADR-012 §1: a plain String, not SQLEnum(EntityType). Vocabulary is the
+    # domain's business, checked at the API/sync boundary against the domain
+    # manifest; the engine stores what the domain declares. As SQLEnum this was
+    # HOME/ROOM/DEVICE baked into the *database*, making a new domain a schema
+    # migration. Reads now yield a plain str rather than an EntityType, so any
+    # `.value` on this attribute must be guarded (see to_dict below).
+    entity_type = Column(String, nullable=False, index=True)
     name = Column(String(255), nullable=False)
 
     # Flexible content storage
     content = Column(JSON, nullable=False, default=dict)
 
     # Tracking
-    source_type = Column(SQLEnum(SourceType), nullable=False, default=SourceType.MANUAL)
+    source_type = Column(String, nullable=False, default=SourceType.MANUAL.value)
     user_id = Column(String(36), nullable=True)  # No foreign key, just track the user ID
 
     # Version tracking for immutability
@@ -218,8 +235,10 @@ class Entity(Base, InbetweeniesTimestampMixin):
         new_data.pop("created_at", None)
         new_data.pop("updated_at", None)
 
-        # Convert enum strings back to enums
-        new_data["entity_type"] = EntityType(new_data["entity_type"])
-        new_data["source_type"] = SourceType(new_data["source_type"])
-
+        # No enum coercion (ADR-012 §1). to_dict() already yields strings and
+        # the columns are strings, so the round-trip is now a no-op. The two
+        # EntityType()/SourceType() calls that used to sit here would have
+        # rejected any vocabulary the house enums don't know — exactly the
+        # schema-level gate the ADR moves to the domain manifest at the
+        # API/sync boundary.
         return Entity(**new_data)

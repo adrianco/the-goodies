@@ -343,7 +343,7 @@ async def find_path(
             path_entities.append({
                 "id": entity.id,
                 "name": entity.name,
-                "type": entity.entity_type.value
+                "type": getattr(entity.entity_type, "value", entity.entity_type)
             })
 
     return {
@@ -376,7 +376,9 @@ async def get_connected_entities(
         "connected": [
             {
                 "entity": conn["entity"].to_dict(),
-                "relationship_type": conn["relationship"].relationship_type.value,
+                "relationship_type": getattr(
+                    conn["relationship"].relationship_type, "value",
+                    conn["relationship"].relationship_type),
                 "direction": conn["direction"],
                 "distance": conn["distance"]
             }
