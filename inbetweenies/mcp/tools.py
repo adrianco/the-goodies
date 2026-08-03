@@ -551,20 +551,26 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                 mime_type=mime, data=data, user_id=user_id, summary=description,
             )
 
+
             # content.blob_id is the ONE link to the blobs table (ADR-013 §3).
             content = {"filename": filename, "mime_type": mime,
                        "size": len(data), "blob_id": blob_id}
             if description:
                 content["description"] = description
 
+            # user_id must not be None: the sync wire model declares it `str`,
+            # so an author-less entity serialises to a 500 for every client that
+            # later pulls it -- a write that poisons reads rather than failing
+            # at the point of the write.
+            author = user_id or "mcp"
             attachment = Entity(
                 id=str(uuid.uuid4()),
-                version=Entity.create_version(user_id or "mcp"),
+                version=Entity.create_version(author),
                 entity_type=entity_type,
                 name=filename,
                 content=content,
                 source_type=SourceType.MANUAL,
-                user_id=user_id,
+                user_id=author,
                 parent_versions=[],
             )
             attachment = await self.store_entity(attachment)
@@ -579,7 +585,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                 to_entity_version=attachment.version,
                 relationship_type=rel_type,
                 properties={},
-                user_id=user_id,
+                user_id=author,
             )
             await self.store_relationship(link)
 

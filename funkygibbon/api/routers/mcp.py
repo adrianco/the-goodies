@@ -58,14 +58,30 @@ async def list_available_tools(
 async def execute_mcp_tool(
     tool_name: str,
     tool_call: MCPToolCall,
-    mcp: FunkyGibbonMCPServer = Depends(get_mcp_server)
+    mcp: FunkyGibbonMCPServer = Depends(get_mcp_server),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Execute an MCP tool and return results"""
+    """Execute an MCP tool and return results.
+
+    The commit is the point. `get_db` never commits and the graph operations
+    only *flush*, so until now every write through this endpoint was rolled
+    back when the session closed: create_entity and create_relationship
+    returned success and persisted nothing. (update_entity appeared to work
+    only because it commits internally.) The graph router has always committed
+    explicitly -- these two routers simply disagreed, and MCP was the one that
+    lost. That is a plausible reason callers reached for the REST API and built
+    their own helper instead.
+
+    FastAPI caches dependencies per request, so this is the same session the
+    tool just wrote through.
+    """
     result = await mcp.handle_tool_call(tool_name, tool_call.arguments)
 
     if "error" in result:
+        await db.rollback()
         raise HTTPException(status_code=400, detail=result["error"])
 
+    await db.commit()
     return result
 
 

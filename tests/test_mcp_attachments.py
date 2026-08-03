@@ -9,6 +9,7 @@ shape so it cannot drift back.
 
 import base64
 import hashlib
+import pathlib
 
 import pytest
 import pytest_asyncio
@@ -220,3 +221,60 @@ class TestHistoryAndStats:
     async def test_statistics_reports_counts(self, ops, device):
         r = await ops.get_statistics_tool()
         assert r.success and isinstance(r.result, dict)
+
+
+class TestMcpWritesArePersisted:
+    """The MCP REST endpoint must commit.
+
+    `get_db` never commits and the graph operations only flush, so every write
+    through this endpoint used to be rolled back when the session closed:
+    create_entity and create_relationship returned success and persisted
+    nothing. The graph router committed explicitly; the MCP router did not.
+    The two disagreed and MCP lost -- a plausible reason callers reached for
+    REST and built their own helper instead.
+    """
+
+    def test_the_mcp_router_commits_on_success(self):
+        # Read the source rather than import it: importing the router builds the
+        # auth stack, which needs a JWT secret this test has no business setting.
+        src = pathlib.Path("funkygibbon/api/routers/mcp.py").read_text()
+        body = src.split("async def execute_mcp_tool")[1].split("@router")[0]
+
+        assert "await db.commit()" in body, "MCP writes would be rolled back"
+        assert "await db.rollback()" in body, "a failed tool must not leave a partial write"
+
+    def test_graph_operations_only_flush_so_the_router_must_commit(self):
+        """Pins *why* the router carries the responsibility.
+
+        If store_entity ever starts committing on its own, this fails and the
+        router's commit should be revisited rather than silently doubling up.
+        """
+        import inspect
+
+        from funkygibbon.repositories.graph_impl import SQLGraphOperations
+
+        src = inspect.getsource(SQLGraphOperations.store_entity)
+        assert "flush" in src and "commit" not in src
+
+
+class TestAttachmentsAreSyncSerialisable:
+    """An attachment must not poison later reads.
+
+    The sync wire model declares `user_id: str`. An entity written with
+    user_id=None serialises to a 500 for every client that subsequently pulls
+    it -- the write succeeds and the *reads* break, which is far worse than
+    failing at the point of the write.
+    """
+
+    async def test_an_attachment_without_an_explicit_user_still_has_an_author(
+            self, ops, device, async_session):
+        r = await ops.attach_photo(device.id, "k.jpg", PNG, mime_type="image/png")
+        photo = await _content(async_session, r.result["attachment_id"])
+
+        assert photo.user_id is not None
+
+    async def test_the_edge_has_an_author_too(self, ops, device, async_session):
+        await ops.attach_photo(device.id, "k.jpg", PNG, mime_type="image/png")
+        rel = (await async_session.execute(select(EntityRelationship))).scalars().first()
+
+        assert rel.user_id is not None
