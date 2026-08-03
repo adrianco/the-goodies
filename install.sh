@@ -121,7 +121,7 @@ print(pm.hash_password('$ADMIN_PASSWORD'))
     
     if [ $? -ne 0 ]; then
         echo "❌ Error: Failed to hash password. Make sure dependencies are installed."
-        echo "Run: pip install -r funkygibbon/requirements.txt"
+        echo "Run: pip install -e ."
         exit 1
     fi
     
