@@ -84,12 +84,7 @@ export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
 # installs all four editable plus the full dependency set. There is no longer a
 # per-component install loop, and funkygibbon/requirements.txt is no longer the
 # way dependencies get installed.
-#
-# The members are named explicitly: the root distribution ships no code. Mapping
-# their source trees from the root put the repo root on sys.path, which leaked
-# every top-level directory (tests/ included) as an importable package -- see
-# the comment in pyproject.toml.
-pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+pip install -e .
 
 # Or, with uv (resolves from the committed uv.lock instead of pip's resolver):
 #   uv sync

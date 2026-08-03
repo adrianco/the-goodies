@@ -59,9 +59,7 @@ jobs:
         # with funkygibbon/requirements.txt by hand.
         run: |
           python -m pip install --upgrade pip
-          # Root ships no code (see pyproject.toml): install the members from
-          # their own directories, plus the root for the shared dev deps.
-          pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+          pip install -e .
 
       - name: Run tests
         # No `|| true`: this step used to swallow the exit code, so the Test
@@ -127,9 +125,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install safety bandit
           # One workspace, one install (ADR-010 section 6).
-          # Root ships no code (see pyproject.toml): install the members from
-          # their own directories, plus the root for the shared dev deps.
-          pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+          pip install -e .
 
       - name: Run Security Checks
         run: |
@@ -189,9 +185,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # One workspace, one install (ADR-010 section 6).
-          # Root ships no code (see pyproject.toml): install the members from
-          # their own directories, plus the root for the shared dev deps.
-          pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+          pip install -e .
 
       - name: Setup and test components
         run: |
@@ -230,6 +224,19 @@ jobs:
   validate-dependencies:
     name: Validate Dependencies
     runs-on: ubuntu-latest
+    env:
+      # MUST override the workflow-level `PYTHONPATH: ${{ github.workspace }}`.
+      #
+      # That global puts the repo root on sys.path for every Python process in
+      # every job, so this job's imports resolved from the CHECKOUT rather than
+      # from the install -- making a clean-room check that verified nothing
+      # while appearing to pass. It then "found" a leak (`tests` importable)
+      # that was the PYTHONPATH, not the packaging.
+      #
+      # The step already runs from an empty directory to keep cwd off sys.path.
+      # That defends against cwd and not against an inherited PYTHONPATH; both
+      # are needed for the room to actually be clean.
+      PYTHONPATH: ""
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -256,7 +263,7 @@ jobs:
           python -m venv test_env
           VENV_PY="$GITHUB_WORKSPACE/test_env/bin/python"
           "$VENV_PY" -m pip install --upgrade pip setuptools wheel
-          "$VENV_PY" -m pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+          "$VENV_PY" -m pip install -e .
 
           mkdir -p "$RUNNER_TEMP/importcheck"
           cd "$RUNNER_TEMP/importcheck"

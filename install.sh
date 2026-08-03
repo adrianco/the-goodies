@@ -196,8 +196,7 @@ $PYTHON_CMD -m pip install --upgrade pip setuptools wheel > /dev/null 2>&1
 # `cd <component> && pip install -e .` loop, which silently skipped components
 # and had to be kept in step with funkygibbon/requirements.txt by hand.
 echo "Installing the workspace (funkygibbon, inbetweenies, blowing-off, oook)..."
-# Members named explicitly: the root ships no code (see pyproject.toml).
-pip install . -e ./inbetweenies -e ./funkygibbon -e ./blowing-off -e ./oook
+pip install -e .
 if [ $? -eq 0 ]; then
     echo "✅ Workspace installed"
 else
