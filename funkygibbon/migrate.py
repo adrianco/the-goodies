@@ -232,6 +232,10 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
     # writes. Drop first, rewrite second.
     stats.update(_relax_type_column_constraints(cur))
     stats.update(_normalise_domain_type_values(cur))
+    # MUST follow normalisation: until then the rows still hold enum NAMES
+    # ('PART_OF'), so a query matching 'part_of' silently finds nothing and
+    # reports 0 re-typed while leaving the data untouched.
+    stats.update(_split_containment_from_composition(cur))
 
     if apply:
         conn.commit()
@@ -623,5 +627,56 @@ def main(argv=None) -> int:
     return 0
 
 
+def _split_containment_from_composition(cur) -> Dict[str, int]:
+    """Re-type spatial `part_of` edges as `located_in` (ADR-013 §1).
+
+    `part_of` carried two meanings, split by source system: HomeKit used it for
+    spatial containment (room -> home), while the importer used it for
+    composition (device -> device, a component of a parent device). The two
+    hierarchies looked redundant because one word was doing both jobs.
+
+    ADR-013 splits them -- located_in is where a thing IS, part_of is what a
+    thing is a COMPONENT of -- which leaves the HomeKit edges filed under the
+    wrong word. Only those move; the device -> device composition edges are
+    already correct and are left alone.
+
+    Idempotent: selects on the shape being wrong, so a second run finds nothing.
+    Deliberately narrow -- it re-types only pairs whose endpoint types say
+    unambiguously that this is containment, never a blanket rewrite of part_of.
+    """
+    stats = {"part_of_retyped_to_located_in": 0}
+
+    # Endpoint types come from the entity rows, so a mis-typed edge cannot be
+    # identified by the edge alone. Restricted to current rows: history keeps
+    # whatever it said at the time, which is the point of immutable versions.
+    spatial = [
+        ("room", "home"),
+        ("room", "zone"),
+        ("zone", "home"),
+        ("device", "room"),
+        ("device", "zone"),
+    ]
+    placeholders = " or ".join(["(fe.entity_type = ? and te.entity_type = ?)"] * len(spatial))
+    params = [v for pair in spatial for v in pair]
+
+    rows = cur.execute(
+        f"""SELECT r.id FROM entity_relationships r
+            JOIN entities fe ON fe.id = r.from_entity_id AND fe.is_latest = 1
+            JOIN entities te ON te.id = r.to_entity_id   AND te.is_latest = 1
+            WHERE r.relationship_type = 'part_of' AND ({placeholders})""",
+        params,
+    ).fetchall()
+
+    for (rel_id,) in rows:
+        cur.execute(
+            "UPDATE entity_relationships SET relationship_type = 'located_in' WHERE id = ?",
+            (rel_id,),
+        )
+        stats["part_of_retyped_to_located_in"] += 1
+
+    return stats
+
+
 if __name__ == "__main__":
     sys.exit(main())
+

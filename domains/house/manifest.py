@@ -1,66 +1,199 @@
-"""House vocabulary, derived from the definitions it replaces.
+"""House vocabulary — declared (ADR-013).
 
-DERIVED, NOT TRANSCRIBED — and that is the point. ADR-012 §6.1 requires house
-behaviour to be byte-identical after the abstraction, gated by the conformance
-suite. Retyping 12 entity types, 5 source types and 14 relationship rules by
-hand would put that guarantee at the mercy of a typo in a table nothing else
-reads. Building the manifest from `EntityType`, `SourceType` and the
-`valid_combinations` map inside `is_valid_for_entities` makes it identical by
-construction: there is no second copy to drift.
+This was *derived* from `EntityType`, `SourceType` and the endpoint table inside
+`EntityRelationship.is_valid_for_entities`, so ADR-012's move out of the schema
+could be proved byte-identical across all 2016 (relationship_type, from_type,
+to_type) triples. That job is done, and ADR-013 changes what the vocabulary
+*says* — so deriving it is no longer possible or wanted. This file is now the
+source of truth; the enums it came from are legacy.
 
-The enums stay where they are for now. They are the house domain's vocabulary,
-not the engine's, but moving their definition is a separate mechanical change
-from removing the engine's *dependence* on them — and doing both at once would
-mean a large diff whose behaviour-preservation could not be checked
-independently. This step removes the dependence.
+The two changes worth knowing when reading this:
 
-When `domains/garage` arrives it will declare its vocabulary directly rather
-than deriving it, since it has nothing to be derived from.
+* `located_in` and `part_of` were conflated. HomeKit used `part_of` for spatial
+  containment while the importer used it for composition, so one word carried
+  two meanings and the two relationships looked redundant when they were not.
+  They are now split: `located_in` is where a thing *is*; `part_of` is what a
+  thing is *a component of*.
+* Several rules were previously unenforceable — declared with no permitted
+  endpoints, so every attempt to create them failed. Where that was an
+  oversight it is now `None` (explicitly unconstrained); where the relationship
+  was genuinely redundant, it is gone.
 """
 
 from inbetweenies.domain import RelationshipRule, build_manifest
-from inbetweenies.models import EntityType, RelationshipType, SourceType
-from inbetweenies.models.relationship import EntityRelationship
 
+# --- Entity types ---------------------------------------------------------
+# Live counts from the 2026-08-03 production backup are in README.md. The
+# automation trio (automation / schedule / procedure) has no instances yet: the
+# Vantage system at one site and Home Assistant at the other are real but not
+# yet described. Undescribed, not absent — see ADR-013.
+ENTITY_TYPES = [
+    "home",
+    "zone",
+    "room",
+    "device",
+    "door",
+    "window",
+    "app",
+    "note",
+    "manual",
+    "procedure",
+    "schedule",
+    "automation",
+]
 
-def _endpoint_rules():
-    """Recover the endpoint constraints by ASKING the predicate that owns them.
+# --- Source types ---------------------------------------------------------
+# HOW A RECORD REACHED THE GRAPH — nothing more. Deliberately not the system
+# that runs an automation: that is a fact about the world, stays true however
+# the record arrived, and belongs on an `app` entity (ADR-013 §4). An
+# automation imported from a Home Assistant backup but actually executed by
+# Alexa is `imported` and Alexa-run; one field cannot say both.
+#
+# Left at five on purpose. Extending this per automation vendor — alexa,
+# google_home, smartthings, and every IoT app with its own scheduler — is a
+# list that never stops growing.
+SOURCE_TYPES = [
+    "homekit",
+    "matter",
+    "manual",
+    "imported",
+    "generated",
+]
 
-    `is_valid_for_entities` keeps its `valid_combinations` table as a function
-    local, so there is nothing to import. Rather than transcribe it — the one
-    thing that could make "byte-identical" false — the manifest probes the
-    predicate over every (relationship_type, from_type, to_type) triple and
-    records what it accepts. 12 x 12 x 14 is ~2000 calls at import time, which
-    is nothing, and it derives from BEHAVIOUR rather than from a data
-    structure: if the rule ever stops being a lookup table, the manifest still
-    matches whatever it became.
-
-    Note the asymmetry this preserves: a relationship type with NO entry in the
-    table accepts nothing, which is not the same as accepting anything. The
-    manifest records that faithfully as an explicit empty allow-list rather
-    than as "unconstrained".
-    """
-    class _Endpoint:
-        __slots__ = ("entity_type",)
-
-        def __init__(self, entity_type):
-            self.entity_type = entity_type
-
-    entity_types = list(EntityType)
-    for rel_type in RelationshipType:
-        probe = EntityRelationship(relationship_type=rel_type)
-        allowed = tuple(
-            (str(a.value), str(b.value))
-            for a in entity_types
-            for b in entity_types
-            if probe.is_valid_for_entities(_Endpoint(a), _Endpoint(b))
-        )
-        yield RelationshipRule(name=str(rel_type.value), allowed_endpoints=allowed)
-
+# --- Relationship types ---------------------------------------------------
+# `allowed_endpoints=None` means explicitly unconstrained. An empty tuple means
+# "nothing is permitted", which is what made contained_in and depends_on
+# uncreatable — see inbetweenies/domain.py::RelationshipRule.
+RELATIONSHIP_RULES = [
+    # -- Structure --------------------------------------------------------
+    RelationshipRule(
+        name="located_in",
+        # Spatial containment: where a thing IS. The single containment
+        # relationship since ADR-013; HomeKit's room->home edges moved here
+        # from part_of.
+        allowed_endpoints=(
+            ("device", "room"),
+            ("device", "zone"),
+            ("room", "zone"),
+            ("room", "home"),
+            ("zone", "home"),
+            ("door", "room"),
+            ("window", "room"),
+        ),
+    ),
+    RelationshipRule(
+        name="part_of",
+        # Composition: a thing is a COMPONENT of another. 104 live edges, all
+        # device->device from the importer. Not containment — a component is
+        # not "located in" its parent.
+        allowed_endpoints=(("device", "device"),),
+    ),
+    RelationshipRule(
+        name="connects_to",
+        allowed_endpoints=(
+            ("room", "room"),
+            ("door", "room"),
+            ("window", "room"),
+        ),
+    ),
+    # -- Documentation and attachments ------------------------------------
+    RelationshipRule(
+        name="documented_by",
+        allowed_endpoints=(
+            ("device", "manual"),
+            ("device", "procedure"),
+            ("device", "note"),
+            ("room", "note"),
+            ("home", "note"),
+            ("door", "note"),
+        ),
+    ),
+    RelationshipRule(
+        name="procedure_for",
+        allowed_endpoints=(("procedure", "device"), ("procedure", "room")),
+    ),
+    RelationshipRule(
+        name="has_blob",
+        # Anything may carry an attachment; door->note and note->note are both
+        # live. Unconstrained is the accurate statement (ADR-013 §3).
+        allowed_endpoints=None,
+    ),
+    # -- Control and automation -------------------------------------------
+    # Undescribed at both sites so far. Retained and shaped to serve Vantage
+    # (Roland) and Home Assistant (Corfe) alike — neither introduces a concept
+    # these cannot express.
+    RelationshipRule(
+        name="controls",
+        allowed_endpoints=(
+            ("device", "device"),
+            ("automation", "device"),
+            ("schedule", "device"),
+            ("schedule", "automation"),
+        ),
+    ),
+    RelationshipRule(
+        name="automates",
+        allowed_endpoints=(
+            ("automation", "device"),
+            ("automation", "room"),
+            ("schedule", "device"),
+        ),
+    ),
+    RelationshipRule(
+        name="triggered_by",
+        allowed_endpoints=(
+            ("automation", "device"),
+            ("automation", "schedule"),
+            ("schedule", "automation"),
+        ),
+    ),
+    RelationshipRule(
+        name="monitors",
+        allowed_endpoints=(
+            ("device", "device"),
+            ("device", "room"),
+            ("automation", "device"),
+        ),
+    ),
+    RelationshipRule(
+        name="depends_on",
+        # Previously uncreatable (no endpoints declared). Unconstrained until
+        # the automation is described and a real shape is known — ADR-013 §2.
+        allowed_endpoints=None,
+    ),
+    # -- Apps and automation provenance ------------------------------------
+    # An `app` entity per system — Alexa, Google Home, HomeKit, Vantage, Home
+    # Assistant, a vendor's own scheduler — and `manages` edges to whatever it
+    # runs. That is how an automation records which system executes it
+    # (ADR-013 §4): unbounded without schema change, and it makes "what breaks
+    # if this system goes away" a graph traversal rather than a text search.
+    #
+    # This is why `app` looked like a half-built feature: one app entity exists
+    # and nothing links to it. It is the right mechanism, declared before the
+    # automations it was meant to describe.
+    RelationshipRule(
+        name="manages",
+        allowed_endpoints=(
+            ("app", "device"),
+            ("app", "automation"),
+            ("app", "schedule"),
+            ("app", "room"),
+        ),
+    ),
+    # NOTE: `controlled_by_app` is deliberately absent (ADR-013 §4). It was the
+    # exact inverse of `manages` — device->app against app->device — which is
+    # the same one-thing-two-ways defect as the located_in/part_of conflation
+    # this ADR exists to fix. Both were unused, so there was no cost to
+    # choosing. `manages` wins: the app is the actor, so it reads as the
+    # subject.
+    # NOTE: `contained_in` is deliberately absent (ADR-013 §1). It duplicated
+    # located_in, declared no endpoints, and so was never creatable. No data
+    # uses it and none could.
+]
 
 HOUSE = build_manifest(
     name="house",
-    entity_types=[t.value for t in EntityType],
-    source_types=[t.value for t in SourceType],
-    relationship_rules=_endpoint_rules(),
+    entity_types=ENTITY_TYPES,
+    source_types=SOURCE_TYPES,
+    relationship_rules=RELATIONSHIP_RULES,
 )
