@@ -135,13 +135,17 @@ class GraphOperations(ABC):
         Args:
             entity_id: Center entity ID
             depth: How many hops to include
-            rel_types: Filter by relationship types
+            rel_types: Filter by relationship types (all of them, not just the
+                first)
 
         Returns:
-            Dictionary with entities and relationships
+            Dictionary with entities and relationships. Each relationship
+            appears exactly once even though it is reachable from both of its
+            endpoints.
         """
         entities = {}
         relationships = []
+        seen_relationships = set()
         visited = set()
 
         # Start with center entity
@@ -163,12 +167,21 @@ class GraphOperations(ABC):
 
             visited.add(current_id)
 
-            # Get all relationships for this entity
-            outgoing = await self.get_relationships(from_id=current_id, rel_type=rel_types[0] if rel_types else None)
-            incoming = await self.get_relationships(to_id=current_id, rel_type=rel_types[0] if rel_types else None)
+            # Get all relationships for this entity. The primitive filters one
+            # type at a time, so ask once per requested type; no filter at all
+            # when the caller did not name any.
+            edges = []
+            for rel_type in (rel_types if rel_types else [None]):
+                edges.extend(await self.get_relationships(from_id=current_id, rel_type=rel_type))
+                edges.extend(await self.get_relationships(to_id=current_id, rel_type=rel_type))
 
-            for rel in outgoing + incoming:
-                relationships.append(rel)
+            for rel in edges:
+                # An edge whose endpoints are both expanded is seen twice (once
+                # outgoing, once incoming), and a self-loop twice from the same
+                # entity; report it once.
+                if rel.id not in seen_relationships:
+                    seen_relationships.add(rel.id)
+                    relationships.append(rel)
 
                 # Add connected entities to visit
                 if rel.from_entity_id == current_id:

@@ -25,7 +25,7 @@ REVISION HISTORY:
 DEPENDENCIES:
 - pytest-asyncio: Async test support
 - httpx: HTTP client for server setup
-- tempfile: Temporary database creation
+- private_db_path fixture: per-test database directory (see tests/conftest.py)
 
 USAGE:
 Run with: pytest tests/integration/test_sync_basic.py
@@ -38,8 +38,6 @@ import asyncio
 from datetime import datetime
 import json
 import httpx
-from pathlib import Path
-import tempfile
 import sys
 import os
 
@@ -53,18 +51,14 @@ class TestBasicSync:
     # Using fixtures from conftest.py for server_url and auth_token
 
     @pytest_asyncio.fixture
-    async def client(self, server_url, auth_token):
-        """Create test client."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
-
-        client = BlowingOffClient(db_path)
+    async def client(self, server_url, auth_token, private_db_path):
+        """Create test client in a directory private to this test."""
+        client = BlowingOffClient(private_db_path())
         await client.connect(server_url, auth_token, "test-client-1")
 
         yield client
 
         await client.disconnect()
-        Path(db_path).unlink(missing_ok=True)
 
     @pytest.mark.asyncio
     async def test_initial_sync(self, client):

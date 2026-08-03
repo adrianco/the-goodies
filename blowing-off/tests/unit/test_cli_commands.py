@@ -16,8 +16,18 @@ from blowingoff.cli.main import cli
 
 
 @pytest.fixture
-def runner():
-    """Create a CLI test runner."""
+def runner(tmp_path, monkeypatch):
+    """A CLI runner rooted in a working directory private to this test.
+
+    `blowing-off connect` saves its config as `.blowingoff.json` in the CURRENT
+    working directory and `disconnect` deletes it again. While every test ran
+    in one shared directory (the checkout), connect wrote that file into the
+    repository for real, and test_disconnect_command only passed because
+    test_connect_command had run first and left it behind. Two suites running
+    at once then raced over the single file: whichever disconnected first
+    removed it, and the other reported "Not connected" and failed.
+    """
+    monkeypatch.chdir(tmp_path)
     return CliRunner()
 
 
@@ -102,11 +112,13 @@ class TestCLICommands:
         mock_instance.is_connected = True
         mock_instance.disconnect = AsyncMock()
 
-        # Create config file
-        config_path = Path.home() / '.blowing-off' / 'config.json'
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_path, 'w') as f:
-            json.dump({'server_url': 'http://localhost:8000'}, f)
+        # The config the command actually reads: `.blowingoff.json` in the
+        # working directory. This used to write ~/.blowing-off/config.json,
+        # which `disconnect` never looks at, so the assertion below was really
+        # testing whatever an earlier test had left in the shared directory.
+        Path('.blowingoff.json').write_text(
+            json.dumps({'server_url': 'http://localhost:8000'})
+        )
 
         result = runner.invoke(cli, ['disconnect'])
 
@@ -345,10 +357,11 @@ class TestCLIErrorHandling:
 
     def test_no_config_file(self, runner):
         """Test commands when no config file exists."""
-        # Remove any existing config
-        config_path = Path.home() / '.blowing-off' / 'config.json'
-        if config_path.exists():
-            config_path.unlink()
+        # Nothing to remove: the runner fixture gives this test an empty
+        # working directory, so `.blowingoff.json` is absent by construction.
+        # (It used to delete a file in $HOME that the CLI never reads, while
+        # depending on the real state of the shared directory it ran in.)
+        assert not Path('.blowingoff.json').exists()
 
         result = runner.invoke(cli, ['status'])
 

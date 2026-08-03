@@ -7,8 +7,6 @@ import pytest_asyncio
 import asyncio
 import httpx
 from blowingoff import BlowingOffClient
-import tempfile
-from pathlib import Path
 
 
 @pytest.mark.integration
@@ -25,15 +23,15 @@ class TestSimpleIntegration:
             assert response.json() == {"status": "healthy"}
 
     @pytest.mark.asyncio
-    async def test_basic_sync_flow(self, server_url, auth_token):
+    async def test_basic_sync_flow(self, server_url, auth_token, private_db_path):
         """Test basic sync flow without complex scenarios."""
-        # Create a temporary database
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
+        # A database in a directory private to this test, so its graph store
+        # and WAL files cannot be shared with any other test or run.
+        db_path = private_db_path()
 
+        # Create client and connect
+        client = BlowingOffClient(db_path)
         try:
-            # Create client and connect
-            client = BlowingOffClient(db_path)
             await client.connect(server_url, auth_token, "test-simple-client")
 
             # Perform initial sync
@@ -67,13 +65,7 @@ class TestSimpleIntegration:
                 # Don't fail the test - just log the issue
                 # This helps us understand what's wrong
 
-            await client.disconnect()
-
         finally:
-            # Cleanup
-            Path(db_path).unlink(missing_ok=True)
-            # Clean up WAL files too
-            for suffix in ["-wal", "-shm"]:
-                wal_path = Path(db_path + suffix)
-                if wal_path.exists():
-                    wal_path.unlink()
+            # No per-file cleanup: private_db_path removes the whole working
+            # directory -- database, WAL files and graph store together.
+            await client.disconnect()

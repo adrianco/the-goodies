@@ -1,8 +1,10 @@
 """Test GraphTraversal algorithms (inbetweenies/graph/traversal.py).
 
-Traversal follows *outgoing* edges (``from`` -> ``to``) except for
-``get_ancestors``, which follows incoming ones. The house fixture's edges are
-laid out in `memory_graph.build_house`; the ids below refer to it.
+Traversal follows *outgoing* edges (``from`` -> ``to``) except for the
+hierarchy pair, ``get_ancestors``/``get_descendants``, whose direction depends
+on the relationship type being walked (see ``TestAncestorsAndDescendants``).
+The house fixture's edges are laid out in `memory_graph.build_house`; the ids
+below refer to it.
 """
 
 import pytest
@@ -33,6 +35,18 @@ def control_chain():
         graph.add_entity(make_entity(node, EntityType.DEVICE, f"Device {node}"))
     graph.connect("c1-c2", "c1", "c2", RelationshipType.CONTROLS)
     graph.connect("c2-c3", "c2", "c3", RelationshipType.CONTROLS)
+    return graph
+
+
+@pytest.fixture
+def part_of_chain():
+    """dev PART_OF zone PART_OF home -- a child->parent chain, as the schema stores it."""
+    graph = InMemoryGraph()
+    graph.add_entity(make_entity("home", EntityType.HOME, "Home"))
+    graph.add_entity(make_entity("zone", EntityType.ZONE, "Upstairs"))
+    graph.add_entity(make_entity("dev", EntityType.DEVICE, "Sensor"))
+    graph.connect("z-h", "zone", "home", RelationshipType.PART_OF)
+    graph.connect("d-z", "dev", "zone", RelationshipType.PART_OF)
     return graph
 
 
@@ -272,28 +286,57 @@ class TestFindAllPaths:
 
 
 class TestAncestorsAndDescendants:
-    """Hierarchy walks over a parent -> child relationship type.
+    """Hierarchy walks over a single relationship type.
 
-    CONTROLS points from controller to controlled, i.e. parent -> child, which
-    is the direction this pair of methods assumes. See
-    ``test_get_ancestors_follows_part_of_the_wrong_way`` for the case where the
-    schema's own edge direction is the other way round.
+    "Above" is defined by the schema rather than by a fixed edge direction.
+    ``EntityRelationship.is_valid_for_entities`` stores PART_OF and LOCATED_IN
+    child -> parent (DEVICE->ZONE, ROOM->HOME), so ancestors are reached by
+    following those edges forwards; CONTROLS is stored controller -> controlled,
+    so ancestors are reached by following it backwards. The set of upward types
+    is ``inbetweenies.graph.traversal.CHILD_TO_PARENT_TYPES``.
     """
 
-    async def test_get_ancestors_walks_incoming_edges_transitively(self, control_chain):
+    async def test_get_ancestors_of_a_parent_to_child_type_walks_incoming_edges(
+        self, control_chain
+    ):
         ancestors = await control_chain.get_ancestors("c3", RelationshipType.CONTROLS)
 
         assert [e.id for e in ancestors] == ["c2", "c1"]
 
+    async def test_get_ancestors_of_a_child_to_parent_type_walks_outgoing_edges(
+        self, part_of_chain
+    ):
+        # dev -> zone -> home is how the schema stores containment, so a leaf's
+        # ancestors are found by following its own outgoing edges.
+        ancestors = await part_of_chain.get_ancestors("dev", RelationshipType.PART_OF)
+
+        assert [e.id for e in ancestors] == ["zone", "home"]
+
     async def test_get_ancestors_of_root_is_empty(self, control_chain):
         assert await control_chain.get_ancestors("c1", RelationshipType.CONTROLS) == []
 
+    async def test_get_ancestors_of_part_of_root_is_empty(self, part_of_chain):
+        assert await part_of_chain.get_ancestors("home", RelationshipType.PART_OF) == []
+
+    async def test_get_ancestors_excludes_the_starting_entity(self, cycle_graph):
+        # In a cycle every node is reachable from itself; it is still not its
+        # own ancestor.
+        ancestors = await cycle_graph.get_ancestors("a", RelationshipType.CONTROLS)
+
+        assert "a" not in [e.id for e in ancestors]
+
     async def test_get_ancestors_respects_max_depth(self, control_chain):
         ancestors = await control_chain.get_ancestors(
-            "c3", RelationshipType.CONTROLS, max_depth=0
+            "c3", RelationshipType.CONTROLS, max_depth=1
         )
 
         assert [e.id for e in ancestors] == ["c2"]
+
+    async def test_get_ancestors_max_depth_zero_returns_nothing(self, control_chain):
+        # max_depth counts hops, as in bfs(): zero hops reaches no one.
+        assert await control_chain.get_ancestors(
+            "c3", RelationshipType.CONTROLS, max_depth=0
+        ) == []
 
     async def test_get_ancestors_ignores_other_relationship_types(self, house):
         # device-light's incoming edges include AUTOMATES and PROCEDURE_FOR;
@@ -326,51 +369,86 @@ class TestAncestorsAndDescendants:
         assert "c3" not in ids
 
     async def test_get_descendants_ignores_other_relationship_types(self, cycle_graph):
+        # "a" is LOCATED_IN "room", i.e. the room is the parent, so the walk
+        # down from the room reaches "a". The CONTROLS edges out of "a" are a
+        # different type and must not be followed.
         ids = {
             e.id
-            for e in await cycle_graph.get_descendants("a", RelationshipType.LOCATED_IN)
+            for e in await cycle_graph.get_descendants("room", RelationshipType.LOCATED_IN)
         }
 
-        assert "room" in ids
-        assert "b" not in ids
+        assert ids == {"a"}
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG (traversal.py:190-229 / 231-253): get_ancestors and get_descendants "
-            "assume edges point parent->child, but the schema's hierarchy edges point "
-            "child->parent (relationship.py:147-151 validates PART_OF only as "
-            "ROOM->HOME, ZONE->HOME, DEVICE->ZONE). get_ancestors follows *incoming* "
-            "edges and calls rel.from_entity_id the 'parent', so for the PART_OF "
-            "example named in its own docstring it walks downwards and returns "
-            "nothing for a leaf."
-        ),
-    )
-    async def test_get_ancestors_follows_part_of_the_wrong_way(self):
-        graph = InMemoryGraph()
-        graph.add_entity(make_entity("home", EntityType.HOME, "Home"))
-        graph.add_entity(make_entity("zone", EntityType.ZONE, "Upstairs"))
-        graph.add_entity(make_entity("dev", EntityType.DEVICE, "Sensor"))
-        graph.connect("z-h", "zone", "home", RelationshipType.PART_OF)
-        graph.connect("d-z", "dev", "zone", RelationshipType.PART_OF)
+    async def test_get_descendants_of_a_child_to_parent_type_walks_incoming_edges(
+        self, part_of_chain
+    ):
+        descendants = await part_of_chain.get_descendants("home", RelationshipType.PART_OF)
 
-        ancestors = await graph.get_ancestors("dev", RelationshipType.PART_OF)
+        assert [e.id for e in descendants] == ["zone", "dev"]
 
-        assert [e.id for e in ancestors] == ["zone", "home"]
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG (traversal.py:249-253): get_descendants delegates to bfs(), which "
-            "includes the starting entity in its result, so an entity is reported as "
-            "its own descendant. get_ancestors excludes self, so the two are "
-            "asymmetric."
-        ),
-    )
     async def test_get_descendants_excludes_the_starting_entity(self, control_chain):
         descendants = await control_chain.get_descendants("c1", RelationshipType.CONTROLS)
 
         assert [e.id for e in descendants] == ["c2", "c3"]
+
+    async def test_get_descendants_excludes_the_starting_entity_in_a_cycle(self, cycle_graph):
+        descendants = await cycle_graph.get_descendants("a", RelationshipType.CONTROLS)
+
+        assert [e.id for e in descendants] == ["b", "c"]
+
+    async def test_get_descendants_max_depth_zero_returns_nothing(self, control_chain):
+        assert await control_chain.get_descendants(
+            "c1", RelationshipType.CONTROLS, max_depth=0
+        ) == []
+
+    async def test_get_descendants_skips_dangling_edges(self, control_chain):
+        control_chain.connect("c1-ghost", "c1", "ghost", RelationshipType.CONTROLS)
+
+        descendants = await control_chain.get_descendants("c1", RelationshipType.CONTROLS)
+
+        assert [e.id for e in descendants] == ["c2", "c3"]
+
+    @pytest.mark.parametrize(
+        "rel_type,pairs",
+        [
+            # (ancestor, descendant) pairs in each fixture's hierarchy.
+            (RelationshipType.CONTROLS, [("c1", "c2"), ("c1", "c3"), ("c2", "c3")]),
+            (RelationshipType.PART_OF, [("zone", "dev"), ("home", "zone"), ("home", "dev")]),
+        ],
+    )
+    async def test_ancestors_and_descendants_are_exact_inverses(
+        self, control_chain, part_of_chain, rel_type, pairs
+    ):
+        graph = control_chain if rel_type is RelationshipType.CONTROLS else part_of_chain
+
+        for above, below in pairs:
+            assert above in [e.id for e in await graph.get_ancestors(below, rel_type)]
+            assert below in [e.id for e in await graph.get_descendants(above, rel_type)]
+            # ...and not the other way round.
+            assert below not in [e.id for e in await graph.get_ancestors(above, rel_type)]
+            assert above not in [e.id for e in await graph.get_descendants(below, rel_type)]
+
+    @pytest.mark.parametrize("max_depth", [0, 1, 2, 3, None])
+    async def test_max_depth_means_the_same_hop_count_in_both_directions(
+        self, control_chain, max_depth
+    ):
+        # c1 -> c2 -> c3: whatever depth bound reaches c3 from c1 downwards
+        # must reach c1 from c3 upwards.
+        down = [
+            e.id
+            for e in await control_chain.get_descendants(
+                "c1", RelationshipType.CONTROLS, max_depth=max_depth
+            )
+        ]
+        up = [
+            e.id
+            for e in await control_chain.get_ancestors(
+                "c3", RelationshipType.CONTROLS, max_depth=max_depth
+            )
+        ]
+
+        assert len(down) == len(up)
+        assert ("c3" in down) == ("c1" in up)
 
 
 class TestDetectCycles:
@@ -404,18 +482,33 @@ class TestDetectCycles:
     async def test_unknown_start_reports_no_cycles(self, house):
         assert await house.detect_cycles(start_id="no-such-entity") == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG (traversal.py:299-304): detect_cycles(start_id=None) is documented as "
-            "'if None, check entire graph' but the else branch is a bare `pass`, so it "
-            "silently reports no cycles for a graph that has one. Either the docstring "
-            "or the implementation is wrong; a caller cannot tell a clean graph from an "
-            "unimplemented scan."
-        ),
-    )
     async def test_whole_graph_scan_finds_cycles(self, cycle_graph):
         assert await cycle_graph.detect_cycles() == [["a", "b", "c", "a"]]
+
+    async def test_whole_graph_scan_finds_a_cycle_no_single_start_reaches(self):
+        # Two disconnected components: an acyclic one that is scanned first,
+        # and a cyclic one that nothing in the first can reach.
+        graph = InMemoryGraph()
+        for node in ("solo", "sink", "m", "n"):
+            graph.add_entity(make_entity(node, EntityType.DEVICE, node.upper()))
+        graph.connect("solo-sink", "solo", "sink", RelationshipType.CONTROLS)
+        graph.connect("mn", "m", "n", RelationshipType.CONTROLS)
+        graph.connect("nm", "n", "m", RelationshipType.CONTROLS)
+
+        assert await graph.detect_cycles(start_id="solo") == []
+        assert await graph.detect_cycles() == [["m", "n", "m"]]
+
+    async def test_whole_graph_scan_of_an_acyclic_graph_reports_nothing(self, house):
+        assert await house.detect_cycles() == []
+
+    async def test_whole_graph_scan_on_an_empty_graph_reports_nothing(self, empty_graph):
+        assert await empty_graph.detect_cycles() == []
+
+    async def test_whole_graph_scan_respects_the_relationship_type_filter(self, cycle_graph):
+        assert await cycle_graph.detect_cycles(rel_types=[RelationshipType.LOCATED_IN]) == []
+        assert await cycle_graph.detect_cycles(rel_types=[RelationshipType.CONTROLS]) == [
+            ["a", "b", "c", "a"]
+        ]
 
 
 class TestCentrality:

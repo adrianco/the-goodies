@@ -11,8 +11,6 @@ import httpx
 import time
 import sys
 import os
-from pathlib import Path
-import tempfile
 
 from blowingoff import BlowingOffClient
 
@@ -78,70 +76,66 @@ class TestSyncDiagnostics:
             assert "vector_clock" in data
 
     @pytest.mark.asyncio
-    async def test_single_client_operations(self, server_url, auth_token):
+    async def test_single_client_operations(self, server_url, auth_token, private_db_path):
         """Test single client can perform basic operations."""
         print(f"\n=== Testing single client operations ===")
 
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
+        db_path = private_db_path()
 
         print(f"Database path: {db_path}")
 
-        try:
-            client = BlowingOffClient(db_path)
+        client = BlowingOffClient(db_path)
 
-            # Test connection
-            print("Connecting to server...")
-            start = time.time()
-            await client.connect(server_url, auth_token, "test-single")
-            connect_time = time.time() - start
-            print(f"Connection took {connect_time:.2f} seconds")
+        # Test connection
+        print("Connecting to server...")
+        start = time.time()
+        await client.connect(server_url, auth_token, "test-single")
+        connect_time = time.time() - start
+        print(f"Connection took {connect_time:.2f} seconds")
 
-            # Test initial sync
-            print("Performing initial sync...")
-            start = time.time()
-            result = await client.sync()
-            sync_time = time.time() - start
-            print(f"Initial sync took {sync_time:.2f} seconds")
-            print(f"Sync result: success={result.success}, entities={result.synced_entities}")
-            assert result.success
+        # Test initial sync
+        print("Performing initial sync...")
+        start = time.time()
+        result = await client.sync()
+        sync_time = time.time() - start
+        print(f"Initial sync took {sync_time:.2f} seconds")
+        print(f"Sync result: success={result.success}, entities={result.synced_entities}")
+        assert result.success
 
-            # Test creating an entity locally
-            print("Creating local entity...")
-            from inbetweenies.models import Entity, EntityType, SourceType
-            import uuid
+        # Test creating an entity locally
+        print("Creating local entity...")
+        from inbetweenies.models import Entity, EntityType, SourceType
+        import uuid
 
-            entity = Entity(
-                id=str(uuid.uuid4()),
-                version=Entity.create_version("test-user"),
-                entity_type=EntityType.DEVICE,
-                name="Test Device",
-                content={"type": "test"},
-                source_type=SourceType.MANUAL,
-                user_id="test-user",
-                parent_versions=[]
-            )
+        entity = Entity(
+            id=str(uuid.uuid4()),
+            version=Entity.create_version("test-user"),
+            entity_type=EntityType.DEVICE,
+            name="Test Device",
+            content={"type": "test"},
+            source_type=SourceType.MANUAL,
+            user_id="test-user",
+            parent_versions=[]
+        )
 
-            stored = await client.graph_operations.store_entity(entity)
-            print(f"Created entity: {stored.id}")
+        stored = await client.graph_operations.store_entity(entity)
+        print(f"Created entity: {stored.id}")
 
-            # Test syncing the entity
-            print("Syncing created entity...")
-            start = time.time()
-            result = await client.sync()
-            sync_time = time.time() - start
-            print(f"Entity sync took {sync_time:.2f} seconds")
-            print(f"Sync result: success={result.success}, entities={result.synced_entities}")
-            assert result.success
+        # Test syncing the entity
+        print("Syncing created entity...")
+        start = time.time()
+        result = await client.sync()
+        sync_time = time.time() - start
+        print(f"Entity sync took {sync_time:.2f} seconds")
+        print(f"Sync result: success={result.success}, entities={result.synced_entities}")
+        assert result.success
 
-            await client.disconnect()
-            print("Client disconnected successfully")
+        await client.disconnect()
+        print("Client disconnected successfully")
 
-        finally:
-            Path(db_path).unlink(missing_ok=True)
 
     @pytest.mark.asyncio
-    async def test_concurrent_sync_timing(self, server_url, auth_token):
+    async def test_concurrent_sync_timing(self, server_url, auth_token, private_db_path):
         """Test how long concurrent sync operations take."""
         print(f"\n=== Testing concurrent sync timing ===")
         print(f"Platform: {sys.platform}")
@@ -149,14 +143,11 @@ class TestSyncDiagnostics:
 
         # Create two clients
         clients = []
-        db_paths = []
 
         for i in range(2):
-            with tempfile.NamedTemporaryFile(suffix=f"-{i}.db", delete=False) as f:
-                db_path = f.name
-                db_paths.append(db_path)
-
-            client = BlowingOffClient(db_path)
+            # Private directories: two separate clients must not share a
+            # graph store, which they did while it was keyed on the parent dir.
+            client = BlowingOffClient(private_db_path(f"client-{i}.db"))
             await client.connect(server_url, auth_token, f"test-concurrent-{i}")
             clients.append(client)
 
@@ -194,8 +185,5 @@ class TestSyncDiagnostics:
             for client in clients:
                 try:
                     await client.disconnect()
-                except:
+                except Exception:
                     pass
-
-            for db_path in db_paths:
-                Path(db_path).unlink(missing_ok=True)

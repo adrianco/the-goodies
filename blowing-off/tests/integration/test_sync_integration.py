@@ -6,7 +6,6 @@ Tests the sync engine, protocol, and conflict resolution.
 
 import pytest
 import pytest_asyncio
-import tempfile
 import json
 from datetime import datetime, timedelta, UTC
 from unittest.mock import Mock, AsyncMock, patch

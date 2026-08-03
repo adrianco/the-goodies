@@ -165,14 +165,16 @@ class Entity(Base, InbetweeniesTimestampMixin):
         """
         # Create new version data
         new_data = self.to_dict()
+        new_data.update(changes)
 
-        # Merge content if provided in changes
+        # Merge content if provided in changes. The merge is written into
+        # new_data, never back into ``changes``: the caller's dict is an input
+        # and several callers (e.g. MCPTools.update_entity_tool) report it back
+        # as the delta that was requested.
         if "content" in changes:
             merged_content = self.content.copy() if self.content else {}
             merged_content.update(changes["content"])
-            changes["content"] = merged_content
-
-        new_data.update(changes)
+            new_data["content"] = merged_content
 
         # Update version tracking
         new_data["version"] = self.create_version(user_id)
