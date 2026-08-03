@@ -269,3 +269,7 @@ backups/
 
 # Generated knowledge graph (graphify) - regenerate with `graphify update .`
 graphify-out/
+
+# Local Claude Code tooling config (graphify PreToolUse hooks etc.) -- a
+# per-developer workflow preference, not a project decision.
+.claude/settings.json

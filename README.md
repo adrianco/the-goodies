@@ -78,11 +78,16 @@ cd /workspaces/the-goodies
 # Set Python path (required)
 export PYTHONPATH=/workspaces/the-goodies:$PYTHONPATH
 
-# Install dependencies
-cd funkygibbon && pip install -r requirements.txt && cd ..
-cd inbetweenies && pip install -e . && cd ..
-cd oook && pip install -e . && cd ..
-cd blowing-off && pip install -e . && cd ..
+# Install everything in one step.
+# The repo is a single uv workspace (ADR-010 §6): the root pyproject.toml
+# covers funkygibbon, inbetweenies, blowing-off and oook, so this one command
+# installs all four editable plus the full dependency set. There is no longer a
+# per-component install loop, and funkygibbon/requirements.txt is no longer the
+# way dependencies get installed.
+pip install -e .
+
+# Or, with uv (resolves from the committed uv.lock instead of pip's resolver):
+#   uv sync
 
 # Configure security
 export ADMIN_PASSWORD_HASH=""  # For dev mode with "admin" password

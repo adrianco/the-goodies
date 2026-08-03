@@ -60,13 +60,11 @@ USAGE:
 
 from .protocol import InbetweeniesProtocol
 from .engine import SyncEngine
-from .conflict_resolver import ConflictResolver
 from inbetweenies.sync import SyncState, SyncResult
 
 __all__ = [
     "InbetweeniesProtocol",
     "SyncEngine",
-    "ConflictResolver",
     "SyncState",
     "SyncResult",
 ]

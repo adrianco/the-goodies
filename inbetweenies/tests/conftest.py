@@ -9,6 +9,19 @@ from inbetweenies.models import (
     Entity, EntityRelationship, EntityType, RelationshipType,
     SourceType
 )
+from inbetweenies.tests.memory_graph import InMemoryGraph, build_house
+
+
+@pytest.fixture
+def empty_graph():
+    """An in-memory graph backend with no entities and no relationships."""
+    return InMemoryGraph()
+
+
+@pytest.fixture
+def house():
+    """A populated in-memory graph (see memory_graph.build_house for the map)."""
+    return build_house()
 
 
 @pytest.fixture

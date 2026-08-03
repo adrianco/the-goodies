@@ -24,17 +24,6 @@ from ..client import BlowingOffClient
 
 console = Console()
 
-# Global client instance
-client = None
-
-
-def get_client():
-    """Get or create client instance."""
-    global client
-    if client is None:
-        client = BlowingOffClient()
-    return client
-
 
 async def load_client():
     """Load client with saved connection info."""

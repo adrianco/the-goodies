@@ -30,7 +30,6 @@ Each file now includes:
 ### Sync Engine
 - `/workspaces/the-goodies/blowing-off/sync/engine.py` - Main synchronization engine
 - `/workspaces/the-goodies/blowing-off/sync/protocol.py` - Inbetweenies protocol implementation
-- `/workspaces/the-goodies/blowing-off/sync/conflict_resolver.py` - Conflict resolution logic
 - `/workspaces/the-goodies/blowing-off/sync/state.py` - Sync state data structures
 - `/workspaces/the-goodies/blowing-off/sync/__init__.py` - Sync package exports
 

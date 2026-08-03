@@ -1,29 +1,81 @@
-[tool.poetry]
+# FunkyGibbon -- smart home knowledge graph backend.
+# Workspace member of the root pyproject.toml (ADR-010 section 6).
+#
+# Was a Poetry project that nothing ever installed (CI and install.sh used
+# requirements.txt plus PYTHONPATH). It is now a setuptools/PEP 621 member of
+# the one workspace, so `pip install -e .` at the repo root installs it too.
+#
+# PACKAGING NOTE
+# --------------
+# Like inbetweenies, this directory *is* the `funkygibbon` package root:
+# `models/`, `mcp/`, `graph/`, `search/` and friends live directly here. So the
+# same rule applies -- an EXPLICIT `packages` list plus `package-dir` rooting a
+# single top-level name at this directory. Discovery
+# (`[tool.setuptools.packages.find]`) would register `mcp`, `models`, `graph`,
+# `search`, `auth` and `tests` as top-level distributions and shadow the real
+# MCP SDK for the whole environment (incident 2a6284f). Do not switch to it.
+#
+# `tests` is absent from the list on purpose.
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
 name = "funkygibbon"
 version = "0.3.0"
 description = "Simplified smart home knowledge graph backend"
-authors = ["The Goodies Team"]
 readme = "README.md"
-python = "^3.11"
+requires-python = ">=3.11"
+authors = [{ name = "The Goodies Team" }]
+dependencies = [
+    # Workspace reference (see [tool.uv.sources]).
+    "inbetweenies",
+    "sqlalchemy>=2.0.23",
+    "aiosqlite>=0.19.0",
+    "greenlet>=3.5.4",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.14.2",
+    # 0.133.0 is the first release to drop fastapi's starlette<1.0.0 cap.
+    # Needed so blowing-off's mcp>=2 resolves on Python >=3.14, where mcp
+    # requires starlette>=0.48 (on 3.11-3.13 mcp only needs starlette>=0.27, so
+    # this floor is about keeping the declared constraint set resolvable across
+    # requires-python). Do not lower it.
+    "fastapi>=0.133.0",
+    "uvicorn[standard]>=0.24.0",
+    "httpx>=0.25.2",
+    "click>=8.1.7",
+    "python-dateutil>=2.8.2",
+    "argon2-cffi>=25.1.0",
+    "pyjwt>=2.13.0",
+    "qrcode>=8.2",
+    "pillow>=12.3.0",
+    "apscheduler>=3.11.3",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-sqlalchemy = {extras = ["asyncio"], version = "^2.0.23"}
-aiosqlite = "^0.19.0"
-pydantic = "^2.5.0"
-fastapi = "^0.104.1"
-click = "^8.1.7"
-python-dateutil = "^2.8.2"
-uvicorn = {extras = ["standard"], version = "^0.24.0"}
+# No [project.scripts]: the server is started with `python -m funkygibbon`
+# (see __main__.py). funkygibbon/cli.py is not a usable console entry point --
+# its `main` is a coroutine and it imports a `seed_data` module that does not
+# exist in the tree.
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.3"
-pytest-asyncio = "^0.21.1"
-pytest-cov = "^4.1.0"
-mypy = "^1.7.0"
-black = "^23.11.0"
-ruff = "^0.1.6"
-httpx = "^0.25.2"
+[tool.setuptools]
+# One top-level name, rooted at this directory.
+package-dir = { "funkygibbon" = "." }
+# Explicit, not discovered. See the packaging note above.
+packages = [
+    "funkygibbon",
+    "funkygibbon.api",
+    "funkygibbon.api.routers",
+    "funkygibbon.auth",
+    "funkygibbon.graph",
+    "funkygibbon.mcp",
+    "funkygibbon.models",
+    "funkygibbon.repositories",
+    "funkygibbon.search",
+]
+
+[tool.uv.sources]
+inbetweenies = { workspace = true }
 
 [tool.ruff]
 line-length = 88
@@ -32,11 +84,3 @@ target-version = "py311"
 [tool.mypy]
 python_version = "3.11"
 strict = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-asyncio_mode = "auto"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"

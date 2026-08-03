@@ -1,14 +1,58 @@
-# Declaring a build-system makes pip use the PEP 517/660 build path for this
-# project. Without it, `pip install -e .` falls back to legacy `setup.py
-# develop`, which appends this directory verbatim to sys.path via
-# easy-install.pth -- leaking `tests/` as an importable top-level package that
-# shadows the repo-root tests/ package.
+# Blowing-Off -- Python reference client for the Inbetweenies protocol.
+# Workspace member of the root pyproject.toml (ADR-010 section 6).
 #
-# Excluding tests in setup.py is not sufficient on its own: the legacy path puts
-# the whole directory on sys.path regardless of what `packages` declares. PEP 660
-# instead installs an import finder exposing only the `blowingoff` name.
+# PACKAGING NOTE
+# --------------
+# Two things keep this install from leaking, both carried over from the retired
+# setup.py:
 #
-# Metadata deliberately stays in setup.py so there is a single source of truth.
+#   1. `[tool.setuptools.packages.find]` is filtered with
+#      `include = ["blowingoff*"]`. Unfiltered discovery would export a
+#      top-level `tests` distribution that shadows the repo-root tests/ package
+#      once installed.
+#   2. The `[build-system]` table forces the PEP 517/660 path. Excluding tests
+#      is not sufficient on its own: legacy `setup.py develop` puts this whole
+#      directory on sys.path via easy-install.pth regardless of what `packages`
+#      declares. PEP 660 instead installs an import finder exposing only the
+#      `blowingoff` name.
+
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "blowingoff"
+version = "0.3.0"
+description = "Python test client for The Goodies smart home system"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "The Goodies Team" }]
+dependencies = [
+    # Workspace reference (see [tool.uv.sources]): resolved from the working
+    # tree, never from an index, so it cannot drift from its consumers.
+    "inbetweenies",
+    "sqlalchemy>=2.0.0",
+    "greenlet>=2.0.0",
+    "aiosqlite>=0.17.0",
+    "httpx>=0.24.0",
+    "aiohttp>=3.8.0",
+    "rich>=10.0.0",
+    "click>=8.0.0",
+    "tabulate>=0.9.0",
+    # Capped below 3 on purpose: blowingoff/mcp/server.py targets the 2.x API.
+    # The matching fastapi>=0.133.0 floor lives in funkygibbon's deps -- on
+    # Python >=3.14 mcp>=2 needs starlette>=0.48, which fastapi 0.116 caps out.
+    "mcp>=2.0.0,<3",
+]
+
+[project.scripts]
+blowing-off = "blowingoff.cli.main:cli"
+blowingoff-mcp = "blowingoff.mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+# Filtered discovery. Do not widen: see the packaging note above.
+include = ["blowingoff*"]
+
+[tool.uv.sources]
+inbetweenies = { workspace = true }

@@ -188,38 +188,22 @@ echo "========================="
 
 # Upgrade pip and install wheel first
 echo "Upgrading pip and installing wheel..."
-$PYTHON_CMD -m pip install --upgrade pip wheel > /dev/null 2>&1
+$PYTHON_CMD -m pip install --upgrade pip setuptools wheel > /dev/null 2>&1
 
-# Install dependencies
-cd funkygibbon
-echo "Installing FunkyGibbon dependencies..."
-pip install -r requirements.txt
-if [ $? -eq 0 ]; then
-    echo "✅ FunkyGibbon dependencies installed"
-else
-    echo "⚠️  Warning: Some dependencies may have failed to install"
-fi
-cd ..
-
-cd oook
-echo "Installing Oook CLI..."
+# One workspace, one install step (ADR-010 §6). The root pyproject.toml maps
+# funkygibbon, inbetweenies, blowingoff and oook into a single editable install
+# and pulls the whole dependency set with them -- replacing the old
+# `cd <component> && pip install -e .` loop, which silently skipped components
+# and had to be kept in step with funkygibbon/requirements.txt by hand.
+echo "Installing the workspace (funkygibbon, inbetweenies, blowing-off, oook)..."
 pip install -e .
 if [ $? -eq 0 ]; then
-    echo "✅ Oook CLI installed"
+    echo "✅ Workspace installed"
 else
-    echo "⚠️  Warning: Oook CLI installation may have failed"
+    echo "❌ Error: Workspace installation failed"
+    echo "   Re-run 'pip install -e .' from the project root to see the failure."
+    exit 1
 fi
-cd ..
-
-cd blowing-off
-echo "Installing Blowing-off client..."
-pip install -e . > /dev/null 2>&1
-if [ $? -eq 0 ]; then
-    echo "✅ Blowing-off client installed"
-else
-    echo "⚠️  Warning: Blowing-off client installation may have failed"
-fi
-cd ..
 
 echo ""
 echo "🗃️  Populating Test Database"
