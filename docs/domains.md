@@ -179,6 +179,13 @@ never cascaded.
 **Shared auth.** One JWT secret, one admin system, tokens valid across domains
 on the instance. The owner premise is one operator.
 
+**Houses with wheels.** A motorhome is a house *and* a vehicle: it has rooms and
+devices, and it also has mileage, service records and a registration. The domain
+model has no answer for one entity living in two domains — references are by
+value and point *between* domains, never merge them. Deliberately out of scope
+for now. Whichever domain such a thing lands in first, the other view of it will
+be a reference, not a second home for the same entity.
+
 ## 6. Status
 
 | | |
