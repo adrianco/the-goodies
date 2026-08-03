@@ -131,7 +131,7 @@ ADR-004 (interval edges, structural tombstones, `snapshot(at)`, drop version pin
 **Risk:** medium-high, and mostly *coordination* rather than technical. Two client implementations under separate ownership must land compatible changes; the conformance suite is what makes that tractable.
 
 ### Stage F — Additive
-FTS5 search (ADR-006 §1) and `domains/garage` instantiation (ADR-012 §6.3). Low risk, no migration, genuinely optional in ordering.
+FTS5 search (ADR-006 §1) and `domains/vehicles` instantiation (ADR-012 §6.3). Low risk, no migration, genuinely optional in ordering.
 
 ---
 
@@ -149,7 +149,7 @@ Three changes, with reasons.
 
 *This is a correction to this document's own first draft, not to the review — the review did not make the split.*
 
-Unchanged from the review: the dead-code deletion and GraphIndex fix stay early and cheap; the access layer precedes the temporal model; the temporal model is the core; garage comes last.
+Unchanged from the review: the dead-code deletion and GraphIndex fix stay early and cheap; the access layer precedes the temporal model; the temporal model is the core; vehicles comes last.
 
 ---
 
@@ -157,7 +157,7 @@ Unchanged from the review: the dead-code deletion and GraphIndex fix stay early 
 
 1. ~~**KittenKong ownership.**~~ Resolved — the guard shipped upstream in `ee4eea5`. Stage A's remaining urgent item (the loser-ack, §1.2) is server-side and in this repository. Ongoing coordination still matters for Stage E, which needs lockstep changes in both clients.
 2. **v3 cutover.** Both installs are controlled — hard cutover, or is a v2 compatibility window required? ADR-005 §3 assumes the window can be short; confirming it removes negotiation work.
-3. **Is garage driving the schedule?** If it is, Stage D moves ahead of Stage C and Stage E stages behind it. If opportunistic, the order above stands.
+3. **Is vehicles driving the schedule?** If it is, Stage D moves ahead of Stage C and Stage E stages behind it. If opportunistic, the order above stands.
 4. **ADR-006 embeddings have no owner.** Is FTS5-only acceptable indefinitely, or should sqlite-vec be scheduled?
 5. **Stage boundaries as releases?** Stages A, C and E each end at a coherent, shippable point. Tagging them keeps the two installs upgradable in steps rather than one large jump.
 

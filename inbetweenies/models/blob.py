@@ -17,7 +17,7 @@ from .base import Base, InbetweeniesTimestampMixin
 class BlobType(str, Enum):
     """Types of binary data stored.
 
-    Domain vocabulary per ADR-012 §1 — a garage may want WARRANTY or DYNO_CHART.
+    Domain vocabulary per ADR-012 §1 — a vehicles domain may want WARRANTY or DYNO_CHART.
     The column below is a plain String; this class names the house values.
     """
 
@@ -34,7 +34,7 @@ class BlobStatus(str, Enum):
 
     Deliberately NOT converted to a String column by ADR-012 §1. pending_upload
     /uploaded is *engine* state — the transfer state machine, identical for every
-    domain — not domain vocabulary. A garage manifest declares its blob types; it
+    domain — not domain vocabulary. A vehicles manifest declares its blob types; it
     has no opinion about whether a file has finished uploading. Keeping this one
     an SQLEnum is what makes the distinction visible in the schema.
     """

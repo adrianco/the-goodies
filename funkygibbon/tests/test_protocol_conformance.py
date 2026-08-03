@@ -20,7 +20,7 @@ clause by clause. It exists for three jobs:
    shipped.
 
 DELIBERATELY NOT PARAMETERIZED YET. ADR-010 §2 wants this suite parameterized by
-domain manifest once ADR-012 lands, so it can run against house and garage alike.
+domain manifest once ADR-012 lands, so it can run against house and vehicles alike.
 The seam is the module-level vocabulary constants below: when the manifest
 exists, they become a fixture parameter and the test bodies stay as they are.
 

@@ -112,10 +112,25 @@ what role the attachment plays:
 not a domain word. Further kinds — video, wiring diagram — become new entity
 types, not new plumbing.
 
-Because a photo is now its own type, `has_photo` can be **constrained**
-(`device→photo`, `door→photo`, …) where `has_blob` had to be unconstrained. The
-earlier "anything may have a blob attached" was a statement about storage
-mechanics, not about the domain.
+#### This lives in the base, not in the house
+
+Blobs are engine machinery: the `blobs` table, blob sync and `BlobType` already
+live in `inbetweenies`. The vocabulary for *reaching* a blob belongs there too.
+A vehicle collection, a boat and a server rack all have photos, so `photo` as a
+house entity type would force every new domain to re-declare it and leave the
+engine unable to reason about attachments at all.
+
+`inbetweenies/domain.py` therefore declares `photo` and `has_photo`, and
+`build_manifest` merges them into every domain. A domain **extends** the
+attachment set — the house adds `manual`, because an appliance PDF is
+house-flavoured where an image is universal — via `attachment_types`, and
+`manifest.carries_blob(entity_type)` is the one question the engine needs to ask.
+
+Because a photo is now its own type, `has_photo` can be **constrained** where
+`has_blob` had to be unconstrained. The base cannot enumerate a domain's entity
+types, so `RelationshipRule` gained a wildcard: `("*", "photo")` says anything
+may have a photo without the engine knowing what "anything" is. That is a pair
+like any other — the three states of `allowed_endpoints` are unaffected.
 
 **One shape deliberately survives:** nested `content.images[]` on the owning
 entity. Converging it means splitting one entity into N, synthesising ids,
@@ -153,6 +168,14 @@ exists and nothing links to it. It is the right mechanism, declared before the
 automations it was meant to describe.
 
 `source_type` therefore stays at five and keeps its original meaning.
+
+**`app` and `manages` are base vocabulary**, for the same reason as attachments:
+an app is an external system acting on entities, and no domain lacks those. Base
+declares `manages` as `("app", "*")` — an app manages *something*, and the
+engine cannot know what. The house **narrows** it to `app → device | automation
+| schedule | room` by redeclaring it under the same name. Narrowing is the only
+reason to redeclare a base rule; widening one would defeat the point of having a
+base rule at all.
 
 **`controlled_by_app` is deleted.** It was the exact inverse of `manages` —
 `device → app` against `app → device` — which is the same one-thing-two-ways

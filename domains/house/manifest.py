@@ -34,15 +34,7 @@ ENTITY_TYPES = [
     "device",
     "door",
     "window",
-    "app",
     "note",
-    # Attachment entities: both carry a blob via top-level `content.blob_id`,
-    # which since ADR-013 §3 is the *only* link to the blobs table. The type
-    # says what kind of document it is -- `manual` a PDF, `photo` an image --
-    # so no boolean "this is a blob" flag is needed: the type is the flag.
-    # Further kinds (video, diagram) are new entity types, not new plumbing.
-    "manual",
-    "photo",
     "procedure",
     "schedule",
     "automation",
@@ -118,24 +110,10 @@ RELATIONSHIP_RULES = [
         name="procedure_for",
         allowed_endpoints=(("procedure", "device"), ("procedure", "room")),
     ),
-    RelationshipRule(
-        name="has_photo",
-        # Replaces has_blob, which was misnamed: it pointed at a note carrying
-        # a blob, never at a blob. Now that a photo is its own entity type this
-        # can be *constrained* rather than unconstrained -- the earlier "anything
-        # may have a blob" was a statement about plumbing, not about the domain.
-        # A PDF is not here: it is a `manual`, and attaches via documented_by.
-        allowed_endpoints=(
-            ("device", "photo"),
-            ("door", "photo"),
-            ("window", "photo"),
-            ("room", "photo"),
-            ("home", "photo"),
-            ("app", "photo"),
-            ("note", "photo"),
-            ("manual", "photo"),
-        ),
-    ),
+    # NOTE: `has_photo` is NOT declared here. It is base vocabulary
+    # (inbetweenies/domain.py), along with the `photo` entity type: blobs are
+    # engine machinery and every domain has photos. Restating it here would make
+    # engine mechanism look like house knowledge.
     # -- Control and automation -------------------------------------------
     # Undescribed at both sites so far. Retained and shaped to serve Vantage
     # (Roland) and Home Assistant (Corfe) alike — neither introduces a concept
@@ -191,6 +169,10 @@ RELATIONSHIP_RULES = [
     # automations it was meant to describe.
     RelationshipRule(
         name="manages",
+        # Base declares `manages` as app -> anything, because the engine cannot
+        # know a domain's entity types. The house *narrows* it to what an app
+        # actually manages here. Narrowing a base rule is the intended use of
+        # redeclaring one; widening it would defeat the point of a base rule.
         allowed_endpoints=(
             ("app", "device"),
             ("app", "automation"),
@@ -204,11 +186,9 @@ RELATIONSHIP_RULES = [
     # this ADR exists to fix. Both were unused, so there was no cost to
     # choosing. `manages` wins: the app is the actor, so it reads as the
     # subject.
-    # NOTE: `has_blob` is deliberately absent (ADR-013 §3), replaced by
-    # `has_photo`. "Blob" is a storage word, not a domain word, and the edge
-    # never pointed at a blob anyway. There is now exactly one link to the blobs
-    # table -- `content.blob_id` on an attachment entity -- and relationships
-    # only say what role the attachment plays.
+    # NOTE: `has_blob` is deliberately absent (ADR-013 §3), replaced by the
+    # base `has_photo`. "Blob" is a storage word, not a domain word, and the
+    # edge never pointed at a blob anyway.
     # NOTE: `contained_in` is deliberately absent (ADR-013 §1). It duplicated
     # located_in, declared no endpoints, and so was never creatable. No data
     # uses it and none could.
@@ -219,4 +199,8 @@ HOUSE = build_manifest(
     entity_types=ENTITY_TYPES,
     source_types=SOURCE_TYPES,
     relationship_rules=RELATIONSHIP_RULES,
+    # `photo` is base; `manual` is the house's own attachment type -- an
+    # appliance PDF. Both carry a blob via top-level content.blob_id, and
+    # listing `manual` here is what tells the engine so.
+    attachment_types=("manual",),
 )

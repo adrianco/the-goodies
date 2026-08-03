@@ -43,6 +43,16 @@ class RelationshipRule:
     premise is that behaviour does not change. The gap is real and worth
     fixing, but as a deliberate edit to the house vocabulary, not as a side
     effect of moving it.
+
+    Either position may be the wildcard ``"*"``. This exists for the base
+    vocabulary, which has to constrain one end of an edge while knowing nothing
+    about the other: ``("*", "photo")`` says anything may have a photo without
+    the engine enumerating a domain's entity types, and ``("app", "*")`` says an
+    app manages things without the engine knowing which. A domain may narrow a
+    base rule by redeclaring it under the same name.
+
+    A wildcard is not a fourth state -- it is a pair like any other, and the
+    three states above are unaffected.
     """
 
     name: str
@@ -51,11 +61,51 @@ class RelationshipRule:
     def permits(self, from_type: str, to_type: str) -> bool:
         if self.allowed_endpoints is None:
             return True
-        return (from_type, to_type) in self.allowed_endpoints
+        return any(
+            (allowed_from in ("*", from_type)) and (allowed_to in ("*", to_type))
+            for allowed_from, allowed_to in self.allowed_endpoints
+        )
 
 
 class DomainValidationError(ValueError):
     """A write used vocabulary the domain does not declare."""
+
+
+# --- Base vocabulary ---------------------------------------------------------
+# Two concepts are engine-level, not house knowledge, and every domain inherits
+# them. Declaring either inside a domain would force each new domain to
+# redeclare it and leave the engine unable to reason about them generically.
+#
+# **Attachments.** The blobs table, blob sync and BlobType already live in the
+# engine; the vocabulary for *reaching* a blob belongs here too. A vehicle
+# collection, a boat and a server rack all have photos. The rule, engine-wide: *an entity that
+# carries a blob is an attachment entity, and top-level `content.blob_id` is the
+# only link to the blobs table.* The entity type says what kind of document it
+# is, so no boolean "this has a blob" flag is needed -- the type IS the flag. No
+# relationship ever points at a blob; relationships only name the attachment's
+# role (ADR-013 §3).
+#
+# **Apps.** An `app` is an external system that runs or controls things --
+# Alexa, Home Assistant, Vantage, a vendor's own scheduler -- and `manages`
+# records what it runs. That is how provenance for automation is expressed
+# without an ever-growing source_type enum (ADR-013 §4), and it is not specific
+# to houses: any domain has systems acting on its entities.
+#
+# Base provides the mechanism and the universal types. A domain may *extend*
+# the attachment set (the house adds `manual` for an appliance PDF; a vehicles
+# domain might add `service_record`) and may *narrow* any base rule by redeclaring it
+# under the same name.
+BASE_ATTACHMENT_TYPES: Tuple[str, ...] = ("photo",)
+
+BASE_ENTITY_TYPES: Tuple[str, ...] = BASE_ATTACHMENT_TYPES + ("app",)
+
+BASE_RELATIONSHIP_RULES: Tuple[RelationshipRule, ...] = (
+    # Wildcards, because the base genuinely cannot name the other endpoint:
+    # anything may be photographed, and an app may manage anything. A domain
+    # that wants tighter rules redeclares these by name.
+    RelationshipRule(name="has_photo", allowed_endpoints=(("*", "photo"),)),
+    RelationshipRule(name="manages", allowed_endpoints=(("app", "*"),)),
+)
 
 
 @dataclass(frozen=True)
@@ -66,10 +116,22 @@ class DomainManifest:
     entity_types: FrozenSet[str]
     source_types: FrozenSet[str]
     relationship_rules: Mapping[str, RelationshipRule]
+    # Entity types that carry a blob via top-level content.blob_id. Always
+    # includes BASE_ATTACHMENT_TYPES; a domain may add its own.
+    attachment_types: FrozenSet[str] = frozenset(BASE_ATTACHMENT_TYPES)
 
     @property
     def relationship_types(self) -> FrozenSet[str]:
         return frozenset(self.relationship_rules)
+
+    def carries_blob(self, entity_type: str) -> bool:
+        """True if this entity type is an attachment (ADR-013 §3).
+
+        The single question the engine needs to ask about blobs, and the reason
+        the attachment set is base rather than domain: blob handling can be
+        written once without knowing what a house is.
+        """
+        return entity_type in self.attachment_types
 
     def check_entity_type(self, value: str) -> None:
         if value not in self.entity_types:
@@ -120,11 +182,36 @@ def build_manifest(
     entity_types: Iterable[str],
     source_types: Iterable[str],
     relationship_rules: Iterable[RelationshipRule],
+    attachment_types: Iterable[str] = (),
 ) -> DomainManifest:
-    """Assemble a manifest, normalising the vocabulary to plain strings."""
+    """Assemble a manifest, merging the base vocabulary into the domain's.
+
+    The domain declares what is specific to it. Attachments and apps come from
+    the base and do not need declaring -- a domain that wrote out `photo` and
+    `has_photo` itself would be re-stating engine mechanism as house knowledge.
+
+    `attachment_types` *extends* the base set: the house adds `manual` because
+    an appliance PDF is a house-flavoured document, while `photo` is universal.
+    Anything listed here is also an entity type, so a domain need not repeat it.
+
+    A domain relationship rule *overrides* a base rule of the same name, so a
+    domain can narrow `manages` from "an app manages anything" to the specific
+    endpoints it actually allows. Narrowing is the only reason to redeclare;
+    silently widening a base rule would defeat the point of having one.
+    """
+    attachments = frozenset(BASE_ATTACHMENT_TYPES) | {str(t) for t in attachment_types}
+
+    rules = {str(rule.name): rule for rule in BASE_RELATIONSHIP_RULES}
+    rules.update({str(rule.name): rule for rule in relationship_rules})
+
     return DomainManifest(
         name=name,
-        entity_types=frozenset(str(t) for t in entity_types),
+        entity_types=(
+            frozenset(str(t) for t in entity_types)
+            | frozenset(BASE_ENTITY_TYPES)
+            | attachments
+        ),
         source_types=frozenset(str(t) for t in source_types),
-        relationship_rules={str(rule.name): rule for rule in relationship_rules},
+        relationship_rules=rules,
+        attachment_types=attachments,
     )
