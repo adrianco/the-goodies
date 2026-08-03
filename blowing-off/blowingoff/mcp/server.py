@@ -5,7 +5,7 @@ A stdio MCP server that exposes the home knowledge-graph tools backed by the
 Blowing-Off local cache. It mirrors the TypeScript port's KittenKong MCP server
 (rolandcanyon-cmd/the-goodies-typescript): on startup it connects to a
 FunkyGibbon server, syncs the graph into the local database, keeps it fresh with
-background sync, and serves the same 12 tools to any MCP client (e.g. Claude
+background sync, and serves the same tools to any MCP client (e.g. Claude
 Desktop / Claude Code).
 
 Run as:
@@ -37,150 +37,30 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
+from inbetweenies.mcp.catalog import MCP_TOOLS_SPEC
+
 from ..client import BlowingOffClient
 
 _ENTITY_TYPES = ("home, room, device, zone, door, window, procedure, manual, "
                  "note, schedule, automation")
-
-# The 12 knowledge-graph tools, matching the KittenKong MCP server surface.
+# The knowledge-graph tools, built from the canonical catalog in inbetweenies.
+#
+# This list used to be written out here by hand, duplicating the schemas the
+# REST wrapper kept in funkygibbon/mcp/tools.py. Nothing made the two agree, so
+# a tool added to one was silently missing from the other -- which is how the
+# surface came to lack any way to attach a photo while the REST side had one.
+#
+# The earlier note here argued against re-deriving these from Python signatures.
+# That still holds and this does not do it: the catalog is the same explicit
+# schema, written once. types.Tool takes input_schema, which is exactly what
+# ToolSpec.as_mcp() renders.
 TOOLS: List[types.Tool] = [
     types.Tool(
-        name="search_entities",
-        description="Search for entities in the home knowledge graph by name or content",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query string"},
-                "entity_types": {"type": "array", "items": {"type": "string"},
-                                 "description": f"Optional filter by type: {_ENTITY_TYPES}"},
-                "limit": {"type": "number", "description": "Max results (default 10)"},
-            },
-            "required": ["query"],
-        },
-    ),
-    types.Tool(
-        name="get_entity_details",
-        description="Get full details for a specific entity by ID, including all relationships",
-        input_schema={
-            "type": "object",
-            "properties": {"entity_id": {"type": "string", "description": "Entity ID"}},
-            "required": ["entity_id"],
-        },
-    ),
-    types.Tool(
-        name="create_entity",
-        description="Create a new entity in the knowledge graph",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "entity_type": {"type": "string", "description": f"Type: {_ENTITY_TYPES}"},
-                "name": {"type": "string", "description": "Entity name"},
-                "content": {"type": "object", "description": "Entity properties (arbitrary JSON)"},
-                "user_id": {"type": "string", "description": "User ID (optional, defaults to mcp-user)"},
-            },
-            "required": ["entity_type", "name", "content"],
-        },
-    ),
-    types.Tool(
-        name="update_entity",
-        description="Update an existing entity — creates a new immutable version",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "entity_id": {"type": "string", "description": "Entity ID to update"},
-                "changes": {"type": "object", "description": "Fields to update in content"},
-                "user_id": {"type": "string", "description": "User ID (optional)"},
-            },
-            "required": ["entity_id", "changes"],
-        },
-    ),
-    types.Tool(
-        name="create_relationship",
-        description="Create a directed relationship between two entities",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "from_entity_id": {"type": "string", "description": "Source entity ID"},
-                "to_entity_id": {"type": "string", "description": "Target entity ID"},
-                "relationship_type": {"type": "string",
-                                      "description": "e.g. located_in, controls, documented_by, connected_to"},
-                "properties": {"type": "object", "description": "Optional relationship properties"},
-                "user_id": {"type": "string", "description": "User ID (optional)"},
-            },
-            "required": ["from_entity_id", "to_entity_id", "relationship_type"],
-        },
-    ),
-    types.Tool(
-        name="get_devices_in_room",
-        description="Get all devices located in a specific room",
-        input_schema={
-            "type": "object",
-            "properties": {"room_id": {"type": "string", "description": "Room entity ID"}},
-            "required": ["room_id"],
-        },
-    ),
-    types.Tool(
-        name="find_device_controls",
-        description="Get available controls, automations, and procedures for a device",
-        input_schema={
-            "type": "object",
-            "properties": {"device_id": {"type": "string", "description": "Device entity ID"}},
-            "required": ["device_id"],
-        },
-    ),
-    types.Tool(
-        name="get_room_connections",
-        description="Find doors, windows, and passages connecting a room to adjacent spaces",
-        input_schema={
-            "type": "object",
-            "properties": {"room_id": {"type": "string", "description": "Room entity ID"}},
-            "required": ["room_id"],
-        },
-    ),
-    types.Tool(
-        name="find_path",
-        description="Find the relationship path between two entities in the graph",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "from_entity_id": {"type": "string", "description": "Starting entity ID"},
-                "to_entity_id": {"type": "string", "description": "Target entity ID"},
-                "max_depth": {"type": "number", "description": "Maximum path depth (default 5)"},
-            },
-            "required": ["from_entity_id", "to_entity_id"],
-        },
-    ),
-    types.Tool(
-        name="find_similar_entities",
-        description="Find entities similar to a given entity based on type and content",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "entity_id": {"type": "string", "description": "Reference entity ID"},
-                "threshold": {"type": "number", "description": "Similarity threshold 0–1 (default 0.5)"},
-                "limit": {"type": "number", "description": "Max results (default 10)"},
-            },
-            "required": ["entity_id"],
-        },
-    ),
-    types.Tool(
-        name="get_procedures_for_device",
-        description="Get all procedures, manuals, and instructions for a device",
-        input_schema={
-            "type": "object",
-            "properties": {"device_id": {"type": "string", "description": "Device entity ID"}},
-            "required": ["device_id"],
-        },
-    ),
-    types.Tool(
-        name="get_automations_in_room",
-        description="Get all automation rules and schedules associated with a room",
-        input_schema={
-            "type": "object",
-            "properties": {"room_id": {"type": "string", "description": "Room entity ID"}},
-            "required": ["room_id"],
-        },
-    ),
+        name=spec["name"],
+        description=spec["description"],
+        input_schema=spec["inputSchema"],
+    )
+    for spec in MCP_TOOLS_SPEC
 ]
 
 
@@ -201,10 +81,11 @@ def build_server(client: BlowingOffClient) -> Server:
     decorators from the low-level ``Server``; handlers are now passed as the
     ``on_list_tools`` / ``on_call_tool`` constructor callbacks, which receive a
     ``ServerRequestContext`` plus the already-validated request params and
-    return the full result model. We keep the explicit ``TOOLS`` list rather
+    return the full result model. We keep an explicit ``TOOLS`` list rather
     than moving to the high-level ``MCPServer``: these schemas are the
     specification mirrored from the KittenKong TypeScript server, not something
-    to re-derive from Python signatures.
+    to re-derive from Python signatures. They are now built from the shared
+    catalog so the REST wrapper and this server cannot drift apart.
     """
 
     async def on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:

@@ -484,3 +484,261 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
 
         except Exception as e:
             return ToolResult(False, None, str(e))
+
+    # ------------------------------------------------------------------ #
+    # Attachments
+    #
+    # These exist because their absence was filled by invention. With no
+    # first-class way to attach a photo, callers built one: an
+    # ``entity_type=note`` holding inline base64, linked by a ``has_blob``
+    # edge that pointed at the note rather than at the blob. That shape
+    # became the de-facto schema across two installs and took a migration to
+    # undo (ADR-013 §3). The lesson is not "document the right shape" -- it
+    # is that the right shape has to be the easy one.
+    # ------------------------------------------------------------------ #
+
+    #: Attachment kinds. Each maps a mime family to the entity type that
+    #: carries the blob and the relationship naming its role. The entity type
+    #: IS the "this has a blob" flag; there is no boolean.
+    _ATTACHMENT_KINDS = {
+        "photo": ("photo", "has_photo", "image/jpeg"),
+        "document": ("manual", "documented_by", "application/pdf"),
+    }
+
+    async def _attach(
+        self,
+        kind: str,
+        parent_entity_id: str,
+        filename: str,
+        data_b64: str,
+        mime_type: Optional[str] = None,
+        description: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> ToolResult:
+        """Create an attachment entity, store its bytes, and link it.
+
+        The three writes are ordered so a failure cannot leave a dangling
+        reference: bytes first, then the entity that points at them, then the
+        edge. A crash after step one leaves an unreferenced blob, which is
+        inert; the reverse order would leave an entity referencing nothing.
+        """
+        import base64
+        import hashlib
+        import uuid
+
+        entity_type, rel_type, default_mime = self._ATTACHMENT_KINDS[kind]
+        mime = mime_type or default_mime
+
+        try:
+            parent = await self.get_entity(parent_entity_id)
+            if not parent:
+                return ToolResult(False, None, f"Entity {parent_entity_id} not found")
+
+            try:
+                data = base64.b64decode(data_b64, validate=True)
+            except Exception as exc:
+                return ToolResult(False, None, f"data_b64 is not valid base64: {exc}")
+            if not data:
+                return ToolResult(False, None, "data_b64 decoded to zero bytes")
+
+            # Content-addressed: the same bytes attached twice are one blob, so
+            # a retried upload cannot silently double the store.
+            checksum = hashlib.sha256(data).hexdigest()
+            blob_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"blob:{checksum}"))
+
+            await self.store_blob(
+                blob_id=blob_id, name=filename, blob_type=_blob_type_for(mime),
+                mime_type=mime, data=data, user_id=user_id, summary=description,
+            )
+
+            # content.blob_id is the ONE link to the blobs table (ADR-013 §3).
+            content = {"filename": filename, "mime_type": mime,
+                       "size": len(data), "blob_id": blob_id}
+            if description:
+                content["description"] = description
+
+            attachment = Entity(
+                id=str(uuid.uuid4()),
+                version=Entity.create_version(user_id or "mcp"),
+                entity_type=entity_type,
+                name=filename,
+                content=content,
+                source_type=SourceType.MANUAL,
+                user_id=user_id,
+                parent_versions=[],
+            )
+            attachment = await self.store_entity(attachment)
+
+            # Direction matters: the thing HAS the photo, not the reverse. Four
+            # edges in the live data ran backwards because nothing rejected them.
+            link = EntityRelationship(
+                id=str(uuid.uuid4()),
+                from_entity_id=parent.id,
+                from_entity_version=parent.version,
+                to_entity_id=attachment.id,
+                to_entity_version=attachment.version,
+                relationship_type=rel_type,
+                properties={},
+                user_id=user_id,
+            )
+            await self.store_relationship(link)
+
+            return ToolResult(True, {
+                "attachment_id": attachment.id,
+                "entity_type": entity_type,
+                "blob_id": blob_id,
+                "checksum": checksum,
+                "size": len(data),
+                "relationship_type": rel_type,
+                "linked_from": parent.id,
+            })
+
+        except NotImplementedError as exc:
+            return ToolResult(False, None, str(exc))
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+    async def attach_photo(
+        self,
+        parent_entity_id: str,
+        filename: str,
+        data_b64: str,
+        mime_type: Optional[str] = None,
+        description: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> ToolResult:
+        """Attach an image: a `photo` entity linked by `has_photo`."""
+        return await self._attach("photo", parent_entity_id, filename, data_b64,
+                                  mime_type, description, user_id)
+
+    async def attach_document(
+        self,
+        parent_entity_id: str,
+        filename: str,
+        data_b64: str,
+        mime_type: Optional[str] = None,
+        description: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> ToolResult:
+        """Attach a PDF: a `manual` entity linked by `documented_by`.
+
+        A PDF is a manual, not a photo. Routing it to `has_photo` produced
+        `room --has_photo--> manual` in the Corfe install, which the vocabulary
+        rejects.
+        """
+        return await self._attach("document", parent_entity_id, filename, data_b64,
+                                  mime_type, description, user_id)
+
+    async def get_blob_tool(self, blob_id: str, include_data: bool = False) -> ToolResult:
+        """Fetch a blob's metadata, and its bytes only when asked."""
+        try:
+            blob = await self.get_blob(blob_id, include_data=include_data)
+            if not blob:
+                return ToolResult(False, None, f"Blob {blob_id} not found")
+            return ToolResult(True, blob)
+        except NotImplementedError as exc:
+            return ToolResult(False, None, str(exc))
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+    # ------------------------------------------------------------------ #
+    # History and retraction
+    #
+    # The store is append-only. There is no delete tool and no DELETE
+    # endpoint; a caller that assumed otherwise was calling a route that has
+    # never existed. Removing something means appending a tombstone, and a
+    # record that was simply wrong is marked as an error behind that
+    # tombstone rather than erased.
+    # ------------------------------------------------------------------ #
+
+    async def get_entity_versions_tool(self, entity_id: str) -> ToolResult:
+        """Full version history, newest first."""
+        try:
+            versions = await self.get_entity_versions(entity_id)
+            if not versions:
+                return ToolResult(False, None, f"Entity {entity_id} not found")
+            return ToolResult(True, {
+                "entity_id": entity_id,
+                "version_count": len(versions),
+                "versions": [{
+                    "version": v.version,
+                    "name": v.name,
+                    "parent_versions": v.parent_versions,
+                    "user_id": v.user_id,
+                    "deleted": bool((v.content or {}).get("deleted")),
+                } for v in versions],
+            })
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+    async def tombstone_entity(
+        self,
+        entity_id: str,
+        reason: str,
+        is_error: bool = False,
+        user_id: Optional[str] = None,
+    ) -> ToolResult:
+        """Retract an entity by appending a tombstone version.
+
+        Nothing is destroyed. The tombstone is a new version carrying
+        ``deleted: true`` -- the same marker the sync protocol already uses
+        (ADR-011 §8) -- plus why, and whether the record was an *error* as
+        opposed to a thing that no longer exists. The distinction matters when
+        reading history: "this device was removed" and "this device was never
+        here" are different facts.
+        """
+        try:
+            existing = await self.get_entity(entity_id)
+            if not existing:
+                return ToolResult(False, None, f"Entity {entity_id} not found")
+            if (existing.content or {}).get("deleted"):
+                # Idempotent: re-retracting is a no-op, not a second tombstone.
+                return ToolResult(True, {
+                    "entity_id": entity_id, "already_tombstoned": True,
+                    "version": existing.version,
+                })
+
+            content = dict(existing.content or {})
+            content["deleted"] = True
+            content["deleted_reason"] = reason
+            if is_error:
+                content["deleted_as_error"] = True
+
+            new_version = await self.update_entity(
+                entity_id, {"content": content}, user_id or "mcp")
+
+            return ToolResult(True, {
+                "entity_id": entity_id,
+                "tombstone_version": new_version.version,
+                "reason": reason,
+                "marked_as_error": bool(is_error),
+                "previous_version": existing.version,
+            })
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+    async def get_statistics_tool(self) -> ToolResult:
+        """Entity and relationship counts by type."""
+        try:
+            return ToolResult(True, await self.get_statistics())
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+
+def _blob_type_for(mime: str) -> str:
+    """Map a mime type to a BlobType value.
+
+    Mirrors ``funkygibbon/migrate.py::_blob_type_for`` deliberately: the
+    migration and the live write path must agree on what a jpeg is, or data
+    written today would not match data migrated yesterday.
+    """
+    mime = (mime or "").lower()
+    if mime == "application/pdf":
+        return "pdf"
+    if mime in ("image/jpeg", "image/jpg"):
+        return "jpeg"
+    if mime == "image/png":
+        return "png"
+    if mime.startswith("text/") or "document" in mime:
+        return "document"
+    return "data"

@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from inbetweenies.graph import GraphOperations, GraphSearch
 from inbetweenies.mcp import MCPTools
 from inbetweenies.models import Entity, EntityType, EntityRelationship, RelationshipType, SourceType
+from inbetweenies.models.blob import Blob, BlobStatus
 
 
 class SQLGraphOperations(MCPTools):
@@ -26,6 +27,52 @@ class SQLGraphOperations(MCPTools):
     def __init__(self, db: AsyncSession):
         """Initialize with database session"""
         self.db = db
+
+    async def store_blob(
+        self,
+        *,
+        blob_id: str,
+        name: str,
+        blob_type: str,
+        mime_type: str,
+        data: bytes,
+        user_id: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> str:
+        """Persist blob bytes, idempotently on blob_id.
+
+        The caller derives blob_id from a SHA-256 of the bytes, so a retried
+        upload resolves to the same row rather than a duplicate. Returning
+        early on a hit also means re-attaching a file that is already stored
+        costs one SELECT instead of rewriting megabytes.
+        """
+        import hashlib
+
+        existing = await self.db.get(Blob, blob_id)
+        if existing is not None:
+            return blob_id
+
+        self.db.add(Blob(
+            id=blob_id,
+            name=name[:255],
+            blob_type=blob_type,
+            mime_type=mime_type,
+            size=len(data),
+            data=data,
+            blob_metadata={},
+            checksum=hashlib.sha256(data).hexdigest(),
+            # Server-side storage IS the upload; there is nothing pending.
+            sync_status=BlobStatus.UPLOADED,
+            user_id=user_id,
+            summary=summary[:2000] if summary else None,
+        ))
+        await self.db.flush()
+        return blob_id
+
+    async def get_blob(self, blob_id: str, include_data: bool = False) -> Optional[dict]:
+        """Blob metadata, with bytes only when asked."""
+        blob = await self.db.get(Blob, blob_id)
+        return blob.to_dict(include_data=include_data) if blob else None
 
     async def store_entity(self, entity: Entity) -> Entity:
         """Store an entity in the database"""

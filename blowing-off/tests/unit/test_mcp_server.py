@@ -9,19 +9,52 @@ import asyncio
 
 from blowingoff.mcp.server import TOOLS, result_payload, build_server
 
-# The 12 knowledge-graph tools the KittenKong MCP server exposes.
-EXPECTED_TOOLS = {
+# The 12 knowledge-graph tools the KittenKong (TypeScript) MCP server exposes.
+# This is a COMPATIBILITY FLOOR, not the whole surface: every one of these must
+# keep existing under the same name, because KittenKong clients call them.
+KITTENKONG_TOOLS = {
     "search_entities", "get_entity_details", "create_entity", "update_entity",
     "create_relationship", "get_devices_in_room", "find_device_controls",
     "get_room_connections", "find_path", "find_similar_entities",
     "get_procedures_for_device", "get_automations_in_room",
 }
 
+# Tools the Python surface adds beyond KittenKong. Listed explicitly rather than
+# left implicit so that adding one is a deliberate edit here, and so the gap
+# with the TypeScript server is visible rather than discovered later.
+#
+# NOTE: KittenKong does not have these yet. A skill that needs to attach a photo
+# must run against this server until the TypeScript side gains parity.
+PYTHON_ONLY_TOOLS = {
+    "attach_photo", "attach_document", "get_blob",
+    "get_entity_versions", "tombstone_entity", "get_statistics",
+}
 
-def test_tool_surface_matches_kittenkong():
+EXPECTED_TOOLS = KITTENKONG_TOOLS | PYTHON_ONLY_TOOLS
+
+
+def test_kittenkong_compatibility_floor_is_intact():
+    """Every KittenKong tool still exists. Removing one breaks real clients."""
     names = {t.name for t in TOOLS}
-    assert names == EXPECTED_TOOLS
-    assert len(TOOLS) == 12
+    missing = KITTENKONG_TOOLS - names
+    assert not missing, f"KittenKong tools dropped from the surface: {sorted(missing)}"
+
+
+def test_tool_surface_is_exactly_the_declared_set():
+    """No tool appears without being declared above -- including by accident."""
+    assert {t.name for t in TOOLS} == EXPECTED_TOOLS
+    assert len(TOOLS) == len(EXPECTED_TOOLS)
+
+
+def test_the_two_transports_serve_the_same_tools():
+    """The stdio server and the REST wrapper are one catalog, not two lists.
+
+    They were two hand-maintained lists that happened to agree. This is the
+    check that makes them agree by construction.
+    """
+    from funkygibbon.mcp.tools import MCP_TOOLS
+
+    assert {t.name for t in TOOLS} == {t["name"] for t in MCP_TOOLS}
 
 
 def test_every_tool_has_a_valid_object_schema_with_required():

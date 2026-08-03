@@ -230,3 +230,90 @@ class FunkyGibbonMCPServer:
             return result.result
         else:
             raise Exception(result.error)
+
+    # --- Attachments --------------------------------------------------- #
+
+    async def _handle_attach_photo(
+        self,
+        parent_entity_id: str,
+        filename: str,
+        data_b64: str,
+        mime_type: str = None,
+        description: str = None,
+        user_id: str = None,
+    ) -> Dict[str, Any]:
+        """Attach an image as a photo entity linked by has_photo."""
+        result = await self.graph_ops.attach_photo(
+            parent_entity_id, filename, data_b64, mime_type, description, user_id)
+        if not result.success:
+            raise Exception(result.error)
+        # Write-through, as every other mutating handler does: the index is the
+        # application's one index (ADR-003) and a new entity must appear in it
+        # without waiting for the drift check.
+        attachment = await self.graph_ops.get_entity(result.result["attachment_id"])
+        if attachment:
+            self.graph._add_entity(attachment)
+        return result.result
+
+    async def _handle_attach_document(
+        self,
+        parent_entity_id: str,
+        filename: str,
+        data_b64: str,
+        mime_type: str = None,
+        description: str = None,
+        user_id: str = None,
+    ) -> Dict[str, Any]:
+        """Attach a PDF as a manual entity linked by documented_by."""
+        result = await self.graph_ops.attach_document(
+            parent_entity_id, filename, data_b64, mime_type, description, user_id)
+        if not result.success:
+            raise Exception(result.error)
+        attachment = await self.graph_ops.get_entity(result.result["attachment_id"])
+        if attachment:
+            self.graph._add_entity(attachment)
+        return result.result
+
+    async def _handle_get_blob(self, blob_id: str, include_data: bool = False) -> Dict[str, Any]:
+        """Fetch a blob's metadata, and bytes only when asked."""
+        result = await self.graph_ops.get_blob_tool(blob_id, include_data)
+        if not result.success:
+            raise Exception(result.error)
+        return result.result
+
+    # --- History and retraction ---------------------------------------- #
+
+    async def _handle_get_entity_versions(self, entity_id: str) -> Dict[str, Any]:
+        """Full version history, newest first."""
+        result = await self.graph_ops.get_entity_versions_tool(entity_id)
+        if not result.success:
+            raise Exception(result.error)
+        return result.result
+
+    async def _handle_tombstone_entity(
+        self,
+        entity_id: str,
+        reason: str,
+        is_error: bool = False,
+        user_id: str = None,
+    ) -> Dict[str, Any]:
+        """Retract an entity by appending a tombstone version.
+
+        Not a delete: the store is append-only, and the earlier versions stay
+        readable. The index is refreshed so the retracted entity stops showing
+        up in queries immediately.
+        """
+        result = await self.graph_ops.tombstone_entity(entity_id, reason, is_error, user_id)
+        if not result.success:
+            raise Exception(result.error)
+        entity = await self.graph_ops.get_entity(entity_id)
+        if entity:
+            self.graph._add_entity(entity)
+        return result.result
+
+    async def _handle_get_statistics(self) -> Dict[str, Any]:
+        """Entity and relationship counts by type."""
+        result = await self.graph_ops.get_statistics_tool()
+        if not result.success:
+            raise Exception(result.error)
+        return result.result

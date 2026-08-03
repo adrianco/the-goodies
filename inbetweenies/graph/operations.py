@@ -31,6 +31,44 @@ class GraphOperations(ABC):
         """Get all entities of a specific type"""
         pass
 
+    async def store_blob(
+        self,
+        *,
+        blob_id: str,
+        name: str,
+        blob_type: str,
+        mime_type: str,
+        data: bytes,
+        user_id: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> str:
+        """Persist blob bytes and return the blob id.
+
+        Not abstract, and the default raises: a backend that cannot store bytes
+        should say so loudly at the point of use rather than silently accepting
+        an attachment whose data goes nowhere. Silence is how base64 ended up
+        inlined in entity content in the first place (ADR-013 §3) -- there was
+        no first-class place to put it and nothing said so.
+
+        Implementations must be idempotent on ``blob_id``: attaching the same
+        file twice is a retry, not two blobs.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot store blobs; attachments are unavailable "
+            "on this backend"
+        )
+
+    async def get_blob(self, blob_id: str, include_data: bool = False) -> Optional[Dict[str, Any]]:
+        """Fetch blob metadata, and the bytes only when asked.
+
+        Blobs are large -- one install is 86% blob by bytes -- so returning
+        data by default would make every metadata read expensive.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot read blobs; attachments are unavailable "
+            "on this backend"
+        )
+
     @abstractmethod
     async def store_relationship(self, relationship: EntityRelationship) -> EntityRelationship:
         """Store a relationship in the graph"""
