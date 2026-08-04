@@ -19,6 +19,7 @@ from inbetweenies.models import (
     Entity, EntityRelationship, EntityType, RelationshipType, SourceType,
 )
 from inbetweenies.sync import (
+    BlobChange,
     VectorClock, EntityChange, RelationshipChange, SyncChange,
     SyncFilters, SyncRequest, ConflictInfo, SyncStats, SyncResponse,
     ConflictResolver,
@@ -86,6 +87,16 @@ class SyncHandler:
             if persisted and change.entity and change.entity.id not in applied:
                 applied.append(change.entity.id)
 
+        # Blobs before relationships and independent of entity ordering: the
+        # table has no foreign key to entities, and an attachment entity's
+        # content references a blob id that should already resolve by the time
+        # anyone reads it. Storing bytes for an entity whose write later loses
+        # conflict resolution is harmless -- an unreferenced blob is inert,
+        # whereas an entity referencing bytes that never arrived is not.
+        for change in request.changes:
+            for blob in change.blobs:
+                await self._persist_blob(blob)
+
         # Relationships only after every entity in the batch has been applied:
         # an edge references its endpoints at a specific version and the table
         # carries a composite FK on (entity_id, entity_version), so the endpoints
@@ -152,6 +163,12 @@ class SyncHandler:
             response_changes.append(SyncChange(
                 change_type="delete" if deleted else "update",
                 entity=self._entity_to_change(entity),
+                # Bytes travel with the entity that references them. Without
+                # this a client pulls an attachment whose blob_id resolves to
+                # nothing locally, and the only way to see the image is to call
+                # the server directly -- which is the direct access this exists
+                # to remove.
+                blobs=await self._blobs_for(entity),
             ))
 
         duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
@@ -324,6 +341,102 @@ class SyncHandler:
         )
         self.db_session.add(entity)
         await self.db_session.flush()
+
+    async def _blobs_for(self, entity) -> List[BlobChange]:
+        """Blobs referenced by this entity's content, ready to send.
+
+        Reads both shapes ADR-013 §3 leaves live: the top-level ``blob_id`` on
+        an attachment entity, and the ordered ``images[]`` list an entity owns
+        when the sequence matters. Anything else referencing a blob would be a
+        seventh convention, and there is not one.
+
+        A reference that resolves to no row is skipped rather than raised on:
+        one missing blob must not make an entity unsyncable, and the verify
+        command reports dangling references properly.
+        """
+        import base64
+
+        from inbetweenies.models.blob import Blob
+
+        content = entity.content or {}
+        if not isinstance(content, dict):
+            return []
+
+        wanted = [content.get("blob_id")]
+        wanted += [img.get("blob_id") for img in (content.get("images") or [])
+                   if isinstance(img, dict)]
+
+        out: List[BlobChange] = []
+        seen = set()
+        for blob_id in filter(None, wanted):
+            if blob_id in seen:
+                continue
+            seen.add(blob_id)
+            row = await self.db_session.get(Blob, blob_id)
+            if row is None or row.data is None:
+                continue
+            out.append(BlobChange(
+                id=row.id,
+                name=row.name,
+                blob_type=getattr(row.blob_type, "value", row.blob_type),
+                mime_type=row.mime_type,
+                size=row.size,
+                data=base64.b64encode(row.data).decode("ascii"),
+                checksum=row.checksum,
+                user_id=row.user_id,
+                summary=row.summary,
+            ))
+        return out
+
+    async def _persist_blob(self, blob) -> bool:
+        """Store blob bytes pushed by a client. Idempotent on blob id.
+
+        Blob ids are content-addressed (the SHA-256 of the bytes), so the same
+        file pushed by two clients, or re-pushed after a failed ack, resolves to
+        one row. Returning early on a hit also keeps a retry cheap: one SELECT
+        instead of rewriting megabytes.
+
+        Bytes are trusted no further than the checksum: if the sender supplied
+        one and it does not match what arrived, the blob is rejected rather than
+        stored corrupt. A silently corrupt blob is worse than a missing one --
+        the reference resolves and the image is garbage.
+        """
+        import base64
+        import hashlib
+
+        from inbetweenies.models.blob import Blob, BlobStatus
+
+        existing = await self.db_session.get(Blob, blob.id)
+        if existing is not None:
+            return False
+
+        try:
+            data = base64.b64decode(blob.data, validate=True)
+        except Exception:
+            return False
+
+        digest = hashlib.sha256(data).hexdigest()
+        if blob.checksum and blob.checksum != digest:
+            return False
+
+        now = datetime.now(timezone.utc)
+        self.db_session.add(Blob(
+            id=blob.id,
+            name=(blob.name or "blob")[:255],
+            blob_type=blob.blob_type,
+            mime_type=blob.mime_type,
+            size=len(data),
+            data=data,
+            blob_metadata={},
+            checksum=digest,
+            sync_status=BlobStatus.UPLOADED,
+            user_id=blob.user_id,
+            summary=blob.summary[:2000] if blob.summary else None,
+            created_at=now,
+            updated_at=now,
+        ))
+        await self.db_session.flush()
+        return True
 
     async def _apply_incoming(self, change: SyncChange, conflicts: List[ConflictInfo]) -> bool:
         """Apply a create/update: fast-forward if based on our latest, else resolve.
