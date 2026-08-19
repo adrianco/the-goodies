@@ -340,7 +340,7 @@ wheels = [
 
 [[package]]
 name = "blowingoff"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "blowing-off" }
 dependencies = [
     { name = "aiohttp" },
@@ -765,7 +765,7 @@ wheels = [
 
 [[package]]
 name = "funkygibbon"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "funkygibbon" }
 dependencies = [
     { name = "aiosqlite" },
@@ -1068,7 +1068,7 @@ wheels = [
 
 [[package]]
 name = "inbetweenies"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "inbetweenies" }
 dependencies = [
     { name = "sqlalchemy" },
@@ -1427,7 +1427,7 @@ wheels = [
 
 [[package]]
 name = "oook"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "oook" }
 dependencies = [
     { name = "click" },
@@ -2335,7 +2335,7 @@ wheels = [
 
 [[package]]
 name = "the-goodies"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
