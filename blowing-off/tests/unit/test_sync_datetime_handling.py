@@ -100,9 +100,7 @@ class TestSyncDatetimeHandling:
         rel = EntityRelationship(
             id="rel-1",
             from_entity_id="entity-1",
-            from_entity_version="v1",
             to_entity_id="entity-2",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             user_id="test-user"
@@ -124,9 +122,7 @@ class TestSyncDatetimeHandling:
         rel = EntityRelationship(
             id="rel-1",
             from_entity_id="entity-1",
-            from_entity_version="v1",
             to_entity_id="entity-2",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             user_id="test-user"

@@ -79,7 +79,15 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     # nowhere to put its successor, which is exactly why the old code mutated the
     # row in place and destroyed the prior topology (review finding C4).
     id = Column(String(36), primary_key=True)
-    valid_from = Column(DateTime(timezone=True), primary_key=True)
+    # Defaulted so every construction site gets a well-formed interval without
+    # having to remember: an edge starts being true when it is created. Sync
+    # apply overrides it with the incoming interval's own valid_from, which is
+    # the client's edit time and the axis that matters (ADR-004 §2).
+    valid_from = Column(
+        DateTime(timezone=True),
+        primary_key=True,
+        default=lambda: datetime.now(UTC),
+    )
 
     # Source entity (from)
     from_entity_id = Column(String(36), nullable=False)

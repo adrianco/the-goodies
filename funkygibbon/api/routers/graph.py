@@ -242,9 +242,7 @@ async def create_relationship(
     relationship = EntityRelationship(
         id=str(uuid4()),
         from_entity_id=from_entity.id,
-        from_entity_version=from_entity.version,
         to_entity_id=to_entity.id,
-        to_entity_version=to_entity.version,
         relationship_type=rel_data.relationship_type,
         properties=rel_data.properties,
         user_id=rel_data.user_id

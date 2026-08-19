@@ -76,10 +76,8 @@ async def test_sync_api():
             "relationships": [
                 {
                     "id": "rel-001",
-                    "from_entity_id": "device-001",
-                    "from_entity_version": f"{datetime.now(timezone.utc).isoformat()}Z-test-user",
-                    "to_entity_id": "room-001",
-                    "to_entity_version": f"{datetime.now(timezone.utc).isoformat()}Z-test-user",
+                    "from_entity_id": "device-001"{datetime.now(timezone.utc).isoformat()}Z-test-user",
+                    "to_entity_id": "room-001"{datetime.now(timezone.utc).isoformat()}Z-test-user",
                     "relationship_type": "located_in",
                     "properties": {"position": "ceiling"}
                 }

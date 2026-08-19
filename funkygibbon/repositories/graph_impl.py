@@ -200,12 +200,12 @@ class SQLGraphOperations(MCPTools):
                     if latest_to:
                         latest_versions[rel.to_entity_id] = latest_to.version
 
-            # Filter relationships to only include latest versions
-            relationships = [
-                rel for rel in relationships
-                if (rel.from_entity_version == latest_versions.get(rel.from_entity_id) and
-                    rel.to_entity_version == latest_versions.get(rel.to_entity_id))
-            ]
+            # ADR-004 §1: "current" is a property of the edge's interval, not of
+            # whether its pins happen to match the endpoints' latest versions.
+            # The old test was a proxy that broke on every endpoint version bump
+            # — an edge whose endpoint gained a version silently stopped being
+            # "latest" even though nothing about the edge had changed.
+            relationships = [rel for rel in relationships if rel.valid_to is None]
 
         return relationships
 

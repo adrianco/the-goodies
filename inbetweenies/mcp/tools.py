@@ -231,9 +231,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             relationship = EntityRelationship(
                 id=str(uuid4()),
                 from_entity_id=from_entity_id,
-                from_entity_version=from_entity.version,
                 to_entity_id=to_entity_id,
-                to_entity_version=to_entity.version,
                 relationship_type=RelationshipType(relationship_type),
                 properties=properties or {},
                 user_id=user_id
@@ -580,9 +578,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             link = EntityRelationship(
                 id=str(uuid.uuid4()),
                 from_entity_id=parent.id,
-                from_entity_version=parent.version,
                 to_entity_id=attachment.id,
-                to_entity_version=attachment.version,
                 relationship_type=rel_type,
                 properties={},
                 user_id=author,

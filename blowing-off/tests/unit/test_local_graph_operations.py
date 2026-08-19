@@ -134,9 +134,7 @@ class TestLocalGraphOperations:
         rel = EntityRelationship(
             id=str(uuid.uuid4()),
             from_entity_id=sample_device.id,
-            from_entity_version=sample_device.version,
             to_entity_id=sample_room.id,
-            to_entity_version=sample_room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             created_at=datetime.now(UTC),
@@ -161,9 +159,7 @@ class TestMCPTools:
         rel = EntityRelationship(
             id=str(uuid.uuid4()),
             from_entity_id=sample_device.id,
-            from_entity_version=sample_device.version,
             to_entity_id=sample_room.id,
-            to_entity_version=sample_room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             created_at=datetime.now(UTC),
@@ -241,9 +237,7 @@ class TestMCPTools:
         rel = EntityRelationship(
             id=str(uuid.uuid4()),
             from_entity_id=sample_device.id,
-            from_entity_version=sample_device.version,
             to_entity_id=sample_room.id,
-            to_entity_version=sample_room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             created_at=datetime.now(UTC),
@@ -292,9 +286,7 @@ class TestMCPTools:
         rel = EntityRelationship(
             id=str(uuid.uuid4()),
             from_entity_id=sample_automation.id,
-            from_entity_version=sample_automation.version,
             to_entity_id=sample_room.id,
-            to_entity_version=sample_room.version,
             relationship_type=RelationshipType.AUTOMATES,
             properties={},
             created_at=datetime.now(UTC),

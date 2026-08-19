@@ -278,8 +278,6 @@ class TestCreateRelationshipTool:
         await house.create_relationship_tool("device-fan", "room-kitchen", "located_in")
 
         stored = (await house.get_relationships(from_id="device-fan"))[0]
-        assert stored.from_entity_version == "v7"
-        assert stored.to_entity_version == "v1"
         assert stored.user_id == "system"  # default when no user is supplied
 
     async def test_missing_source_entity_is_an_error(self, house):

@@ -143,9 +143,7 @@ class TestDirtyTracking:
         """
         relationship = EntityRelationship(
             from_entity_id="device-1",
-            from_entity_version="v1",
             to_entity_id="room-1",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
         )
@@ -161,9 +159,7 @@ class TestDirtyTracking:
         relationship = EntityRelationship(
             id=str(uuid.uuid4()),
             from_entity_id="device-1",
-            from_entity_version="v1",
             to_entity_id="room-1",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             user_id="test-user",
@@ -225,9 +221,7 @@ class TestGetLocalChanges:
         relationship = EntityRelationship(
             id=str(uuid.uuid4()),
             from_entity_id=entity.id,
-            from_entity_version=entity.version,
             to_entity_id="room-1",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             user_id="test-user",
@@ -247,9 +241,7 @@ class TestGetLocalChanges:
         relationship = EntityRelationship(
             id=str(uuid.uuid4()),
             from_entity_id=entity.id,
-            from_entity_version=entity.version,
             to_entity_id="room-1",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             user_id="test-user",
@@ -321,9 +313,7 @@ class TestPushClearsPendingSafely:
         relationship = EntityRelationship(
             id=str(uuid.uuid4()),
             from_entity_id=entity.id,
-            from_entity_version=entity.version,
             to_entity_id="not-on-server-yet",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             user_id="test-user",
@@ -350,9 +340,7 @@ class TestPendingCount:
             EntityRelationship(
                 id=str(uuid.uuid4()),
                 from_entity_id="a",
-                from_entity_version="v1",
                 to_entity_id="b",
-                to_entity_version="v1",
                 relationship_type=RelationshipType.LOCATED_IN,
                 properties={},
                 user_id="test-user",

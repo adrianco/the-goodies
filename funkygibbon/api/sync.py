@@ -46,7 +46,7 @@ def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
 
 
 class SyncHandler:
-    """Handle sync protocol requests (inbetweenies-v2, see PROTOCOL.md).
+    """Handle sync protocol requests (inbetweenies-v3, see PROTOCOL.md).
 
     Entities are immutable and versioned: every change is a new version row, a
     delete is a tombstone version (``content.deleted = true``). Delta sync is
@@ -62,7 +62,7 @@ class SyncHandler:
         """Process sync request and return changes."""
         start_time = datetime.now(timezone.utc)
 
-        if request.protocol_version != "inbetweenies-v2":
+        if request.protocol_version != "inbetweenies-v3":
             raise HTTPException(status_code=400, detail="Unsupported protocol version")
 
         # --- Apply incoming (client -> server) changes ---
@@ -697,7 +697,7 @@ async def sync_status(
     return {
         "device_id": device_id,
         "server_time": datetime.now(timezone.utc).isoformat(),
-        "protocol_version": "inbetweenies-v2",
+        "protocol_version": "inbetweenies-v3",
     }
 
 

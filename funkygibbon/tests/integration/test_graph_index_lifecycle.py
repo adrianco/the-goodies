@@ -324,9 +324,7 @@ async def test_write_bypassing_the_index_is_repaired_by_drift_detection(
     test_session.add(EntityRelationship(
         id=str(uuid.uuid4()),
         from_entity_id=hub["id"],
-        from_entity_version=hub["version"],
         to_entity_id=rogue.id,
-        to_entity_version=rogue.version,
         relationship_type=RelationshipType.CONTROLS,
         properties={},
         user_id=USER,
@@ -388,9 +386,7 @@ async def test_sync_applied_entity_is_immediately_traversable(
                 "relationships": [{
                     "id": "sync-arrival-edge",
                     "from_entity_id": hub["id"],
-                    "from_entity_version": hub["version"],
                     "to_entity_id": arrived_id,
-                    "to_entity_version": arrived_version,
                     "relationship_type": "controls",
                     "properties": {},
                 }],

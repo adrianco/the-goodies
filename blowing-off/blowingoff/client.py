@@ -620,9 +620,7 @@ class BlowingOffClient:
             EntityRelationship(
                 id=str(uuid.uuid4()),
                 from_entity_id=stored_living.id,
-                from_entity_version=stored_living.version,
                 to_entity_id=stored_home.id,
-                to_entity_version=stored_home.version,
                 relationship_type=RelationshipType.LOCATED_IN,
                 properties={},
                 created_at=datetime.now(UTC),
@@ -633,9 +631,7 @@ class BlowingOffClient:
             EntityRelationship(
                 id=str(uuid.uuid4()),
                 from_entity_id=stored_kitchen.id,
-                from_entity_version=stored_kitchen.version,
                 to_entity_id=stored_home.id,
-                to_entity_version=stored_home.version,
                 relationship_type=RelationshipType.LOCATED_IN,
                 properties={},
                 created_at=datetime.now(UTC),
@@ -648,9 +644,7 @@ class BlowingOffClient:
             EntityRelationship(
                 id=str(uuid.uuid4()),
                 from_entity_id=stored_tv.id,
-                from_entity_version=stored_tv.version,
                 to_entity_id=stored_living.id,
-                to_entity_version=stored_living.version,
                 relationship_type=RelationshipType.LOCATED_IN,
                 properties={},
                 created_at=datetime.now(UTC),
@@ -661,9 +655,7 @@ class BlowingOffClient:
             EntityRelationship(
                 id=str(uuid.uuid4()),
                 from_entity_id=stored_fridge.id,
-                from_entity_version=stored_fridge.version,
                 to_entity_id=stored_kitchen.id,
-                to_entity_version=stored_kitchen.version,
                 relationship_type=RelationshipType.LOCATED_IN,
                 properties={},
                 created_at=datetime.now(UTC),

@@ -67,20 +67,25 @@ def make_relationship(
     to_entity_id: str,
     relationship_type: RelationshipType,
     properties: Optional[Dict[str, Any]] = None,
-    from_version: str = "v1",
-    to_version: str = "v1",
+    valid_from: Optional[datetime] = None,
+    valid_to: Optional[datetime] = None,
     user_id: str = "test-user",
 ) -> EntityRelationship:
-    """Build a detached EntityRelationship."""
+    """Build a detached EntityRelationship.
+
+    ADR-004 §1: the from_version / to_version parameters are gone with the
+    version pins. Edges carry an interval instead, defaulting to "open at
+    BASE_TIME" so existing callers get a currently-true edge.
+    """
     return EntityRelationship(
         id=rel_id,
         from_entity_id=from_entity_id,
-        from_entity_version=from_version,
         to_entity_id=to_entity_id,
-        to_entity_version=to_version,
         relationship_type=relationship_type,
         properties=properties if properties is not None else {},
         user_id=user_id,
+        valid_from=valid_from if valid_from is not None else BASE_TIME,
+        valid_to=valid_to,
         created_at=BASE_TIME,
         updated_at=BASE_TIME,
     )

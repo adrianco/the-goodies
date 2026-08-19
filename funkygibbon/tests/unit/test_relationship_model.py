@@ -35,9 +35,7 @@ class TestRelationshipModel:
         relationship = EntityRelationship(
             id=str(uuid4()),
             from_entity_id=from_entity.id,
-            from_entity_version=from_entity.version,
             to_entity_id=to_entity.id,
-            to_entity_version=to_entity.version,
             relationship_type=RelationshipType.LOCATED_IN,
             properties={"position": "ceiling"},
             user_id="test-user"
@@ -54,9 +52,7 @@ class TestRelationshipModel:
         relationship = EntityRelationship(
             id=rel_id,
             from_entity_id="entity1",
-            from_entity_version="v1",
             to_entity_id="entity2",
-            to_entity_version="v2",
             relationship_type=RelationshipType.CONTROLS,
             properties={"protocol": "zigbee"},
             user_id="user1"
@@ -66,9 +62,7 @@ class TestRelationshipModel:
 
         assert rel_dict["id"] == rel_id
         assert rel_dict["from_entity_id"] == "entity1"
-        assert rel_dict["from_entity_version"] == "v1"
         assert rel_dict["to_entity_id"] == "entity2"
-        assert rel_dict["to_entity_version"] == "v2"
         assert rel_dict["relationship_type"] == "controls"
         assert rel_dict["properties"]["protocol"] == "zigbee"
         assert rel_dict["user_id"] == "user1"
@@ -192,9 +186,7 @@ class TestRelationshipModel:
         relationship = EntityRelationship(
             id="rel-123",
             from_entity_id="entity1",
-            from_entity_version="v1",
             to_entity_id="entity2",
-            to_entity_version="v2",
             relationship_type=RelationshipType.CONTROLS,
             properties={},
             user_id="user1"

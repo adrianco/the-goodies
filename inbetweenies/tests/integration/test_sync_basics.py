@@ -45,9 +45,7 @@ class TestSyncBasics:
         relationship = EntityRelationship(
             id="rel-1",
             from_entity_id="device-1",
-            from_entity_version="v1",
             to_entity_id="room-1",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={"position": "ceiling"},
             user_id="test-user",
@@ -267,9 +265,7 @@ class TestSyncBasics:
             rel = EntityRelationship(
                 id=f"rel-{i}",
                 from_entity_id=f"device-{i}",
-                from_entity_version="v1",
                 to_entity_id=f"room-{i}",
-                to_entity_version="v1",
                 relationship_type=RelationshipType.LOCATED_IN,
                 properties={"index": i},
                 user_id="batch-user",

@@ -65,9 +65,7 @@ def sample_relationship(sample_entity, sample_room):
     return EntityRelationship(
         id=str(uuid.uuid4()),
         from_entity_id=sample_entity.id,
-        from_entity_version=sample_entity.version,
         to_entity_id=sample_room.id,
-        to_entity_version=sample_room.version,
         relationship_type=RelationshipType.LOCATED_IN,
         properties={"installed_date": "2024-01-01"},
         created_at=datetime.now(UTC),

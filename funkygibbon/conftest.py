@@ -112,9 +112,7 @@ async def test_room_entity(async_session, test_home_entity):
     rel = EntityRelationship(
         id=str(uuid.uuid4()),
         from_entity_id=room.id,
-        from_entity_version=room.version,
         to_entity_id=test_home_entity.id,
-        to_entity_version=test_home_entity.version,
         relationship_type=RelationshipType.LOCATED_IN,
         user_id="test-user"
     )
@@ -152,9 +150,7 @@ async def test_device_entity(async_session, test_home_entity, test_room_entity):
     rel = EntityRelationship(
         id=str(uuid.uuid4()),
         from_entity_id=device.id,
-        from_entity_version=device.version,
         to_entity_id=test_room_entity.id,
-        to_entity_version=test_room_entity.version,
         relationship_type=RelationshipType.LOCATED_IN,
         user_id="test-user"
     )

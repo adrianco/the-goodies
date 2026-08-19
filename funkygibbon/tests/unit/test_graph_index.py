@@ -65,9 +65,7 @@ class TestGraphIndex:
         rel = EntityRelationship(
             id=str(uuid4()),
             from_entity_id=device.id,
-            from_entity_version=device.version,
             to_entity_id=room.id,
-            to_entity_version=room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             user_id="test-user"
         )

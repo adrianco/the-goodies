@@ -189,9 +189,7 @@ class LocalGraphStorage:
         return {
             "id": rel.id,
             "from_entity_id": rel.from_entity_id,
-            "from_entity_version": rel.from_entity_version,
             "to_entity_id": rel.to_entity_id,
-            "to_entity_version": rel.to_entity_version,
             "relationship_type": rel_type_value,
             "properties": rel.properties,
             "user_id": rel.user_id,

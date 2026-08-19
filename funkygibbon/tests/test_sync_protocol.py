@@ -1,4 +1,4 @@
-"""Spec-correctness tests for the inbetweenies-v2 sync protocol (PROTOCOL.md).
+"""Spec-correctness tests for the inbetweenies-v3 sync protocol (PROTOCOL.md).
 
 Synchronous throughout: pure-function units for the version string + canonical
 conflict resolver, and endpoint tests driven through a sync TestClient over an
@@ -108,8 +108,8 @@ def _rel(id, *, from_id, from_version, to_id, to_version,
          rel_type="located_in", properties=None):
     return {
         "id": id,
-        "from_entity_id": from_id, "from_entity_version": from_version,
-        "to_entity_id": to_id, "to_entity_version": to_version,
+        "from_entity_id": from_id,
+        "to_entity_id": to_id,
         "relationship_type": rel_type, "properties": properties or {},
     }
 
@@ -145,7 +145,7 @@ def _stored_versions(entity_id):
 
 def _sync(client, headers, sync_type, changes=None, since=None, device="dev1", user="alice"):
     body = {
-        "protocol_version": "inbetweenies-v2", "device_id": device, "user_id": user,
+        "protocol_version": "inbetweenies-v3", "device_id": device, "user_id": user,
         "sync_type": sync_type, "changes": changes or [],
     }
     if since is not None:
@@ -155,7 +155,7 @@ def _sync(client, headers, sync_type, changes=None, since=None, device="dev1", u
 
 def test_sync_requires_auth(client):
     resp = client.post("/api/v1/sync/", json={
-        "protocol_version": "inbetweenies-v2", "device_id": "d", "user_id": "u",
+        "protocol_version": "inbetweenies-v3", "device_id": "d", "user_id": "u",
         "sync_type": "full", "changes": [],
     })
     assert resp.status_code in (401, 403)
@@ -318,9 +318,7 @@ def test_pushed_relationships_are_persisted(client, headers):
     assert len(stored) == 1
     assert stored[0]["id"] == "rel1"
     assert stored[0]["from_entity_id"] == "dev1"
-    assert stored[0]["from_entity_version"] == dev_v
     assert stored[0]["to_entity_id"] == "room1"
-    assert stored[0]["to_entity_version"] == room_v
     assert stored[0]["relationship_type"] == "located_in"
     assert stored[0]["properties"] == {"since": "2026"}
 
@@ -364,7 +362,6 @@ def test_relationship_repush_follows_new_entity_version(client, headers):
 
     stored = _stored_relationships()
     assert len(stored) == 1  # still one edge, moved rather than duplicated
-    assert stored[0]["from_entity_version"] == dev_v2
 
 
 def test_relationship_with_missing_endpoint_is_skipped(client, headers):

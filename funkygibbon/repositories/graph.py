@@ -218,12 +218,10 @@ class GraphRepository(BaseRepository[Entity]):
                     if latest_to:
                         latest_versions[rel.to_entity_id] = latest_to.version
 
-            # Filter relationships to only include latest versions
-            relationships = [
-                rel for rel in relationships
-                if (rel.from_entity_version == latest_versions.get(rel.from_entity_id) and
-                    rel.to_entity_version == latest_versions.get(rel.to_entity_id))
-            ]
+            # ADR-004 §1: currency is the edge's own interval, not a comparison
+            # against its endpoints' latest versions. See graph_impl.py for the
+            # same change and the reason the old proxy was wrong.
+            relationships = [rel for rel in relationships if rel.valid_to is None]
 
         return relationships
 

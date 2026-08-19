@@ -101,18 +101,14 @@ async def test_local_mcp(tmp_path):
     await client.graph_operations.store_relationship(
         EntityRelationship(
             from_entity_id=stored_living.id,
-            from_entity_version=stored_living.version,
             to_entity_id=stored_home.id,
-            to_entity_version=stored_home.version,
             relationship_type=RelationshipType.LOCATED_IN
         )
     )
     await client.graph_operations.store_relationship(
         EntityRelationship(
             from_entity_id=stored_bedroom.id,
-            from_entity_version=stored_bedroom.version,
             to_entity_id=stored_home.id,
-            to_entity_version=stored_home.version,
             relationship_type=RelationshipType.LOCATED_IN
         )
     )
@@ -121,18 +117,14 @@ async def test_local_mcp(tmp_path):
     await client.graph_operations.store_relationship(
         EntityRelationship(
             from_entity_id=stored_light.id,
-            from_entity_version=stored_light.version,
             to_entity_id=stored_living.id,
-            to_entity_version=stored_living.version,
             relationship_type=RelationshipType.LOCATED_IN
         )
     )
     await client.graph_operations.store_relationship(
         EntityRelationship(
             from_entity_id=stored_thermostat.id,
-            from_entity_version=stored_thermostat.version,
             to_entity_id=stored_living.id,
-            to_entity_version=stored_living.version,
             relationship_type=RelationshipType.LOCATED_IN
         )
     )
@@ -245,9 +237,7 @@ async def test_graph_operations(tmp_path):
     await client.graph_operations.store_relationship(
         EntityRelationship(
             from_entity_id=john.id,
-            from_entity_version=john.version,
             to_entity_id=home1.id,
-            to_entity_version=home1.version,
             relationship_type=RelationshipType.MANAGES
         )
     )
@@ -255,9 +245,7 @@ async def test_graph_operations(tmp_path):
     await client.graph_operations.store_relationship(
         EntityRelationship(
             from_entity_id=jane.id,
-            from_entity_version=jane.version,
             to_entity_id=home1.id,
-            to_entity_version=home1.version,
             relationship_type=RelationshipType.MANAGES
         )
     )

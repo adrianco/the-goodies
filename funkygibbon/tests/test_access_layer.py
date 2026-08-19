@@ -76,7 +76,7 @@ def _change(change_type, *, id, version, name="N", parents=None, rels=None):
 
 def _sync(client, headers, changes=None, sync_type="full"):
     return client.post("/api/v1/sync/", headers=headers, json={
-        "protocol_version": "inbetweenies-v2", "device_id": "d", "user_id": USER,
+        "protocol_version": "inbetweenies-v3", "device_id": "d", "user_id": USER,
         "sync_type": sync_type, "changes": changes or [],
     })
 
@@ -201,8 +201,8 @@ class TestAtomicPushBatch:
         response = _sync(client, headers, [
             _change("create", id="GOOD", version=good),
             _change("create", id="BAD", version=Entity.create_version("b"), rels=[{
-                "id": "R", "from_entity_id": "BAD", "from_entity_version": "v",
-                "to_entity_id": "GOOD", "to_entity_version": good,
+                "id": "R", "from_entity_id": "BAD",
+                "to_entity_id": "GOOD",
                 "relationship_type": "not-a-real-type", "properties": {},
             }]),
         ])
@@ -217,8 +217,8 @@ class TestAtomicPushBatch:
         """The client must retry the whole batch, so it may keep every mark."""
         response = _sync(client, headers, [
             _change("create", id="GOOD", version=Entity.create_version("a"), rels=[{
-                "id": "R", "from_entity_id": "GOOD", "from_entity_version": "v",
-                "to_entity_id": "GOOD", "to_entity_version": "v",
+                "id": "R", "from_entity_id": "GOOD",
+                "to_entity_id": "GOOD",
                 "relationship_type": "not-a-real-type", "properties": {},
             }]),
         ])
@@ -283,7 +283,7 @@ class TestPaginationAndDigest:
         seen, cursor, pages = [], None, 0
         while True:
             body = client.post("/api/v1/sync/", headers=headers, json={
-                "protocol_version": "inbetweenies-v2", "device_id": "d",
+                "protocol_version": "inbetweenies-v3", "device_id": "d",
                 "user_id": USER, "sync_type": "delta", "changes": [],
                 "cursor": cursor,
             }).json()
@@ -300,7 +300,7 @@ class TestPaginationAndDigest:
     def test_a_non_numeric_cursor_is_rejected(self, client, headers):
         """Better a 400 than silently returning the whole graph."""
         response = client.post("/api/v1/sync/", headers=headers, json={
-            "protocol_version": "inbetweenies-v2", "device_id": "d", "user_id": USER,
+            "protocol_version": "inbetweenies-v3", "device_id": "d", "user_id": USER,
             "sync_type": "delta", "changes": [], "cursor": "not-a-number",
         })
 
@@ -313,7 +313,7 @@ class TestPaginationAndDigest:
         self._make(client, headers, 1, prefix="AFTER")
 
         body = client.post("/api/v1/sync/", headers=headers, json={
-            "protocol_version": "inbetweenies-v2", "device_id": "d", "user_id": USER,
+            "protocol_version": "inbetweenies-v3", "device_id": "d", "user_id": USER,
             "sync_type": "delta", "changes": [], "filters": {"since": watermark},
         }).json()
 

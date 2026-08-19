@@ -207,9 +207,7 @@ class TestGraphRepository:
         # Create relationship
         relationship = EntityRelationship(
             from_entity_id=device.id,
-            from_entity_version=device.version,
             to_entity_id=room.id,
-            to_entity_version=room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             properties={"position": "wall"},
             user_id="user"
@@ -267,18 +265,14 @@ class TestGraphRepository:
         # Create relationships
         rel1 = EntityRelationship(
             from_entity_id=device1.id,
-            from_entity_version=device1.version,
             to_entity_id=room.id,
-            to_entity_version=room.version,
             relationship_type=RelationshipType.LOCATED_IN,
             user_id="user"
         )
 
         rel2 = EntityRelationship(
             from_entity_id=device1.id,
-            from_entity_version=device1.version,
             to_entity_id=device2.id,
-            to_entity_version=device2.version,
             relationship_type=RelationshipType.CONTROLS,
             user_id="user"
         )

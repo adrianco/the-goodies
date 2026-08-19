@@ -104,7 +104,7 @@ class InbetweeniesProtocol:
 
         # Build sync request
         request = SyncRequest(
-            protocol_version="inbetweenies-v2",
+            protocol_version="inbetweenies-v3",
             device_id=self.client_id,
             user_id="client-user",  # TODO: get from auth
             sync_type="delta" if last_sync else "full",
@@ -154,9 +154,7 @@ class InbetweeniesProtocol:
                     RelationshipChange(
                         id=relationship["id"],
                         from_entity_id=relationship["from_entity_id"],
-                        from_entity_version=relationship["from_entity_version"],
                         to_entity_id=relationship["to_entity_id"],
-                        to_entity_version=relationship["to_entity_version"],
                         relationship_type=relationship["relationship_type"],
                         properties=relationship.get("properties") or {}
                     )
@@ -167,7 +165,7 @@ class InbetweeniesProtocol:
 
         # Build sync request with changes
         request = SyncRequest(
-            protocol_version="inbetweenies-v2",
+            protocol_version="inbetweenies-v3",
             device_id=self.client_id,
             user_id="client-user",  # TODO: get from auth
             sync_type="delta",

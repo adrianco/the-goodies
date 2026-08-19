@@ -121,9 +121,7 @@ class TestAppEntityType:
         relationship = EntityRelationship(
             id=str(uuid4()),
             from_entity_id=device.id,
-            from_entity_version=device.version,
             to_entity_id=app.id,
-            to_entity_version=app.version,
             relationship_type=RelationshipType.CONTROLLED_BY_APP,
             properties={"integration": "wifi"},
             user_id="test-user"
@@ -310,9 +308,7 @@ class TestUserNotes:
         relationship = EntityRelationship(
             id=str(uuid4()),
             from_entity_id=note.id,
-            from_entity_version=note.version,
             to_entity_id=device.id,
-            to_entity_version=device.version,
             relationship_type=RelationshipType.DOCUMENTED_BY,
             properties={"note_type": "user_provided"},
             user_id="test-user"
@@ -463,9 +459,7 @@ class TestMitsubishiIntegration:
         relationship = EntityRelationship(
             id=str(uuid4()),
             from_entity_id=thermostat.id,
-            from_entity_version=thermostat.version,
             to_entity_id=comfort_app.id,
-            to_entity_version=comfort_app.version,
             relationship_type=RelationshipType.CONTROLLED_BY_APP,
             properties={
                 "integration": "wifi_adapter",
@@ -571,9 +565,7 @@ class TestPhotoDocumentation:
         relationship = EntityRelationship(
             id=str(uuid4()),
             from_entity_id=device.id,
-            from_entity_version=device.version,
             to_entity_id=photo_note.id,
-            to_entity_version=photo_note.version,
             relationship_type=RelationshipType.HAS_PHOTO,
             properties={},
             user_id="test-user"

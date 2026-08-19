@@ -97,15 +97,15 @@ def entity_change(change_type, *, id, version, name="N", content=None,
 def edge(id, *, from_id, from_version, to_id, to_version, properties=None):
     return {
         "id": id,
-        "from_entity_id": from_id, "from_entity_version": from_version,
-        "to_entity_id": to_id, "to_entity_version": to_version,
+        "from_entity_id": from_id,
+        "to_entity_id": to_id,
         "relationship_type": RELATIONSHIP_TYPE, "properties": properties or {},
     }
 
 
 def sync(client, headers, sync_type="full", changes=None, since=None):
     body = {
-        "protocol_version": "inbetweenies-v2", "device_id": "conformance-device",
+        "protocol_version": "inbetweenies-v3", "device_id": "conformance-device",
         "user_id": USER, "sync_type": sync_type, "changes": changes or [],
         "vector_clock": {"clocks": {}},
     }

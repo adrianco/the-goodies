@@ -1,5 +1,5 @@
 """
-Shared sync protocol models for the Inbetweenies v2 protocol.
+Shared sync protocol models for the Inbetweenies v3 protocol.
 
 These models define the structure of sync requests and responses
 used between FunkyGibbon server and clients like Blowing-Off.
@@ -29,14 +29,33 @@ class EntityChange(BaseModel):
 
 
 class RelationshipChange(BaseModel):
-    """Relationship change in sync request"""
+    """Relationship change in sync request.
+
+    v3 (ADR-004 §1/§6): an edge is an immutable interval row, so what travels is
+    an interval, not a mutable edge.
+
+    ``from_entity_version`` / ``to_entity_version`` are GONE. They pinned the
+    endpoint versions an edge pointed at when it was created — which says
+    nothing about when the edge stopped being true, and forced an edge rewrite
+    on every endpoint version bump. Endpoints now resolve by id + T through
+    snapshot() (§3.4).
+
+    ``valid_from`` identifies the interval (it is half of the row's primary key,
+    alongside ``id``), and ``valid_to`` is null while the edge is still true.
+    Both are on the VALID-time axis — client edit time — never server_seq, which
+    stays the replication axis and is never consulted by queries (§2).
+
+    End-events travel as ordinary changes: a row whose ``valid_to`` has been set
+    syncs exactly like any other row, so "this edge stopped being true" needs no
+    special message type.
+    """
     id: str
     from_entity_id: str
-    from_entity_version: str
     to_entity_id: str
-    to_entity_version: str
     relationship_type: str
     properties: Dict = Field(default_factory=dict)
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
 
 
 class BlobChange(BaseModel):
@@ -85,7 +104,7 @@ class SyncFilters(BaseModel):
 
 class SyncRequest(BaseModel):
     """Sync request from client"""
-    protocol_version: str = "inbetweenies-v2"
+    protocol_version: str = "inbetweenies-v3"
     device_id: str
     user_id: str
     sync_type: str = Field(..., pattern="^(full|delta|entities|relationships)$")
@@ -114,7 +133,7 @@ class SyncStats(BaseModel):
 
 class SyncResponse(BaseModel):
     """Sync response to client"""
-    protocol_version: str = "inbetweenies-v2"
+    protocol_version: str = "inbetweenies-v3"
     sync_type: str
     changes: List[SyncChange] = Field(default_factory=list)
     conflicts: List[ConflictInfo] = Field(default_factory=list)

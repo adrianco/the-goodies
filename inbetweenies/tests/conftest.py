@@ -104,9 +104,7 @@ def sample_relationship():
     return EntityRelationship(
         id="rel-1",
         from_entity_id="device-1",
-        from_entity_version="v1",
         to_entity_id="room-1",
-        to_entity_version="v1",
         relationship_type=RelationshipType.LOCATED_IN,
         properties={"position": "ceiling"},
         user_id="test-user",
@@ -124,9 +122,7 @@ def sample_relationships():
         EntityRelationship(
             id="rel-1",
             from_entity_id="room-1",
-            from_entity_version="v1",
             to_entity_id="home-1",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={},
             user_id="user-1",
@@ -136,9 +132,7 @@ def sample_relationships():
         EntityRelationship(
             id="rel-2",
             from_entity_id="device-1",
-            from_entity_version="v1",
             to_entity_id="room-1",
-            to_entity_version="v1",
             relationship_type=RelationshipType.LOCATED_IN,
             properties={"position": "wall"},
             user_id="user-1",
@@ -148,9 +142,7 @@ def sample_relationships():
         EntityRelationship(
             id="rel-3",
             from_entity_id="automation-1",
-            from_entity_version="v1",
             to_entity_id="device-1",
-            to_entity_version="v1",
             relationship_type=RelationshipType.CONTROLS,
             properties={"action": "toggle"},
             user_id="user-1",
