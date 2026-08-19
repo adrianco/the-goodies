@@ -1,6 +1,7 @@
 # ADR-002: Latest-version and delta queries move into SQL
 
-**Status:** Proposed · 2026-08-01 · **This is the scalability unlock; ADR-001 depends on it.**
+**Status:** Implemented · proposed 2026-08-01, landed 2026-08-03 in `2a1ec34` (Stage C, #83) · **This is the scalability unlock; ADR-001 depends on it.**
+Verified in the tree: `server_seq` column and `ix_entities_server_seq` index (`inbetweenies/models/entity.py`), `is_latest` maintained transactionally, and the pull watermark populating `cursor` (`inbetweenies/sync/protocol.py`).
 
 ## Context
 

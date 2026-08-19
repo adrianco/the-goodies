@@ -26,6 +26,20 @@ from sqlalchemy import text
 
 from inbetweenies.models import Base, Entity, EntityType, SourceType, EntityRelationship, RelationshipType, Blob, BlobType, BlobStatus
 
+
+def _demo_bytes(tag: str) -> str:
+    """A few deterministic bytes, base64-encoded, standing in for a real file.
+
+    The seed used to write a made-up ``blob_id`` pointing at no row at all, so a
+    freshly seeded database had dangling blob references before anyone touched
+    it. Real bytes mean the migration's extractor creates a real blob and the
+    integrity check passes.
+    """
+    import base64
+    return base64.b64encode(f"demo-blob:{tag}".encode()).decode()
+
+
+
 # Default database URL - can be overridden by environment variable
 # Use 'or' to handle empty string case
 DATABASE_URL = os.environ.get("DATABASE_URL") or "sqlite+aiosqlite:///./funkygibbon.db"
@@ -343,7 +357,9 @@ class GraphPopulator:
                                          {"position": "east_wall"})
             await self.create_relationship(session, living_room_lights, living_room, RelationshipType.LOCATED_IN,
                                          {"positions": ["ceiling_center", "corners"]})
-            await self.create_relationship(session, doorbell, home, RelationshipType.MONITORS,
+            # device -> room, not device -> home: `monitors` is declared for
+            # device->device, device->room and automation->device.
+            await self.create_relationship(session, doorbell, living_room, RelationshipType.MONITORS,
                                          {"location": "front_entrance"})
             await self.create_relationship(session, mitsubishi_thermostat, kitchen, RelationshipType.LOCATED_IN,
                                          {"position": "wall", "height": "5ft"})
@@ -478,9 +494,10 @@ class GraphPopulator:
                 key="vacation_mode"
             )
 
-            # Schedule relationships
-            await self.create_relationship(session, vacation_mode, thermostat, RelationshipType.MANAGES)
-            await self.create_relationship(session, vacation_mode, doorbell, RelationshipType.MANAGES)
+            # Schedule relationships. `manages` starts at an `app` (ADR-013 §4);
+            # a schedule acting on a device is `controls`.
+            await self.create_relationship(session, vacation_mode, thermostat, RelationshipType.CONTROLS)
+            await self.create_relationship(session, vacation_mode, doorbell, RelationshipType.CONTROLS)
 
             # Create notes
             print("\n📝 Creating notes...")
@@ -542,12 +559,14 @@ class GraphPopulator:
                 key="comfort_app"
             )
 
-            # Link devices to apps
-            await self.create_relationship(session, thermostat, homekit_app, RelationshipType.CONTROLLED_BY_APP,
+            # Link apps to what they run. `controlled_by_app` was the exact
+            # inverse of `manages` and is deleted (ADR-013 §4); the app is the
+            # actor, so it is the subject.
+            await self.create_relationship(session, homekit_app, thermostat, RelationshipType.MANAGES,
                                          {"integration": "native"})
-            await self.create_relationship(session, living_room_lights, homekit_app, RelationshipType.CONTROLLED_BY_APP,
+            await self.create_relationship(session, homekit_app, living_room_lights, RelationshipType.MANAGES,
                                          {"integration": "hue_bridge"})
-            await self.create_relationship(session, mitsubishi_thermostat, comfort_app, RelationshipType.CONTROLLED_BY_APP,
+            await self.create_relationship(session, comfort_app, mitsubishi_thermostat, RelationshipType.MANAGES,
                                          {"integration": "wifi_adapter", "features": ["remote_control", "scheduling", "energy_monitoring"]})
 
             # Create user-generated content notes
@@ -575,8 +594,11 @@ class GraphPopulator:
                     "document_type": "instruction_manual",
                     "original_filename": "PAR-42MAAUB_Instruction Book.pdf",
                     "summary": "Complete instruction manual for Mitsubishi PAR-42MAAUB thermostat including installation, operation, and maintenance procedures.",
-                    "has_blob": True,
-                    "blob_reference": "pdf_manual_par42"
+                    # A `manual` IS a PDF attachment (ADR-013 §3), so no
+                    # "has_blob" flag: the entity type already says it. One
+                    # link only -- blob_id -- and it attaches via DOCUMENTED_BY.
+                    "mime_type": "application/pdf",
+                    "data_b64": _demo_bytes("pdf_manual_par42")
                 },
                 key="mitsubishi_manual"
             )
@@ -591,38 +613,55 @@ class GraphPopulator:
             await self.create_relationship(session, mitsubishi_user_note, pvfy_blower, RelationshipType.DOCUMENTED_BY,
                                          {"note_type": "user_provided"})
 
-            # Create photo documentation notes
-            thermostat_photo_note = await self.create_entity(
-                session, EntityType.NOTE,
-                "Thermostat Photo Documentation",
+            # Photos are their own entity type (ADR-013 §3). One photo per blob,
+            # rather than a note listing several filenames: a photo entity that
+            # claims two images has no single blob_id, which is how the
+            # "blob_references" plural crept in and made the link ambiguous.
+            thermostat_photo = await self.create_entity(
+                session, EntityType.PHOTO,
+                "PAR-42.jpeg",
                 {
-                    "content": "Photo of Mitsubishi PAR-42MAA thermostat installed in kitchen",
-                    "category": "photo_documentation",
-                    "photo_filename": "PAR-42.jpeg",
-                    "has_blob": True,
-                    "blob_reference": "photo_par42"
+                    "description": "Photo of Mitsubishi PAR-42MAA thermostat installed in kitchen",
+                    "filename": "PAR-42.jpeg",
+                    "mime_type": "image/jpeg",
+                    "data_b64": _demo_bytes("photo_par42")
                 },
-                key="thermostat_photo_note"
+                key="thermostat_photo"
             )
 
-            blower_photo_note = await self.create_entity(
-                session, EntityType.NOTE,
-                "Air Handler Photo Documentation",
+            blower_photo = await self.create_entity(
+                session, EntityType.PHOTO,
+                "PVFY-Blower.jpeg",
                 {
-                    "content": "Photos of PVFY air handler blower unit and serial number plate",
-                    "category": "photo_documentation",
-                    "photo_filenames": ["PVFY-Blower.jpeg", "PVFY-Serial_Number.jpeg"],
-                    "has_blob": True,
-                    "blob_references": ["photo_pvfy_blower", "photo_pvfy_serial"]
+                    "description": "Photo of PVFY air handler blower unit",
+                    "filename": "PVFY-Blower.jpeg",
+                    "mime_type": "image/jpeg",
+                    "data_b64": _demo_bytes("photo_pvfy_blower")
                 },
-                key="blower_photo_note"
+                key="blower_photo"
             )
 
-            # Link photo documentation to devices
-            await self.create_relationship(session, thermostat_photo_note, mitsubishi_thermostat, RelationshipType.HAS_BLOB,
-                                         {"blob_type": "photo"})
-            await self.create_relationship(session, blower_photo_note, pvfy_blower, RelationshipType.HAS_BLOB,
-                                         {"blob_type": "photo"})
+            blower_serial_photo = await self.create_entity(
+                session, EntityType.PHOTO,
+                "PVFY-Serial_Number.jpeg",
+                {
+                    "description": "Photo of PVFY air handler serial number plate",
+                    "filename": "PVFY-Serial_Number.jpeg",
+                    "mime_type": "image/jpeg",
+                    "data_b64": _demo_bytes("photo_pvfy_serial")
+                },
+                key="blower_serial_photo"
+            )
+
+            # device -> photo, not photo -> device. The old edges ran backwards
+            # against their own declared endpoints, which nothing caught because
+            # the rule was enforced on one write path of three (ADR-013 §5).
+            await self.create_relationship(session, mitsubishi_thermostat, thermostat_photo,
+                                           RelationshipType.HAS_PHOTO, {})
+            await self.create_relationship(session, pvfy_blower, blower_photo,
+                                           RelationshipType.HAS_PHOTO, {})
+            await self.create_relationship(session, pvfy_blower, blower_serial_photo,
+                                           RelationshipType.HAS_PHOTO, {})
 
             # Commit all changes
             await session.commit()

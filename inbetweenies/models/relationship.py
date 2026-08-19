@@ -5,9 +5,10 @@ This module defines the EntityRelationship model that represents edges
 between entities in the knowledge graph.
 """
 
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from sqlalchemy import Column, String, JSON, Enum as SQLEnum, ForeignKeyConstraint
+from sqlalchemy import Column, DateTime, String, JSON, ForeignKeyConstraint
 from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
@@ -16,8 +17,28 @@ if TYPE_CHECKING:
     from .entity import Entity, EntityType
 
 
+def _as_aware(value: datetime) -> datetime:
+    """Treat a naive datetime as UTC.
+
+    SQLite has no timezone type, so a ``DateTime(timezone=True)`` column round
+    trips as naive however it was written. Comparing that against an aware
+    "now" raises TypeError, which would turn every interval check into a 500 on
+    exactly the rows the migration backfilled. Storage is UTC throughout, so
+    reattaching UTC is a restatement of the invariant rather than a guess.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 class RelationshipType(str, Enum):
-    """Types of relationships between entities"""
+    """Types of relationships between entities.
+
+    ADR-012 §1: the house domain's edge vocabulary. The column below is a plain
+    String, so this class names constants rather than constraining the schema.
+    ``(str, Enum)`` means ``RelationshipType.LOCATED_IN == "located_in"``, so the
+    valid_combinations table further down keys correctly whether it is handed an
+    enum member or the plain string a query now returns.
+    """
+
     LOCATED_IN = "located_in"
     CONTROLS = "controls"
     CONNECTS_TO = "connects_to"
@@ -31,7 +52,11 @@ class RelationshipType(str, Enum):
     MONITORS = "monitors"
     AUTOMATES = "automates"
     CONTROLLED_BY_APP = "controlled_by_app"  # New: Links devices to controlling apps
-    HAS_BLOB = "has_blob"  # New: Links entities to binary data (photos, PDFs)
+    # ADR-013 §3: replaces HAS_BLOB, which never pointed at a blob -- it pointed
+    # at a note that carried one. A relationship names the attachment's role;
+    # the blob itself is reached only by content.blob_id on the attachment
+    # entity. PDFs are `manual` entities and attach via DOCUMENTED_BY.
+    HAS_PHOTO = "has_photo"
 
 
 class EntityRelationship(Base, InbetweeniesTimestampMixin):
@@ -56,12 +81,34 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     to_entity_id = Column(String(36), nullable=False)
     to_entity_version = Column(String(255), nullable=False)
 
-    # Relationship metadata
-    relationship_type = Column(SQLEnum(RelationshipType), nullable=False, index=True)
+    # Relationship metadata. Plain String, not SQLEnum (ADR-012 §1) — see the
+    # note on Entity.entity_type. Reads yield a plain str; `.value` on this
+    # attribute must be guarded.
+    relationship_type = Column(String, nullable=False, index=True)
     properties = Column(JSON, default=dict)
 
     # Tracking
     user_id = Column(String(36), nullable=True)  # No foreign key, just track the user ID
+
+    # ADR-004 §1: edges are immutable interval rows.
+    #
+    # An edge is true over a half-open interval on the VALID-TIME axis (client
+    # edit time, ADR-004 §2) — never on server_seq, which is the replication
+    # axis and must not be consulted by queries. Changing an edge ends the old
+    # row and inserts a new one; deleting ends the row. Rows are never updated
+    # in content and never deleted, which is what makes the prior topology
+    # recoverable: before this, re-pointing a `located_in` edge overwrote the
+    # row and the old placement was simply gone (review finding C4).
+    #
+    # Current at T  ⇔  valid_from <= T < coalesce(valid_to, ∞)
+    # Current graph ⇔  valid_to IS NULL   (what the GraphIndex loads; ADR-003
+    #                                      is unchanged by this)
+    #
+    # Nullable with no server_default: existing rows are backfilled from
+    # created_at by the migration, and rows written before that runs are read
+    # as "open interval, start unknown" rather than silently dated to now.
+    valid_from = Column(DateTime(timezone=True), nullable=True, index=True)
+    valid_to = Column(DateTime(timezone=True), nullable=True, index=True)
 
     # Foreign key constraints
     __table_args__ = (
@@ -107,8 +154,33 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
             "properties": self.properties,
             "user_id": self.user_id,
             "created_at": self.created_at.isoformat() if hasattr(self.created_at, "isoformat") else self.created_at,
-            "updated_at": self.updated_at.isoformat() if hasattr(self.updated_at, "isoformat") else self.updated_at
+            "updated_at": self.updated_at.isoformat() if hasattr(self.updated_at, "isoformat") else self.updated_at,
+            # ADR-004 §1 interval bounds. Emitted as None rather than omitted so
+            # a consumer can distinguish "still true" (valid_to null) from an
+            # older peer that does not carry the field at all.
+            "valid_from": self.valid_from.isoformat() if hasattr(self.valid_from, "isoformat") else self.valid_from,
+            "valid_to": self.valid_to.isoformat() if hasattr(self.valid_to, "isoformat") else self.valid_to,
         }
+
+    def is_current_at(self, at: Optional[datetime] = None) -> bool:
+        """Is this edge true at ``at`` on the valid-time axis? (ADR-004 §1/§3.3)
+
+        Half-open by design: ``valid_from <= at < coalesce(valid_to, ∞)``. The
+        interval is closed at the start and open at the end so that ending one
+        row and starting its successor at the same instant yields exactly one
+        current edge, never zero and never two — which is the whole point of
+        end-and-insert.
+
+        A null ``valid_from`` reads as "has always been true" so that rows
+        written before the ADR-004 migration remain visible rather than
+        silently dropping out of every snapshot.
+        """
+        moment = at or datetime.now(UTC)
+        if self.valid_from is not None and _as_aware(self.valid_from) > moment:
+            return False
+        if self.valid_to is not None and _as_aware(self.valid_to) <= moment:
+            return False
+        return True
 
     def is_valid_for_entities(self, from_entity: "Entity", to_entity: "Entity") -> bool:
         """
@@ -182,11 +254,15 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
                 (EntityType.HOME, EntityType.APP),
                 (EntityType.AUTOMATION, EntityType.APP),
             ],
-            RelationshipType.HAS_BLOB: [
-                (EntityType.DEVICE, EntityType.NOTE),  # Photos of devices
-                (EntityType.MANUAL, EntityType.NOTE),  # PDF manuals
-                (EntityType.APP, EntityType.NOTE),     # App icons
-                (EntityType.HOME, EntityType.NOTE),    # Home photos
+            RelationshipType.HAS_PHOTO: [
+                (EntityType.DEVICE, EntityType.PHOTO),
+                (EntityType.DOOR, EntityType.PHOTO),
+                (EntityType.WINDOW, EntityType.PHOTO),
+                (EntityType.ROOM, EntityType.PHOTO),
+                (EntityType.HOME, EntityType.PHOTO),
+                (EntityType.APP, EntityType.PHOTO),     # App icons / screenshots
+                (EntityType.NOTE, EntityType.PHOTO),
+                (EntityType.MANUAL, EntityType.PHOTO),
             ],
         }
 

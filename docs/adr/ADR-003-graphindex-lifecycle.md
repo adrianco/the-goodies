@@ -1,6 +1,7 @@
 # ADR-003: GraphIndex gets an owner, an invalidation rule, and a concurrency posture
 
-**Status:** Proposed · 2026-08-01 · **Correctness fix — highest-priority code change in this review.**
+**Status:** Implemented · proposed 2026-08-01, landed 2026-08-02 in `b099551` (Stage A, #72) · **Correctness fix — highest-priority code change in this review.**
+Verified in the tree: `funkygibbon/graph/index_service.py` implements all five decisions — single owner on `app.state.graph_index`, write-through on every mutation path, generation-tagged rebuild as the safety net, single-worker posture asserted at startup, tombstones excluded. The generation marker carries `max(server_seq)` since ADR-002 landed.
 
 ## Context
 

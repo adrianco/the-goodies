@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oook"
-version = "0.3.0"
+version = "0.4.0"
 description = "CLI tool for testing FunkyGibbon MCP server"
 readme = "README.md"
 # ADR-010 section 6: one requires-python across the workspace, matching the

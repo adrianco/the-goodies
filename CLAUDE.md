@@ -226,10 +226,17 @@ deleted (ADR-008); do not recreate it.
 ### Key Data Models
 
 The system uses a graph-based data model with:
-- **Entities**: HOME, ROOM, DEVICE, ZONE, DOOR, WINDOW, PROCEDURE, MANUAL, NOTE, SCHEDULE, AUTOMATION, APP
-- **Relationships**: CONTAINS, CONNECTED_TO, CONTROLLED_BY, CONTROLLED_BY_APP, DOCUMENTED_BY, HAS_BLOB, etc.
+- **Entities**: HOME, ROOM, DEVICE, ZONE, DOOR, WINDOW, PROCEDURE, MANUAL, PHOTO, NOTE, SCHEDULE, AUTOMATION, APP
+- **Relationships**: LOCATED_IN, PART_OF, CONNECTS_TO, CONTROLS, MANAGES, DOCUMENTED_BY, HAS_PHOTO, PROCEDURE_FOR, TRIGGERED_BY, DEPENDS_ON, MONITORS, AUTOMATES
 - **Versioning**: All entities have immutable versioning with complete change history
-- **BLOBs**: Binary storage for PDFs, photos, and other files with sync support
+- **BLOBs**: Binary storage for PDFs and photos. One link only: an attachment
+  entity (`PHOTO` for images, `MANUAL` for PDFs) carries `content.blob_id`. No
+  relationship ever points at a blob -- see ADR-013 3.
+
+The vocabulary is *domain* data, not engine schema: it lives in
+`domains/house/manifest.py`, not in the database columns. See
+[domains/house/README.md](domains/house/README.md) for what is declared versus
+what is actually used, and `docs/domains.md` for adding a second domain.
 
 ### MCP Tools
 

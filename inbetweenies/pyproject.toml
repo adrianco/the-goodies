@@ -40,7 +40,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "inbetweenies"
-version = "0.3.0"
+version = "0.4.0"
 description = "Shared models for the Inbetweenies sync protocol"
 readme = "README.md"
 requires-python = ">=3.11"

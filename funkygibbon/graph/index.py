@@ -128,14 +128,14 @@ class GraphIndex:
                 self.entities_by_name[old_name].discard(entity.id)
                 if not self.entities_by_name[old_name]:
                     del self.entities_by_name[old_name]
-            old_type = previous.entity_type.value
-            if old_type != entity.entity_type.value:
+            old_type = getattr(previous.entity_type, "value", previous.entity_type)
+            if old_type != getattr(entity.entity_type, "value", entity.entity_type):
                 self.entities_by_type[old_type].discard(entity.id)
                 if not self.entities_by_type[old_type]:
                     del self.entities_by_type[old_type]
 
         self.entities[entity.id] = entity
-        self.entities_by_type[entity.entity_type.value].add(entity.id)
+        self.entities_by_type[getattr(entity.entity_type, "value", entity.entity_type)].add(entity.id)
 
         # Index by name (case-insensitive)
         name_lower = entity.name.lower()
@@ -222,7 +222,7 @@ class GraphIndex:
         if not self.entities_by_name[name_lower]:
             del self.entities_by_name[name_lower]
 
-        type_key = entity.entity_type.value
+        type_key = getattr(entity.entity_type, "value", entity.entity_type)
         self.entities_by_type[type_key].discard(entity_id)
         if not self.entities_by_type[type_key]:
             del self.entities_by_type[type_key]
@@ -529,7 +529,7 @@ class GraphIndex:
         }
 
         relationship_type_counts = {
-            rel_type.value: len(rels)
+            getattr(rel_type, "value", rel_type): len(rels)
             for rel_type, rels in self.relationships_by_type.items()
         }
 

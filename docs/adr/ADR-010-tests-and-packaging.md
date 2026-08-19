@@ -1,6 +1,7 @@
 # ADR-010: Test architecture and packaging — real-server standard, cover the shared core, one workspace
 
-**Status:** Proposed · 2026-08-01
+**Status:** Implemented · proposed 2026-08-01, landed 2026-08-03 in `44d9250` (Stage B, #73)
+Verified in the tree: §2 the protocol conformance suite (`funkygibbon/tests/test_protocol_conformance.py`, 29 tests); §3 the per-package coverage floor as its own CI step — `pytest inbetweenies --cov=inbetweenies --cov-fail-under=80`, currently 89.01%; §6 one uv workspace with `requires-python = ">=3.11"` across all five pyprojects and `setup.py` retired.
 
 ## Context
 
@@ -17,14 +18,14 @@
 **Tests**
 
 1. **The real-server harness is the default.** New integration tests use the root-conftest server fixture; mock-based tests are reserved for error-path unit tests where a real server can't produce the condition.
-2. **Protocol conformance suite** — a named test module asserting server behavior against PROTOCOL.md (acks, idempotency, ordering, pagination, tombstones, conflict records as v3 lands). This suite is the compatibility gate for *every* client implementation and the document Swift work trusts. Under ADR-012 it is **parameterized by domain manifest** and runs against each configured domain — the byte-identical-house gate for the abstraction step, and the proof the engine is genuinely domain-blind once garage exists.
+2. **Protocol conformance suite** — a named test module asserting server behavior against PROTOCOL.md (acks, idempotency, ordering, pagination, tombstones, conflict records as v3 lands). This suite is the compatibility gate for *every* client implementation and the document Swift work trusts. Under ADR-012 it is **parameterized by domain manifest** and runs against each configured domain — the byte-identical-house gate for the abstraction step, and the proof the engine is genuinely domain-blind once vehicles exists.
 3. **Coverage floor on `inbetweenies/` of 80%**, enforced per-package in CI (`--cov=inbetweenies --cov-fail-under=80`); the overall number stops being the metric that matters.
 4. **Consolidate the three auth suites into one** parameterized suite; delete tests that only assert mocks were called.
 5. `graphify update .` runs in CI post-merge so the knowledge graph (and its dead-code signal) stays fresh.
 
 **Packaging**
 
-6. **One uv workspace** at the repo root: root `pyproject.toml` with workspace members `funkygibbon`, `inbetweenies`, `blowing-off`, `oook`, and the domain packages (`domains/house`, later `domains/garage` — ADR-012); `setup.py` files retired; **`requires-python = ">=3.11"` everywhere** (the deployed interpreter); one lockfile. `pip install -e .` from root produces the complete dev environment in one step.
+6. **One uv workspace** at the repo root: root `pyproject.toml` with workspace members `funkygibbon`, `inbetweenies`, `blowing-off`, `oook`, and the domain packages (`domains/house`, later `domains/vehicles` — ADR-012); `setup.py` files retired; **`requires-python = ">=3.11"` everywhere** (the deployed interpreter); one lockfile. `pip install -e .` from root produces the complete dev environment in one step.
 7. Version pins for cross-package deps expressed as workspace references so inbetweenies can't drift from its consumers.
 
 ## Consequences

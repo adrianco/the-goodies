@@ -18,7 +18,7 @@ The system is being extended around three owner-set premises that emerged in rev
 
 1. **Time is a first-class query dimension** — pick a point in the past and reason about the state of the house (ADR-004: interval edges, as-of snapshots). Every query takes `at`; omitted means now (ADR-009).
 2. **Clients are primary** — editing and querying happen mostly client-side; clients hold a full replica of each domain database; the client's edit time is preserved by the server and is the query axis (ADR-004/009).
-3. **The engine is domain-generic** — house today, a car-collection (garage) domain next, as isolated databases sharing auth/sync/query code, with cross-domain *references* by value but no cross-domain queries (ADR-012).
+3. **The engine is domain-generic** — house today, a vehicles domain next, as isolated databases sharing auth/sync/query code, with cross-domain *references* by value but no cross-domain queries (ADR-012).
 
 The most serious code findings are unchanged and still ahead of any of that work: a client-side silent-data-loss bug (filed as **the-goodies#69**), a stale-forever graph cache, ~1,000 lines of dead sync machinery, and the shared core being the least-tested code in the repo.
 
@@ -74,7 +74,7 @@ The most serious code findings are unchanged and still ahead of any of that work
 
 **D7 — Clients are full temporal replicas with a uniform query interface (ADR-009 v2, owner-set).** Every read takes `at` (omitted = now); client and server run the same `snapshot(at)` rule over the same schema; read-your-writes holds at every point in time (pending edits sit on the timeline at their own timestamps, provisionally accepted). Single SQLite store per domain per client; JSON dual-store deleted; pinned-snapshot (`t0`) reasoning documented as the pattern for multi-query consistency.
 
-**D8 — Domain abstraction (ADR-012, owner-set).** Type columns become strings validated against a per-domain **manifest** (types, relationship endpoint constraints, declarative MCP tools, optional conflict rules, seeds). One engine process mounts N domains: `/{domain}/api/v1/...`, MCP endpoint per domain, **database file per domain**, shared auth, domain-blind sync (`domain` field; per-domain `server_seq` + digest). House first (byte-identical, gated by the conformance suite), then `domains/garage` (cars, bays, issues, service records — the as-of machinery applied to new nouns). **Cross-domain queries: out of scope. Cross-domain references: supported by value** — an interval edge in the owning domain with a `(domain, entity_id)` remote endpoint; best-effort dereference; soft validation; dangling reported, never cascaded; `find_references_to` as the explicit above-the-boundary reverse lookup.
+**D8 — Domain abstraction (ADR-012, owner-set).** Type columns become strings validated against a per-domain **manifest** (types, relationship endpoint constraints, declarative MCP tools, optional conflict rules, seeds). One engine process mounts N domains: `/{domain}/api/v1/...`, MCP endpoint per domain, **database file per domain**, shared auth, domain-blind sync (`domain` field; per-domain `server_seq` + digest). House first (byte-identical, gated by the conformance suite), then `domains/vehicles` (cars, bays, issues, service records — the as-of machinery applied to new nouns). **Cross-domain queries: out of scope. Cross-domain references: supported by value** — an interval edge in the owning domain with a `(domain, entity_id)` remote endpoint; best-effort dereference; soft validation; dangling reported, never cascaded; `find_references_to` as the explicit above-the-boundary reverse lookup.
 
 **D9 — Tests and packaging (ADR-010).** Real-server harness as the default; a protocol conformance suite parameterized by domain manifest (the compatibility gate for every client, and the byte-identical gate for the abstraction step); 80% floor on `inbetweenies/`; one uv workspace (incl. domain packages), `>=3.11` everywhere.
 
@@ -88,7 +88,7 @@ The most serious code findings are unchanged and still ahead of any of that work
 | 1 | Delete dead stack; GraphIndex ownership + invalidation | 008, 003 | Low |
 | 2 | Access layer in SQL (`is_latest`, `server_seq`, pagination); strings-for-enums + domain manifest extraction (house, byte-identical) | 002, 012 | Medium — schema migrations, both installs controlled |
 | 3 | Temporal model (interval edges, tombstones, snapshot/diff); protocol v3 (ladder, atomic batches, digest, history-carrying delta); client temporal replicas | 004, 005, 011, 009 | Medium-high — coordinated server+client, the core of the redesign |
-| 4 | FTS5 search; garage domain instantiation | 006, 012 | Low — additive |
+| 4 | FTS5 search; vehicles domain instantiation | 006, 012 | Low — additive |
 | ongoing | Conformance suite, coverage floor, workspace | 010 | — |
 
 ## 5. ADR index
@@ -106,6 +106,6 @@ The most serious code findings are unchanged and still ahead of any of that work
 | 009 | Client as temporal replica — time is always a parameter | Proposed (v2) |
 | 010 | Tests and packaging | Proposed |
 | 011 | Sync robustness — no write is ever silently lost | Proposed |
-| 012 | Domain abstraction — engine + house/garage; cross-domain references by value | Proposed |
+| 012 | Domain abstraction — engine + house/vehicles; cross-domain references by value | Proposed |
 
 *Related issues: adrianco/the-goodies#69 (pull-guard, F1) · rolandcanyon-cmd/the-goodies-typescript#3 (KittenKong sync acks).*

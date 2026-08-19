@@ -39,11 +39,41 @@ class RelationshipChange(BaseModel):
     properties: Dict = Field(default_factory=dict)
 
 
+class BlobChange(BaseModel):
+    """Blob bytes travelling with the entity change that references them.
+
+    Blobs sync like everything else. They used to have no place in the payload
+    at all, which is why attaching a photo needed a direct call to the server:
+    the client could hold an attachment entity but had no way to move its bytes.
+    A client that cannot push a blob is a client that silently loses data, so
+    the fix is carriage here rather than a side channel (ADR-013 §3).
+
+    ``data`` is base64. That is wasteful on the wire -- roughly a third larger
+    than the bytes -- and it is what keeps the payload a single JSON document
+    the existing transport, auth and ack machinery already handles unchanged.
+    Multipart would be leaner and would need a second code path for every one
+    of those concerns.
+    """
+    id: str
+    name: str
+    blob_type: str
+    mime_type: Optional[str] = None
+    size: int
+    data: str  # base64
+    checksum: Optional[str] = None
+    user_id: Optional[str] = None
+    summary: Optional[str] = None
+
+
 class SyncChange(BaseModel):
     """Individual change in sync request"""
     change_type: str = Field(..., pattern="^(create|update|delete)$")
     entity: Optional[EntityChange] = None
     relationships: List[RelationshipChange] = Field(default_factory=list)
+    #: Blobs this entity's content references. Bundled onto the change for the
+    #: entity that owns them, exactly as relationships are, so one change is one
+    #: self-contained unit of work.
+    blobs: List[BlobChange] = Field(default_factory=list)
 
 
 class SyncFilters(BaseModel):

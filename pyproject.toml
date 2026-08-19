@@ -36,7 +36,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "the-goodies"
-version = "0.3.0"
+version = "0.4.0"
 description = "Development environment for The Goodies smart home knowledge graph (workspace root)"
 readme = "README.md"
 # ADR-010 section 6: one requires-python across the workspace, matching the

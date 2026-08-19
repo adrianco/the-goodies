@@ -116,6 +116,20 @@ async def init_db() -> None:
             await conn.execute(text("PRAGMA busy_timeout=5000"))  # 5 second timeout for busy retries
             await conn.execute(text("PRAGMA wal_autocheckpoint=1000"))  # Auto checkpoint every 1000 pages
 
+    # ADR-006 §1: the FTS5 index and its triggers are not SQLAlchemy models — a
+    # virtual table has no metadata — so they are created here rather than by
+    # create_all. Idempotent; the backfill only runs when the index is empty.
+    #
+    # Deliberately its own transaction, after the block above: the backfill is
+    # an INSERT, and an open write transaction makes `PRAGMA synchronous` fail
+    # with "Safety level may not be changed inside a transaction". The DDL above
+    # auto-commits, which is why the pragmas tolerated sharing a block with it.
+    if "sqlite" in settings.database_url:
+        from .search.fts import ensure_fts_schema
+
+        async with engine.begin() as conn:
+            await conn.run_sync(ensure_fts_schema)
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get database session for dependency injection."""

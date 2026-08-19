@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from inbetweenies.graph import GraphOperations, GraphSearch
 from inbetweenies.mcp import MCPTools
 from inbetweenies.models import Entity, EntityType, EntityRelationship, RelationshipType, SourceType
+from inbetweenies.models.blob import Blob, BlobStatus
 
 
 class SQLGraphOperations(MCPTools):
@@ -26,6 +27,52 @@ class SQLGraphOperations(MCPTools):
     def __init__(self, db: AsyncSession):
         """Initialize with database session"""
         self.db = db
+
+    async def store_blob(
+        self,
+        *,
+        blob_id: str,
+        name: str,
+        blob_type: str,
+        mime_type: str,
+        data: bytes,
+        user_id: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> str:
+        """Persist blob bytes, idempotently on blob_id.
+
+        The caller derives blob_id from a SHA-256 of the bytes, so a retried
+        upload resolves to the same row rather than a duplicate. Returning
+        early on a hit also means re-attaching a file that is already stored
+        costs one SELECT instead of rewriting megabytes.
+        """
+        import hashlib
+
+        existing = await self.db.get(Blob, blob_id)
+        if existing is not None:
+            return blob_id
+
+        self.db.add(Blob(
+            id=blob_id,
+            name=name[:255],
+            blob_type=blob_type,
+            mime_type=mime_type,
+            size=len(data),
+            data=data,
+            blob_metadata={},
+            checksum=hashlib.sha256(data).hexdigest(),
+            # Server-side storage IS the upload; there is nothing pending.
+            sync_status=BlobStatus.UPLOADED,
+            user_id=user_id,
+            summary=summary[:2000] if summary else None,
+        ))
+        await self.db.flush()
+        return blob_id
+
+    async def get_blob(self, blob_id: str, include_data: bool = False) -> Optional[dict]:
+        """Blob metadata, with bytes only when asked."""
+        blob = await self.db.get(Blob, blob_id)
+        return blob.to_dict(include_data=include_data) if blob else None
 
     async def store_entity(self, entity: Entity) -> Entity:
         """Store an entity in the database"""
@@ -162,47 +209,99 @@ class SQLGraphOperations(MCPTools):
 
         return relationships
 
+    async def _fts_search(
+        self,
+        match_query: str,
+        *,
+        entity_types: Optional[List[EntityType]],
+        limit: int,
+        exclude_id: Optional[str] = None,
+    ) -> List[Any]:  # Returns List[SearchResult]
+        """Run one FTS5 MATCH and hydrate the hits into SearchResults.
+
+        Shared by search_entities and find_similar_entities: the two differ only
+        in how the MATCH expression is built (ADR-006 §1 vs §3).
+        """
+        from sqlalchemy import text as sql_text
+
+        from ..search.fts import FTS_TABLE
+        from inbetweenies.graph.search import SearchResult
+
+        if not match_query:
+            return []
+
+        # bm25() returns a negative score where more negative is a better match,
+        # so ascending order is best-first. snippet() gives a real excerpt from
+        # the matched text rather than the old scorer's synthetic
+        # "Content matches 2 word(s)" strings.
+        rows = (await self.db.execute(
+            sql_text(
+                f"""
+                SELECT entity_id,
+                       bm25({FTS_TABLE}) AS rank,
+                       snippet({FTS_TABLE}, 1, '', '', '…', 12) AS name_hit,
+                       snippet({FTS_TABLE}, 2, '', '', '…', 24) AS content_hit
+                FROM {FTS_TABLE}
+                WHERE {FTS_TABLE} MATCH :q
+                ORDER BY rank
+                LIMIT :n
+                """
+            ),
+            # Over-fetch: entity_type filtering and the self-exclusion happen
+            # below, and a hit removed there must not cost us a result slot.
+            {"q": match_query, "n": limit * 4 if (entity_types or exclude_id) else limit},
+        )).all()
+
+        if not rows:
+            return []
+
+        ranked = {r.entity_id: r for r in rows if r.entity_id != exclude_id}
+        if not ranked:
+            return []
+
+        stmt = select(Entity).where(
+            and_(Entity.id.in_(list(ranked)), Entity.is_latest.is_(True))
+        )
+        if entity_types:
+            stmt = stmt.where(Entity.entity_type.in_(entity_types))
+        entities = list((await self.db.execute(stmt)).scalars().all())
+
+        # Restore BM25 order, which the IN-clause fetch does not preserve.
+        entities.sort(key=lambda e: ranked[e.id].rank)
+
+        results = []
+        for entity in entities[:limit]:
+            row = ranked[entity.id]
+            highlights: dict = {}
+            if row.name_hit:
+                highlights["name"] = [row.name_hit]
+            if row.content_hit:
+                highlights["content"] = [row.content_hit]
+            # Negate so callers keep "higher is better", matching the score
+            # contract the hand-rolled scorer established.
+            results.append(SearchResult(entity, -row.rank, highlights))
+        return results
+
     async def search_entities(
         self,
         query: str,
         entity_types: Optional[List[EntityType]] = None,
         limit: int = 10
     ) -> List[Any]:  # Returns List[SearchResult]
-        """Search entities by name or content"""
-        from sqlalchemy import or_
+        """Search entities by name or content, ranked by BM25 (ADR-006 §1).
 
-        conditions = []
+        Replaces the substring-on-name query plus Python scorer. The old path
+        never searched content in SQL at all — it filtered on name, then scored
+        content in memory, so an entity whose match lived only in content was
+        unreachable unless its name happened to match too.
+        """
+        from ..search.fts import build_match_query
 
-        # Search in name
-        conditions.append(Entity.name.ilike(f"%{query}%"))
-
-        # For SQLite JSON search, we need to cast to text
-        # This is a simplified search - in production you might want FTS
-
-        stmt = select(Entity).where(or_(*conditions))
-
-        if entity_types:
-            stmt = stmt.where(Entity.entity_type.in_(entity_types))
-
-        # Get latest versions only - simplified approach
-        stmt = stmt.order_by(Entity.created_at.desc()).limit(limit * 3)
-
-        result = await self.db.execute(stmt)
-        entities = list(result.scalars().all())
-
-        # Simple deduplication - keep only latest version of each entity
-        seen_ids = set()
-        unique_entities = []
-
-        for entity in entities:
-            if entity.id not in seen_ids:
-                seen_ids.add(entity.id)
-                unique_entities.append(entity)
-                if len(unique_entities) >= limit:
-                    break
-
-        # Convert to SearchResult objects
-        return self.filter_and_rank_results(unique_entities, query, limit)
+        return await self._fts_search(
+            build_match_query(query),
+            entity_types=entity_types,
+            limit=limit,
+        )
 
     async def get_entity_versions(self, entity_id: str) -> List[Entity]:
         """Get all versions of an entity"""
@@ -222,16 +321,38 @@ class SQLGraphOperations(MCPTools):
         return []
 
     async def find_similar_entities(self, entity_id: str, limit: int = 5) -> List[Any]:
-        """Find similar entities"""
-        # For now, return entities of the same type
+        """Find entities similar to this one, via FTS5 more-like-this (ADR-006 §3).
+
+        This is the standing implementation until ADR-006 §2's embeddings have
+        an owner; the ADR records that sqlite-vec lands only then, and that this
+        fallback is "a real quality improvement over word overlap with no ML
+        dependency at all".
+
+        The previous implementation ignored the entity's text entirely and
+        returned other entities of the same type — every thermostat was equally
+        "similar" to every other thermostat, in storage order.
+
+        Similarity is deliberately not restricted to the source's entity_type:
+        a manual is genuinely similar to the device it documents.
+        """
+        import json as _json
+
+        from ..search.fts import build_more_like_this_query
+
         entity = await self.get_entity(entity_id)
         if not entity:
             return []
 
-        similar = await self.get_entities_by_type(entity.entity_type)
-        # Filter out the reference entity
-        similar = [e for e in similar if e.id != entity_id]
-        return self.filter_and_rank_results(similar[:limit], entity.name, limit)
+        document = entity.name or ""
+        if entity.content:
+            document = f"{document} {_json.dumps(entity.content)}"
+
+        return await self._fts_search(
+            build_more_like_this_query(document),
+            entity_types=None,
+            limit=limit,
+            exclude_id=entity_id,
+        )
 
     async def update_entity(self, entity_id: str, changes: dict, user_id: str) -> Entity:
         """Update entity by creating new version"""
