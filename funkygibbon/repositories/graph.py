@@ -117,8 +117,9 @@ class GraphRepository(BaseRepository[Entity]):
         stmt = (
             select(Entity)
             .where(Entity.entity_type == entity_type, Entity.is_latest.is_(True))
-            .options(selectinload(Entity.outgoing_relationships))
-            .options(selectinload(Entity.incoming_relationships))
+            # ADR-004 §1: no eager load of edges here. The entity-side
+            # relationship attributes were joins onto version-pinned edges and
+            # are gone; edges are fetched by id (+ T) when needed.
         )
 
         result = await self.db.execute(stmt)
@@ -194,11 +195,9 @@ class GraphRepository(BaseRepository[Entity]):
         if conditions:
             stmt = stmt.where(and_(*conditions))
 
-        # Include related entities
-        stmt = stmt.options(
-            selectinload(EntityRelationship.from_entity),
-            selectinload(EntityRelationship.to_entity)
-        )
+        # ADR-004 §1: endpoints are no longer joinable from the edge row — the
+        # pin that made from_entity/to_entity possible is gone. get_connected()
+        # resolves them by id instead.
 
         result = await self.db.execute(stmt)
         relationships = list(result.scalars().all())
@@ -305,9 +304,14 @@ class GraphRepository(BaseRepository[Entity]):
             )
 
             for rel in outgoing:
-                if rel.to_entity:
+                # ADR-004 §1: resolve the endpoint by id rather than reading a
+                # pinned join. get_entity() returns the latest version, which is
+                # the right answer for `at = now`; the `at` parameter threads
+                # through here when snapshot() lands (ADR-004 §3.4).
+                target = await self.get_entity(rel.to_entity_id)
+                if target:
                     connected.append({
-                        "entity": rel.to_entity,
+                        "entity": target,
                         "relationship": rel,
                         "direction": "outgoing"
                     })
@@ -319,9 +323,10 @@ class GraphRepository(BaseRepository[Entity]):
             )
 
             for rel in incoming:
-                if rel.from_entity:
+                source = await self.get_entity(rel.from_entity_id)
+                if source:
                     connected.append({
-                        "entity": rel.from_entity,
+                        "entity": source,
                         "relationship": rel,
                         "direction": "incoming"
                     })

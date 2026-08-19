@@ -8,7 +8,7 @@ between entities in the knowledge graph.
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from sqlalchemy import Column, DateTime, String, JSON, ForeignKeyConstraint
+from sqlalchemy import Column, DateTime, Index, String, JSON
 from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
@@ -71,15 +71,21 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     """
     __tablename__ = "entity_relationships"
 
+    # ADR-004 §1: (id, valid_from) mirrors the entity table's (id, version).
+    #
+    # `id` is the LOGICAL edge identity, stable across every interval of that
+    # edge's life; `valid_from` distinguishes the successive rows. A single-column
+    # `id` key made "never update a row" unimplementable — a re-pointed edge had
+    # nowhere to put its successor, which is exactly why the old code mutated the
+    # row in place and destroyed the prior topology (review finding C4).
     id = Column(String(36), primary_key=True)
+    valid_from = Column(DateTime(timezone=True), primary_key=True)
 
     # Source entity (from)
     from_entity_id = Column(String(36), nullable=False)
-    from_entity_version = Column(String(255), nullable=False)
 
     # Target entity (to)
     to_entity_id = Column(String(36), nullable=False)
-    to_entity_version = Column(String(255), nullable=False)
 
     # Relationship metadata. Plain String, not SQLEnum (ADR-012 §1) — see the
     # note on Entity.entity_type. Reads yield a plain str; `.value` on this
@@ -104,36 +110,31 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     # Current graph ⇔  valid_to IS NULL   (what the GraphIndex loads; ADR-003
     #                                      is unchanged by this)
     #
-    # Nullable with no server_default: existing rows are backfilled from
-    # created_at by the migration, and rows written before that runs are read
-    # as "open interval, start unknown" rather than silently dated to now.
-    valid_from = Column(DateTime(timezone=True), nullable=True, index=True)
+    # valid_from is a primary-key column, declared above. valid_to stays
+    # nullable, and null is not "unknown" — it is the open interval, meaning
+    # this edge is still true.
     valid_to = Column(DateTime(timezone=True), nullable=True, index=True)
 
-    # Foreign key constraints
+    # ADR-004 §1: the composite version-pin columns and their FKs are GONE.
+    #
+    # A pin recorded which entity *version* an edge pointed at when it was
+    # created. That is temporal-looking and temporally useless: it says nothing
+    # about when the edge stopped being true, and it forced an edge rewrite on
+    # every endpoint version bump. Endpoints now resolve by id + T through
+    # snapshot() (ADR-004 §3.4), so the time axis does the job the pin was only
+    # pretending to do.
+    #
+    # The ORM from_entity/to_entity relationships went with them. They were
+    # static joins onto one frozen version; an as-of graph has no single correct
+    # endpoint row to join to, because the answer depends on T. Callers resolve
+    # endpoints explicitly instead — a lost convenience, but the convenience was
+    # returning a wrong answer for every T except creation time.
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["from_entity_id", "from_entity_version"],
-            ["entities.id", "entities.version"],
-            name="fk_from_entity"
-        ),
-        ForeignKeyConstraint(
-            ["to_entity_id", "to_entity_version"],
-            ["entities.id", "entities.version"],
-            name="fk_to_entity"
-        ),
-    )
-
-    from_entity = relationship(
-        "Entity",
-        foreign_keys=[from_entity_id, from_entity_version],
-        back_populates="outgoing_relationships"
-    )
-
-    to_entity = relationship(
-        "Entity",
-        foreign_keys=[to_entity_id, to_entity_version],
-        back_populates="incoming_relationships"
+        # The current graph: what GraphIndex loads, and the overwhelmingly
+        # common read. ADR-003's design is unchanged by this.
+        Index("ix_rel_current", "valid_to"),
+        # As-of resolution walks one edge id's intervals in time order.
+        Index("ix_rel_id_validity", "id", "valid_from", "valid_to"),
     )
 
     def __repr__(self):
@@ -147,9 +148,7 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
         return {
             "id": self.id,
             "from_entity_id": self.from_entity_id,
-            "from_entity_version": self.from_entity_version,
             "to_entity_id": self.to_entity_id,
-            "to_entity_version": self.to_entity_version,
             "relationship_type": getattr(self.relationship_type, "value", self.relationship_type),
             "properties": self.properties,
             "user_id": self.user_id,

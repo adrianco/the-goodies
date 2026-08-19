@@ -135,8 +135,8 @@ class SQLGraphOperations(MCPTools):
                     Entity.version == latest_versions.c.version
                 )
             )
-            .options(selectinload(Entity.outgoing_relationships))
-            .options(selectinload(Entity.incoming_relationships))
+            # ADR-004 §1: the entity-side edge collections were version-pinned
+            # joins and are gone. Edges are fetched by id (+ T) where needed.
         )
 
         result = await self.db.execute(stmt)

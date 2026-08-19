@@ -130,22 +130,19 @@ class Entity(Base, InbetweeniesTimestampMixin):
         Index("ix_entities_id_version", "id", "version"),
     )
 
-    # Relationships defined in EntityRelationship model
-    outgoing_relationships = relationship(
-        "EntityRelationship",
-        foreign_keys="EntityRelationship.from_entity_id",
-        back_populates="from_entity",
-        primaryjoin="and_(Entity.id==EntityRelationship.from_entity_id, "
-                   "Entity.version==EntityRelationship.from_entity_version)"
-    )
-
-    incoming_relationships = relationship(
-        "EntityRelationship",
-        foreign_keys="EntityRelationship.to_entity_id",
-        back_populates="to_entity",
-        primaryjoin="and_(Entity.id==EntityRelationship.to_entity_id, "
-                   "Entity.version==EntityRelationship.to_entity_version)"
-    )
+    # ADR-004 §1: outgoing_relationships / incoming_relationships are GONE.
+    #
+    # Both joined a specific entity *version* to edges pinned at that version:
+    #   Entity.version == EntityRelationship.from_entity_version
+    # With interval edges there is no such join to make. An edge is true over a
+    # span of time and its endpoints are whichever versions were current at the
+    # queried instant, so the correct set of edges for an entity depends on T —
+    # which a static relationship() cannot express. Worse, the old join silently
+    # answered only for the endpoint's creation instant while looking general.
+    #
+    # Callers resolve edges explicitly by id (+ T) — see snapshot() and
+    # ADR-004 §3.4. `selectinload(Entity.outgoing_relationships)` therefore has
+    # no replacement and its call sites became explicit queries.
 
     def __repr__(self):
         entity_type_str = self.entity_type.value if hasattr(self.entity_type, 'value') else str(self.entity_type)

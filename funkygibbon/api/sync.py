@@ -569,6 +569,23 @@ class SyncHandler:
         await self._insert_version(change, deleted=True)
         return True
 
+    @staticmethod
+    def _edge_content_differs_impl(current, incoming, rel_type, properties) -> bool:
+        """Would storing `incoming` change what the edge says? (ADR-004 §1)
+
+        Only a real change opens a new interval. Without this, a client that
+        re-pushes an unchanged edge on every sync would end and reopen the row
+        each time, turning one continuous fact into a chain of slivers and
+        making `snapshot(T)` answer correctly but read as churn.
+        """
+        return (
+            current.from_entity_id != incoming.from_entity_id
+            or current.to_entity_id != incoming.to_entity_id
+            or getattr(current.relationship_type, "value", current.relationship_type)
+            != getattr(rel_type, "value", rel_type)
+            or (current.properties or {}) != properties
+        )
+
     async def _persist_relationship(self, relationship: RelationshipChange,
                                     user_id: Optional[str] = None) -> bool:
         """Persist one inbound edge; returns True if it is now stored (§3.1).
@@ -587,43 +604,58 @@ class SyncHandler:
                 detail=f"Unknown relationship_type: {relationship.relationship_type}",
             )
 
-        # Both endpoints must exist at exactly the referenced version — the table
-        # has a composite FK on (entity_id, entity_version). A dangling endpoint
-        # is skipped rather than fatal: the entity may simply not have reached us
-        # yet, and the caller reports the shortfall via sync_stats.
-        for entity_id, entity_version in (
-            (relationship.from_entity_id, relationship.from_entity_version),
-            (relationship.to_entity_id, relationship.to_entity_version),
-        ):
-            if await self.db_session.get(Entity, (entity_id, entity_version)) is None:
+        # ADR-004 §1: endpoints are checked by id, not by (id, version).
+        #
+        # The old check required each endpoint to exist at exactly the pinned
+        # version, because the table carried a composite FK. With the pin gone,
+        # the question is simply whether the entity is known at all — the
+        # version an edge "points at" is now whatever snapshot(T) resolves
+        # (§3.4). A dangling endpoint stays skipped rather than fatal: the
+        # entity may not have reached us yet, and the caller reports the
+        # shortfall via sync_stats.
+        for entity_id in (relationship.from_entity_id, relationship.to_entity_id):
+            exists = await self.db_session.scalar(
+                select(Entity.id).where(Entity.id == entity_id).limit(1)
+            )
+            if exists is None:
                 return False
 
         now = datetime.now(timezone.utc)
         properties = dict(relationship.properties or {})
-        existing = await self.db_session.get(EntityRelationship, relationship.id)
 
-        if existing is None:
-            self.db_session.add(EntityRelationship(
-                id=relationship.id,
-                from_entity_id=relationship.from_entity_id,
-                from_entity_version=relationship.from_entity_version,
-                to_entity_id=relationship.to_entity_id,
-                to_entity_version=relationship.to_entity_version,
-                relationship_type=rel_type,
-                properties=properties,
-                user_id=user_id,
-                created_at=now,
-                updated_at=now,
-            ))
-        else:
-            existing.from_entity_id = relationship.from_entity_id
-            existing.from_entity_version = relationship.from_entity_version
-            existing.to_entity_id = relationship.to_entity_id
-            existing.to_entity_version = relationship.to_entity_version
-            existing.relationship_type = rel_type
-            existing.properties = properties
-            existing.user_id = user_id
-            existing.updated_at = now
+        # The open interval for this logical edge, if any: the row that is
+        # currently true. Ended rows are history and are never touched again.
+        current = await self.db_session.scalar(
+            select(EntityRelationship).where(
+                EntityRelationship.id == relationship.id,
+                EntityRelationship.valid_to.is_(None),
+            )
+        )
+
+        if current is not None:
+            if not self._edge_content_differs_impl(current, relationship, rel_type, properties):
+                # Idempotent re-push of an unchanged edge. Returning True without
+                # writing keeps the ack contract (the change was processed) while
+                # avoiding a spurious interval boundary — otherwise every retried
+                # sync would shred the edge's history into adjacent slivers.
+                return True
+
+            # ADR-004 §1: end the old row, never mutate it. This is the line that
+            # makes prior topology recoverable — the previous implementation
+            # assigned over these same fields and the old placement was gone.
+            current.valid_to = now
+
+        self.db_session.add(EntityRelationship(
+            id=relationship.id,
+            valid_from=now,
+            from_entity_id=relationship.from_entity_id,
+            to_entity_id=relationship.to_entity_id,
+            relationship_type=rel_type,
+            properties=properties,
+            user_id=user_id,
+            created_at=now,
+            updated_at=now,
+        ))
 
         # Flush, not commit: this row belongs to the batch transaction opened
         # by handle_sync_request (ADR-011 §3).
