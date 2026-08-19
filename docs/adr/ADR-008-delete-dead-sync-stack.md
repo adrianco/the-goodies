@@ -1,6 +1,7 @@
 # ADR-008: Delete the dead sync stack (funkygibbon/sync/) — one sync implementation
 
-**Status:** Proposed · 2026-08-01 · **Lowest risk, highest clarity-per-line in the review.**
+**Status:** Implemented · proposed 2026-08-01, landed 2026-08-02 in `b099551` (Stage A, #72) · **Lowest risk, highest clarity-per-line in the review.**
+Verified in the tree: `funkygibbon/sync/` no longer exists. One sync implementation remains.
 
 ## Context
 

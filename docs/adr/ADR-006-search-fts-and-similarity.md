@@ -1,6 +1,10 @@
 # ADR-006: Text search via SQLite FTS5; similarity via sqlite-vec (optional, deferred-friendly)
 
-**Status:** Proposed · 2026-08-01
+**Status:** Implemented except §2 · proposed 2026-08-01, §1/§3/§4 landed 2026-08-19 · **§2 (sqlite-vec) is deferred by design, not omitted** — the ADR makes it conditional on embeddings having an owner (§3), and as of this date they do not. Owner decision 2026-08-19: FTS5 only; revisit §2 if an embedding source is ever adopted.
+
+Shipped: §1 the `entities_fts` FTS5 virtual table over name + content, maintained by triggers on `entities` and ranked with `bm25()` (`funkygibbon/search/fts.py`); §3 `find_similar_entities` as FTS5 more-like-this over the source document's top terms; §4 search stays server-side, and both the MCP tool and the REST `/graph/search` endpoint now share one implementation. The hand-rolled scorer retired with `funkygibbon/search/engine.py` (403 lines).
+
+Two notes for whoever picks up §2. The shared scorer in `inbetweenies/graph/search.py` is **still live** — `blowing-off` overrides `filter_and_rank_results` for local search, and §4 defers client-local FTS5 to ADR-009; it retires there, not here. And `/graph/entities/{id}/similar` kept its `threshold` parameter but changed its meaning: BM25 is unbounded and corpus-relative, so the value is now applied relative to the best match rather than as an absolute 0–1 floor.
 
 ## Context
 

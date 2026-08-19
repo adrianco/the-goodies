@@ -1,6 +1,7 @@
 # ADR-010: Test architecture and packaging — real-server standard, cover the shared core, one workspace
 
-**Status:** Proposed · 2026-08-01
+**Status:** Implemented · proposed 2026-08-01, landed 2026-08-03 in `44d9250` (Stage B, #73)
+Verified in the tree: §2 the protocol conformance suite (`funkygibbon/tests/test_protocol_conformance.py`, 29 tests); §3 the per-package coverage floor as its own CI step — `pytest inbetweenies --cov=inbetweenies --cov-fail-under=80`, currently 89.01%; §6 one uv workspace with `requires-python = ">=3.11"` across all five pyprojects and `setup.py` retired.
 
 ## Context
 

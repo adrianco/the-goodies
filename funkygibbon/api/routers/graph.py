@@ -17,7 +17,6 @@ from ...models import Entity, EntityType, SourceType, EntityRelationship, Relati
 from ...repositories.graph import GraphRepository
 from ...graph.index import GraphIndex
 from ...graph.index_service import GraphIndexService
-from ...search.engine import SearchEngine
 from ..dependencies import get_graph_index, get_graph_index_service
 
 
@@ -294,15 +293,38 @@ async def list_relationships(
     }
 
 
+def _rest_search_result(result) -> Dict[str, Any]:
+    """Serialize a shared SearchResult into this API's long-standing shape.
+
+    The REST contract nests the entity (`results[].entity.id`); the shared
+    inbetweenies SearchResult flattens those fields to the top level for MCP
+    consumers. Both shapes have callers, so the difference is adapted here
+    rather than by changing either class. `matched_fields` is derived from the
+    highlight keys, which is what it always described.
+    """
+    return {
+        "entity": result.entity.to_dict(),
+        "score": result.score,
+        "highlights": result.highlights,
+        "matched_fields": sorted(result.highlights.keys()),
+    }
+
+
 @router.post("/search", response_model=Dict[str, Any])
 async def search_graph(
     search_query: SearchQuery,
-    graph: GraphIndex = Depends(get_graph_index)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Search entities by content"""
-    search_engine = SearchEngine(graph)
+    """Search entities by content, ranked by BM25 (ADR-006 §1).
 
-    results = search_engine.search_entities(
+    Backed by the FTS5 index rather than the in-memory GraphIndex: the index is
+    a graph-traversal structure, and scoring text against it meant walking every
+    entity in Python. Sharing one implementation with the MCP tool also means
+    REST and MCP can no longer disagree about what "search" returns.
+    """
+    from ...repositories.graph_impl import SQLGraphOperations
+
+    results = await SQLGraphOperations(db).search_entities(
         query=search_query.query,
         entity_types=search_query.entity_types,
         limit=search_query.limit
@@ -310,7 +332,7 @@ async def search_graph(
 
     return {
         "query": search_query.query,
-        "results": [result.to_dict() for result in results],
+        "results": [_rest_search_result(result) for result in results],
         "count": len(results)
     }
 
@@ -391,18 +413,33 @@ async def get_connected_entities(
 @router.get("/entities/{entity_id}/similar", response_model=Dict[str, Any])
 async def find_similar_entities(
     entity_id: str,
-    threshold: float = Query(0.7, ge=0, le=1, description="Similarity threshold"),
+    threshold: float = Query(0.7, ge=0, le=1, description="Similarity threshold, relative to the best match"),
     limit: int = Query(10, le=50, description="Maximum results"),
-    graph: GraphIndex = Depends(get_graph_index)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Find entities similar to the given entity"""
-    search_engine = SearchEngine(graph)
+    """Find entities similar to the given entity (ADR-006 §3).
 
-    results = search_engine.find_similar(entity_id, threshold, limit)
+    FTS5 more-like-this, standing in for §2's vector similarity until embeddings
+    have an owner.
+
+    `threshold` changed meaning and is documented here rather than silently
+    reinterpreted. The old scorer produced a 0–1 word-overlap ratio, so 0.7 was
+    an absolute floor. BM25 is unbounded and corpus-relative — there is no
+    absolute 0.7 — so the parameter is now applied *relative to the best match*:
+    0.7 keeps results scoring at least 70% of the top hit. Same intent ("only
+    the clearly-similar ones"), same monotonic direction, and callers passing
+    the default get sensible behaviour without a code change.
+    """
+    from ...repositories.graph_impl import SQLGraphOperations
+
+    results = await SQLGraphOperations(db).find_similar_entities(entity_id, limit)
+    if results and threshold:
+        floor = results[0].score * threshold
+        results = [r for r in results if r.score >= floor]
 
     return {
         "reference_entity_id": entity_id,
-        "similar_entities": [result.to_dict() for result in results],
+        "similar_entities": [_rest_search_result(result) for result in results],
         "count": len(results)
     }
 
