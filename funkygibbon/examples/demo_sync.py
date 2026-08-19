@@ -32,7 +32,7 @@ async def test_sync_api():
     # 2. Send a full sync request
     print("\n2️⃣ Sending full sync request...")
     sync_request = {
-        "protocol_version": "inbetweenies-v2",
+        "protocol_version": "inbetweenies-v3",
         "device_id": "test-device",
         "user_id": "test-user",
         "sync_type": "full",
@@ -76,8 +76,8 @@ async def test_sync_api():
             "relationships": [
                 {
                     "id": "rel-001",
-                    "from_entity_id": "device-001"{datetime.now(timezone.utc).isoformat()}Z-test-user",
-                    "to_entity_id": "room-001"{datetime.now(timezone.utc).isoformat()}Z-test-user",
+                    "from_entity_id": "device-001",
+                    "to_entity_id": "room-001",
                     "relationship_type": "located_in",
                     "properties": {"position": "ceiling"}
                 }
@@ -88,7 +88,7 @@ async def test_sync_api():
     # 4. Send delta sync with changes
     print("\n4️⃣ Sending delta sync with local changes...")
     delta_request = {
-        "protocol_version": "inbetweenies-v2",
+        "protocol_version": "inbetweenies-v3",
         "device_id": "test-device",
         "user_id": "test-user",
         "sync_type": "delta",
@@ -109,7 +109,7 @@ async def test_sync_api():
 
     # First update from device 1
     update1 = {
-        "protocol_version": "inbetweenies-v2",
+        "protocol_version": "inbetweenies-v3",
         "device_id": "device-1",
         "user_id": "user-1",
         "sync_type": "delta",
@@ -131,7 +131,7 @@ async def test_sync_api():
 
     # Conflicting update from device 2
     update2 = {
-        "protocol_version": "inbetweenies-v2",
+        "protocol_version": "inbetweenies-v3",
         "device_id": "device-2",
         "user_id": "user-2",
         "sync_type": "delta",

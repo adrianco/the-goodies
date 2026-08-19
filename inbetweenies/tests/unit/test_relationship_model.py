@@ -255,34 +255,3 @@ class TestEntityRelationshipModel:
 
         assert relationship.from_entity_id == relationship.to_entity_id
 
-    def test_relationship_version_tracking(self):
-        """Test relationships between different entity versions."""
-        # Relationship to specific version
-        rel1 = EntityRelationship(
-            id="rel-1",
-            from_entity_id="automation-1",
-            from_entity_version="v3",  # Specific version of automation
-            to_entity_id="device-1",
-            to_entity_version="v2",  # Specific version of device
-            relationship_type=RelationshipType.CONTROLS,
-            properties={},
-            user_id="user"
-        )
-
-        # Relationship to different versions
-        rel2 = EntityRelationship(
-            id="rel-2",
-            from_entity_id="automation-1",
-            from_entity_version="v4",  # Newer version
-            to_entity_id="device-1",
-            to_entity_version="v3",  # Newer version
-            relationship_type=RelationshipType.CONTROLS,
-            properties={},
-            user_id="user"
-        )
-
-        # Same entities, different versions
-        assert rel1.from_entity_id == rel2.from_entity_id
-        assert rel1.to_entity_id == rel2.to_entity_id
-
-        # But different version combinations

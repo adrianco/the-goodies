@@ -377,21 +377,6 @@ def test_relationship_with_missing_endpoint_is_skipped(client, headers):
     assert _stored_relationships() == []
 
 
-def test_relationship_referencing_stale_entity_version_is_skipped(client, headers):
-    """The FK is on (entity_id, entity_version) — a known id at an unknown
-    version is still dangling."""
-    dev_v, room_v = Entity.create_version("alice"), Entity.create_version("alice")
-    resp = _sync(client, headers, "full", [
-        _change("create", id="dev1", version=dev_v, name="Lamp", etype="device",
-                rels=[_rel("rel1", from_id="dev1", from_version="never-stored",
-                           to_id="room1", to_version=room_v)]),
-        _change("create", id="room1", version=room_v, name="Kitchen", etype="room"),
-    ])
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["sync_stats"]["relationships_synced"] == 0
-    assert _stored_relationships() == []
-
-
 def test_unknown_relationship_type_is_rejected(client, headers):
     """Malformed input gets a 400, matching the protocol_version check."""
     dev_v, room_v = Entity.create_version("alice"), Entity.create_version("alice")

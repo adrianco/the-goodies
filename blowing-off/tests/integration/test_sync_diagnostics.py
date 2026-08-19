@@ -50,7 +50,7 @@ class TestSyncDiagnostics:
 
             # Send proper Inbetweenies v2 sync request
             request_data = {
-                "protocol_version": "inbetweenies-v2",
+                "protocol_version": "inbetweenies-v3",
                 "device_id": "test-diagnostic",
                 "user_id": "test-user",
                 "sync_type": "full",

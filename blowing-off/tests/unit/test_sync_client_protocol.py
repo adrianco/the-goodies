@@ -17,7 +17,7 @@ VERSION = "2026-06-15T10:00:00.123456+00:00-000001-alice"
 
 def _response(change_type="update", content=None):
     return {
-        "protocol_version": "inbetweenies-v2",
+        "protocol_version": "inbetweenies-v3",
         "sync_type": "full",
         "changes": [{
             "change_type": change_type,

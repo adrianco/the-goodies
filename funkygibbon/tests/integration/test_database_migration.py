@@ -251,14 +251,12 @@ class TestDatabaseMigration:
 
                 # Create relationship between home and room
                 await conn.execute(text("""
-                    INSERT INTO entity_relationships (id, from_entity_id, from_entity_version, to_entity_id, to_entity_version, relationship_type, properties, user_id, created_at, updated_at)
-                    VALUES (:id, :from_id, :from_ver, :to_id, :to_ver, :rel_type, :props, :user_id, :created_at, :updated_at)
+                    INSERT INTO entity_relationships (id, valid_from, from_entity_id, to_entity_id, relationship_type, properties, user_id, created_at, updated_at)
+                    VALUES (:id, :created_at, :from_id, :to_id, :rel_type, :props, :user_id, :created_at, :updated_at)
                 """), {
                     "id": "rel-test",
                     "from_id": "room-test",
-                    "from_ver": "v1",
                     "to_id": "home-test",
-                    "to_ver": "v1",
                     "rel_type": "located_in",
                     "props": '{}',
                     "user_id": "test-user",

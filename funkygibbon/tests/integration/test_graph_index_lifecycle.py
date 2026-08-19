@@ -367,7 +367,7 @@ async def test_sync_applied_entity_is_immediately_traversable(
         f"{API}/sync/",
         headers=auth,
         json={
-            "protocol_version": "inbetweenies-v2",
+            "protocol_version": "inbetweenies-v3",
             "device_id": "index-sync-device",
             "user_id": USER,
             "sync_type": "full",

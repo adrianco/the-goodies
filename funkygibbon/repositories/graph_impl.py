@@ -175,11 +175,10 @@ class SQLGraphOperations(MCPTools):
         if conditions:
             stmt = stmt.where(and_(*conditions))
 
-        # Include related entities
-        stmt = stmt.options(
-            selectinload(EntityRelationship.from_entity),
-            selectinload(EntityRelationship.to_entity)
-        )
+        # ADR-004 §1: endpoints are no longer joinable from the edge row — the
+        # pin that made from_entity/to_entity possible is gone, and an as-of
+        # graph has no single endpoint version to eager-load. Callers resolve
+        # endpoints by id (+ T) instead.
 
         result = await self.db.execute(stmt)
         relationships = list(result.scalars().all())
