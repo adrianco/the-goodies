@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop, feature/* ]
+    branches: [ main, develop, feature/*, feat/* ]
   pull_request:
     branches: [ main, develop ]
   workflow_dispatch:
