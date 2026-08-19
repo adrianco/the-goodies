@@ -1,22 +1,43 @@
-# The Goodies - Smart Home Knowledge Graph System
+# The Goodies — a temporal, replicated knowledge graph for a house
 
 ## 🏠 Overview
 
-The Goodies is a modern smart home knowledge graph data store layer built around the **Model Context Protocol (MCP)** architecture. The system provides a unified interface for managing smart home devices, relationships, and automations through a graph-based data model.
+The Goodies stores what a house *is* — rooms, devices, manuals, photos, automations —
+as a graph, and serves it to AI agents over the **Model Context Protocol (MCP)**.
 
-**Current status**: **installed and running in a real house since March 2026.**
-A working single-house reference implementation — authenticated data endpoints, a
+Two things make it different from a typical smart-home data store, and both come
+from the same decision: **nothing is ever overwritten.**
+
+**It remembers.** Most home-automation stores answer "where is this thermostat?"
+The Goodies is built to answer "where was it in March?" Entities are immutable
+version rows, and edges are *interval* rows with a start and an end — so moving a
+device to another room adds history rather than destroying it. A question about
+the past is a query, not an archaeology project.
+
+**It replicates without losing writes.** Clients hold the whole graph and stay
+useful offline. When two of them edit the same thing, the server arbitrates, and
+the write that loses is *kept* — stored as a version row, acknowledged, and
+recoverable. A concurrent write can lose prominence; it can never lose existence.
+Replicas then verify they actually agree, rather than assuming it.
+
+The design is written down: 13 [ADRs](docs/adr/) covering the datastore, the
+temporal model, the sync protocol, and the domain abstraction, each with the
+alternatives that were rejected and why.
+
+**Current status**: **installed and running in a real house since March 2026**,
+with a second install at another house. Authenticated data endpoints, a
 protocol-correct sync engine (see [`inbetweenies/PROTOCOL.md`](inbetweenies/PROTOCOL.md)),
 12 MCP tools, backup/restore, and data-migration + upgrade tooling. The Python
 **blowing-off** client also runs as an MCP server, mirroring the TypeScript port
-(*KittenKong*). CI runs the test suites on Linux and macOS. Released tags: see the
-GitHub releases (latest `v0.3.0`).
+(*KittenKong*). CI runs the test suites on Linux and macOS across Python
+3.11–3.14. Latest release: `v0.4.0` — the final `inbetweenies-v2` release before
+the temporal cutover described below.
 
 > ⚠️ Authentication is enforced: every data endpoint (`/graph`, `/mcp`, `/sync`,
 > `/sync-metadata`, `/backup`) requires a bearer token. Only `/health` and
 > `/api/v1/auth/*` are public. Configure it with `funkygibbon setup-auth`.
 
-**Related Projects**: adrianco/consciousness is an early prototype of the backend server that will be rewritten from scratch later. adrianco/c11s-house-ios is a native Swift iOS app that is the front end for the system. This repo is the knowledge graph protocol that interfaces the app to the backend, and includes the **Blowing-Off** Python client (a reference implementation, and now also an MCP server). The maintained port of the client is **KittenKong** (TypeScript, rolandcanyon-cmd/the-goodies-typescript). An earlier Swift port (adrianco/the-goodies-swift / *WildThing*) is untested and has been abandoned.
+**Related Projects**: adrianco/consciousness is an early prototype of the backend server that will be rewritten from scratch later. adrianco/c11s-house-ios is a native Swift iOS app that is the front end for the system. This repo is the knowledge graph protocol that interfaces the app to the backend, and includes the **Blowing-Off** Python client (a reference implementation, and now also an MCP server). The maintained port of the client is **KittenKong** (TypeScript, adrianco/the-goodies-typescript). An earlier Swift port (adrianco/the-goodies-swift / *WildThing*) is untested and has been abandoned.
 
 **About the names**: the project and its components are named after [**The Goodies**](https://en.wikipedia.org/wiki/The_Goodies_(TV_series)), the 1970s British comedy series — and its songs and episodes. *FunkyGibbon* (the server) and *Inbetweenies* (the protocol) are both Goodies singles ("The Funky Gibbon", "The Inbetweenies"); *KittenKong* (the TypeScript client) is one of the show's best-known episodes; *Wild Thing* and the rest follow the same theme.
 
@@ -48,6 +69,130 @@ GitHub releases (latest `v0.3.0`).
    - MCP tool implementations
    - Conflict resolution strategies
    - Graph operations abstraction
+
+## ⏳ The temporal model
+
+*Design: [ADR-004](docs/adr/ADR-004-version-retention-and-tombstones.md). Entity
+versioning is shipped; interval edges and as-of queries are landing in v3 — see
+[status](#what-is-shipped-vs-landing) below.*
+
+### Nothing is overwritten
+
+An entity is not a row that changes. It is a series of immutable `(id, version)`
+rows, where the version string carries a timestamp prefix that sorts
+lexically — so "the state of this device at time T" is a max-version-≤-T lookup.
+
+Edges got the same discipline in v3. A relationship row carries `valid_from` and
+`valid_to`, and is true over the half-open interval `valid_from ≤ T < valid_to`.
+Re-pointing an edge **ends the old row and inserts a new one**; deleting ends the
+row. Nothing is mutated, nothing is deleted.
+
+That interval is closed at the start and open at the end for a specific reason:
+ending one row and starting its successor at the same instant leaves exactly one
+edge current at that instant — never zero, never two.
+
+### Why the old approach could not work
+
+Edges used to carry composite *version pins*: which entity version each endpoint
+pointed at when the edge was created. This looks temporal and is temporally
+useless. A pin says nothing about when an edge *stopped* being true, and it
+forces an edge rewrite every time an endpoint gains a version. When a device
+moved rooms, the old `located_in` edge was overwritten and the prior topology was
+simply gone.
+
+The pins are removed in v3. Endpoints resolve by **id + T** instead, so the time
+axis does the work the pin was only pretending to do.
+
+### Two clocks, deliberately not merged
+
+There are two timelines here, and conflating them silently mis-answers a whole
+class of question:
+
+| Axis | What it is | What it is for |
+|---|---|---|
+| **Valid time** | when the edit was *made*, per the editing client | the as-of query axis |
+| **Transaction time** (`server_seq`) | when the server *learned* of it | replication: sync cursors, pagination, audit |
+
+An offline phone edit at 14:00 that syncs at 18:00 carries **14:00**. Ask "what
+did the house look like at 15:00?" and you want the edit; ask "what changed since
+my last sync?" and you want the arrival order. Queries never consult `server_seq`;
+sync never consults valid time.
+
+This has an honest consequence, recorded rather than hidden: **an as-of answer can
+improve later.** The record of 14:00 gets better at 18:00 when the offline phone
+syncs. That is correct behaviour for history — and once every client has synced,
+every replica computes identical snapshots.
+
+## 🌐 The distributed model
+
+*Design: [ADR-005](docs/adr/ADR-005-protocol-v3-clocks-and-conflicts.md) and
+[ADR-011](docs/adr/ADR-011-sync-robustness-no-silent-loss.md). Shipped in v0.4.0.*
+
+Clients are not caches. Each holds the whole graph — small enough that a phone
+carries years of history comfortably — and stays fully useful offline.
+
+### No write is ever silently lost
+
+This is the guarantee the sync design is built around, and it took four
+mechanisms that only work together:
+
+**A pending edit is a lock against pull-apply.** Sync pulls before it pushes. If
+the pull overwrote local storage first, the subsequent push would send the
+server's *own* version back, get idempotently acknowledged, and destroy the local
+edit with the server never having seen it. An entity with a pending local change
+is therefore never overwritten by a pull.
+
+**The loser is acknowledged.** When a push loses conflict resolution, the server
+still acks it. That sounds wrong and is essential: withholding the ack leaves the
+client's pending mark in place, the guard above keeps blocking the incoming
+winner, and the entity never converges — a livelock triggered by the exact
+scenario the guard exists for. Acking ends the ambiguity between "lost" and "not
+received".
+
+**The loser is kept.** A version that loses is stored as a non-latest row, so the
+content is recoverable from history by any human who goes looking. Acking is only
+safe *because* the content is preserved first.
+
+**One transaction per push batch.** All changes apply and commit together. A crash
+mid-batch leaves nothing applied and nothing acked — the client simply retries.
+Never a half-applied push.
+
+### Convergence is verified, not assumed
+
+Every sync response carries a `sha256` digest over the sorted set of current
+`(id, version)` pairs. The client computes the same over its own replica and
+compares. A mismatch triggers a full resync and reports loudly.
+
+Tests prove the algorithm; the digest proves *this pair of databases*. They catch
+different failures — bit-rot, a missed invalidation, someone editing the database
+by hand.
+
+### Per-id acknowledgement
+
+Clients clear a pending change only when the server names that id as applied.
+Aggregate counts cannot express a partially-applied batch, so anything not
+explicitly acked is retried on the next sync.
+
+## What is shipped vs landing
+
+Being precise, because the temporal work is real but mostly unreleased:
+
+| | Status |
+|---|---|
+| Immutable entity versioning, full history retained | **shipped** |
+| Pull-guard, loser-ack, losers stored, atomic push batches | **shipped** |
+| Convergence digest, per-id acks | **shipped** |
+| `server_seq` replication axis, paginated sync, `is_latest` | **shipped** ([ADR-002](docs/adr/ADR-002-data-access-layer.md)) |
+| FTS5 search with BM25 ranking | **shipped** ([ADR-006](docs/adr/ADR-006-search-fts-and-similarity.md)) |
+| Domain abstraction — vocabulary in a manifest, not the schema | **shipped** ([ADR-012](docs/adr/ADR-012-domain-abstraction.md)) |
+| Interval edges (`valid_from` / `valid_to`), `inbetweenies-v3` wire | **landing** — implemented, not yet released |
+| `snapshot(T)`, `diff(T1,T2)`, `at` on every read | **designed, not built** |
+| Second domain (`vehicles`) instantiated | **designed, not built** |
+| Vector similarity via sqlite-vec | **deferred** — conditional on embeddings having an owner |
+
+The v3 cutover is a **hard** one: no compatibility window, no version
+negotiation. Both installations are owner-controlled, and what the migration must
+preserve is database *content*, not wire compatibility.
 
 ## 🚀 Quick Start
 
@@ -250,10 +395,12 @@ the-goodies/
 
 - ✅ **MCP Protocol Support** - 12 standardized tools
 - ✅ **Graph-based Data Model** - Flexible entity relationships
-- ✅ **Real-time Synchronization** - Client-server sync
-- ✅ **Immutable Versioning** - Complete change history
-- ✅ **Conflict Resolution** - Multiple strategies available
-- ✅ **Search & Discovery** - Full-text entity search
+- ✅ **Temporal by construction** - immutable versions, full history retained; nothing is overwritten ([ADR-004](docs/adr/ADR-004-version-retention-and-tombstones.md))
+- ✅ **No silent loss** - pull-guard, loser-ack, losers preserved, atomic push batches ([ADR-011](docs/adr/ADR-011-sync-robustness-no-silent-loss.md))
+- ✅ **Verified convergence** - every sync carries a state digest; divergence is detected, not assumed away
+- ✅ **Full replication** - clients hold the whole graph and work offline, not a partial cache
+- ✅ **Conflict Resolution** - server-arbitrated, one canonical resolver shared by every client
+- ✅ **Search & Discovery** - FTS5 full-text search with BM25 ranking
 - ✅ **CLI Interface** - Both server and client CLIs
 - ✅ **MCP Server Client** - blowing-off runs as an MCP server (`python -m blowingoff.mcp.server`)
 - ✅ **Authentication** - bearer-token auth on all data endpoints; `funkygibbon setup-auth`
@@ -488,14 +635,21 @@ curl -X POST http://localhost:8000/api/v1/auth/guest/generate-qr \
 
 ## 🎯 Status
 
-A working single-house reference implementation — **installed and running in a
-real house since March 2026**, with a second install at another house:
+A working reference implementation — **installed and running in a real house
+since March 2026**, with a second install at another house:
 - Authenticated data endpoints (bearer token), `funkygibbon setup-auth`
-- Protocol-correct sync (canonical versions, server_time watermark, one conflict
-  resolver, tombstone deletes)
+- Protocol-correct sync: canonical versions, `server_time` watermark, one shared
+  conflict resolver, tombstone deletes, per-id acks, convergence digest
 - 12 MCP tools; blowing-off also runs as an MCP server
 - Backup/restore + scheduler; data-migration and upgrade tooling
-- User Generated Content (PDFs, photos, notes) with BLOB storage
-- CI green on Linux/macOS
+- User Generated Content (PDFs, photos, notes) with BLOB storage, carried by sync
+- CI green on Linux and macOS across Python 3.11–3.14
 
-Ready for deployment and use! 🚀
+**In flight:** the v3 temporal cutover — interval edges and the
+`inbetweenies-v3` wire are implemented; `snapshot(T)` and the `at` parameter are
+next. See [what is shipped vs landing](#what-is-shipped-vs-landing).
+
+**Why this exists.** A house accumulates history — appliances get replaced,
+rooms get repurposed, a manual belongs to a device that has since moved. A store
+that only knows the present throws that away every time something changes. This
+one keeps it, and lets an agent ask about it.
