@@ -256,9 +256,15 @@ fi
 if [ "$DRY_RUN" != 1 ]; then
   log "Verifying"
   sleep 2
-  code_unauth="$(curl -s -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/graph/statistics" || echo 000)"
-  echo "   unauthenticated /graph/statistics -> $code_unauth (expect 401/403)"
+  # Auth is verified on a route that exists: the graph REST API is gone since
+  # v0.7.0 (ADR-015), so /api/v1/graph/statistics answers 404 whether or not
+  # auth is enforced (#89). The MCP tool list is the client interface.
+  code_unauth="$(curl -s -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/mcp/tools" || echo 000)"
+  echo "   unauthenticated /api/v1/mcp/tools -> $code_unauth (expect 401/403)"
   case "$code_unauth" in 401|403) ;; 000) warn "server not reachable at $SERVER_URL";; *) warn "expected 401/403, got $code_unauth";; esac
+  code_graph="$(curl -s -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/graph/statistics" || echo 000)"
+  echo "   /api/v1/graph/statistics -> $code_graph (expect 404: the graph REST API was removed in v0.7.0)"
+  case "$code_graph" in 404) ;; *) warn "a server still serving /api/v1/graph/* is older than v0.7.0";; esac
   health="$(curl -s -o /dev/null -w '%{http_code}' "$SERVER_URL/health" || echo 000)"
   echo "   /health -> $health (expect 200)"
 fi

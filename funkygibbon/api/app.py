@@ -69,6 +69,7 @@ from typing import AsyncGenerator
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .. import __version__
 from ..config import settings
 from ..database import init_db
 from .routers import sync_metadata, mcp, auth, backup
@@ -160,7 +161,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="FunkyGibbon",
         description="Simplified smart home knowledge graph API",
-        version="0.3.0",
+        version=__version__,
         lifespan=lifespan
     )
 

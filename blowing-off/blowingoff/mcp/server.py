@@ -40,6 +40,7 @@ from mcp.server.stdio import stdio_server
 from inbetweenies.domain import load_manifest
 from inbetweenies.mcp.catalog import mcp_tools_for
 
+from .. import __version__
 from ..client import BlowingOffClient
 
 _ENTITY_TYPES = ("home, room, device, zone, door, window, procedure, manual, "
@@ -105,7 +106,7 @@ def build_server(client: BlowingOffClient) -> Server:
 
     return Server(
         "blowingoff",
-        version="0.3.0",  # keyword-only since MCP 2.0
+        version=__version__,  # keyword-only since MCP 2.0
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
     )

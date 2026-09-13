@@ -33,10 +33,14 @@ protocol and the edge table, and both changes are hard:
 Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
 below; the migration detects which shape it is starting from.
 
-## v0.8.0 (unreleased) — domains are pluggable; the vehicles domain
+## v0.8.0 — domains are pluggable; the vehicles domain; #90/#91 fixed
 
-Additive for a house install. Nothing to do beyond the one command, but four
-things changed that a script author may notice:
+**This is the tag both installs should be on.** v0.7.0 refuses two edges the
+house vocabulary declares — `device part_of device` (#90, 104 live edges at
+Roland) and `device documented_by note` (#91) — and both are fixed here, so
+an install whose room walk writes keypad buttons must not stop at v0.7.0
+(#94). Additive for a house install otherwise; the one command upgrades from
+v0.2.2, v0.4.0, v0.5.0 or v0.7.0. Things a script author may notice:
 
 - **The tool catalog comes from the domain.** `GET /api/v1/mcp/tools` is the
   18 engine tools plus the served domain's own (the house's five, so still 23).
@@ -55,8 +59,16 @@ things changed that a script author may notice:
   with its own `DATABASE_URL` and `API_PORT` runs a vehicles server alongside
   the house; see `domains/vehicles/README.md`. blowing-off honours the same
   variable.
-- **Matching clients:** KittenKong `v0.7.0` still works against a house
-  server; it does not yet read the catalog for another domain.
+- **Package versions say what is installed.** `pip show funkygibbon` and
+  `funkygibbon.__version__` report `0.8.0`; at v0.7.0 they still said 0.4.0
+  (#89). `git describe --tags` remains the authority.
+- **The verify step probes a live route** (#89): unauthenticated
+  `/api/v1/mcp/tools` must be 401/403, and `/api/v1/graph/statistics` must be
+  404 — a server still serving graph REST is older than v0.7.0.
+- **Matching clients:** KittenKong `adrianco/the-goodies-typescript`
+  **`v0.8.0`** (client unchanged since 0.7.0 apart from the pnpm install fix,
+  typescript#2; tagged so both repos pin the same version). It does not yet
+  read the catalog for another domain.
 
 ## v0.7.0 — the graph REST API is removed; concurrent edits merge
 
@@ -230,8 +242,11 @@ mid-upgrade, then **loads** it to bring the new one back.
    the admin credential (or test mode), mints a long-lived client token, and
    writes `~/.oook/config.json` and `./.blowingoff.json`. Skipped by default.
 8. **Start** the server — `launchctl load` the LaunchAgent.
-9. **Verify** — unauthenticated `/api/v1/graph/statistics` returns 401/403 and
-   `/health` returns 200.
+9. **Verify** — unauthenticated `/api/v1/mcp/tools` returns 401/403,
+   `/api/v1/graph/statistics` returns 404 (the graph REST API is gone since
+   v0.7.0), and `/health` returns 200. Then read data through a tool with the
+   minted token — `POST /api/v1/mcp/tools/get_statistics` — because "healthy +
+   verify PASS" is not the same as "serves data" (#87, #93).
 
 Every step is idempotent; re-running the whole script is safe.
 
@@ -261,7 +276,8 @@ python -m pip install -e .
 python -m funkygibbon.migrate --apply
 python -m funkygibbon.setup_auth --admin-password 'strong-password'
 # start the service, then verify:
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/api/v1/graph/statistics   # 401/403
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/api/v1/mcp/tools          # 401/403
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/api/v1/graph/statistics   # 404 since v0.7.0
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/health                     # 200
 ```
 
