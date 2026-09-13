@@ -25,6 +25,19 @@ The harness below removes both halves of that failure mode:
 If the subprocess dies at any point during startup the fixture fails loudly
 with the server's captured stderr. It never falls through to another server.
 
+SERVER OUTPUT GOES TO A FILE, NEVER A PIPE
+-----------------------------------------
+The subprocess writes stdout+stderr to ``<work_dir>/server.log``. This is not a
+style preference. ``subprocess.PIPE`` with no reader deadlocks the child once
+the OS pipe buffer (64 KiB) fills, and this server writes an audit record per
+authenticated request -- so the suite worked right up until it made enough
+requests, and then the server simply stopped serving mid-run. The symptom was
+maddening: ``/health`` answering in a millisecond while the very next
+``/api/v1/sync/`` hung past every timeout, because the buffer filled between
+the two. It presented as a flaky test in whichever module happened to follow,
+and adding *any* module that talked to the server brought it forward, so the
+blame always landed on the newest test rather than on the harness.
+
 AUTHENTICATION
 --------------
 Tests exercise the real auth path rather than bypassing it: the server is
@@ -74,14 +87,24 @@ def _find_free_port() -> int:
     raise RuntimeError("Could not allocate a free ephemeral port")
 
 
-def _drain(process: subprocess.Popen) -> str:
-    """Best-effort capture of a dead/dying server's output, for diagnostics."""
-    try:
-        stdout, stderr = process.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        stdout, stderr = process.communicate()
-    return f"--- server stdout ---\n{stdout or ''}\n--- server stderr ---\n{stderr or ''}"
+def _drain(process: subprocess.Popen, log_path: "Path | None" = None) -> str:
+    """Best-effort capture of a dead/dying server's output, for diagnostics.
+
+    Reads the log FILE the server writes to. It used to call
+    `process.communicate()` to drain the pipes -- which is also the only thing
+    that ever emptied them, and it only ran on the failure path. On the happy
+    path the pipes were never read at all, so the server deadlocked on a full
+    buffer once the suite made enough requests. See the fixture below.
+    """
+    if process.poll() is None:
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+    if log_path is None or not Path(log_path).exists():
+        return "--- server output unavailable ---"
+    return f"--- server output ---\n{Path(log_path).read_text()[-8000:]}"
 
 
 def _stop(process: subprocess.Popen) -> None:
@@ -99,7 +122,8 @@ class _ServerStartupError(RuntimeError):
     """Raised when our server subprocess did not come up. Always fatal."""
 
 
-def _await_health(process: subprocess.Popen, base_url: str) -> None:
+def _await_health(process: subprocess.Popen, base_url: str,
+                  log_path: "Path | None" = None) -> None:
     """Block until *our* server answers /health, or raise.
 
     ``process.poll()`` is re-checked on every attempt: if the subprocess has
@@ -115,7 +139,7 @@ def _await_health(process: subprocess.Popen, base_url: str) -> None:
         if process.poll() is not None:
             raise _ServerStartupError(
                 f"FunkyGibbon test server exited with code {process.returncode} "
-                f"before becoming ready.\n{_drain(process)}"
+                f"before becoming ready.\n{_drain(process, log_path)}"
             )
         try:
             response = httpx.get(f"{base_url}/health", timeout=2.0)
@@ -129,7 +153,7 @@ def _await_health(process: subprocess.Popen, base_url: str) -> None:
     _stop(process)
     raise _ServerStartupError(
         f"FunkyGibbon test server at {base_url} was not healthy within "
-        f"{SERVER_START_TIMEOUT:.0f}s (last: {last_error}).\n{_drain(process)}"
+        f"{SERVER_START_TIMEOUT:.0f}s (last: {last_error}).\n{_drain(process, log_path)}"
     )
 
 
@@ -228,22 +252,38 @@ def funkygibbon_server(funkygibbon_admin_password):
 
     # cwd is the throwaway work dir so the server's audit logs and any stray
     # .env pickup stay out of the repo.
+    #
+    # Output goes to a FILE, not to a pipe. `subprocess.PIPE` with nobody
+    # reading it is a deadlock waiting for a slow enough test suite: the OS
+    # pipe buffer is 64 KiB, and once it fills the server blocks on its next
+    # write and simply stops serving. It logs an audit record per authenticated
+    # request, so the failure mode was "the suite works until it does enough
+    # requests" -- a health check answering in 1 ms while the very next
+    # /api/v1/sync/ hung past every timeout, because the buffer happened to
+    # fill between them. Adding any module that talked to the server brought it
+    # forward; nothing about the added module was wrong.
+    #
+    # A file keeps the diagnostics `_drain` needs and cannot fill.
+    log_path = Path(work_dir) / "server.log"
+    log_handle = open(log_path, "w+")
     process = subprocess.Popen(
         [sys.executable, "-m", "funkygibbon"],
         cwd=work_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
         text=True,
         env=env,
     )
 
     try:
-        _await_health(process, base_url)
+        _await_health(process, base_url, log_path)
         token = _login(base_url, funkygibbon_admin_password)
     except _ServerStartupError as exc:
         _stop(process)
+        detail = _drain(process, log_path)
+        log_handle.close()
         shutil.rmtree(work_dir, ignore_errors=True)
-        pytest.fail(str(exc))
+        pytest.fail(f"{exc}\n{detail}")
 
     print(f"\n✅ FunkyGibbon test server ready at {base_url} (pid {process.pid})")
 
@@ -251,6 +291,7 @@ def funkygibbon_server(funkygibbon_admin_password):
         yield base_url, token
     finally:
         _stop(process)
+        log_handle.close()
         shutil.rmtree(work_dir, ignore_errors=True)
         print(f"\n✅ FunkyGibbon test server on {base_url} stopped")
 
