@@ -20,6 +20,8 @@ The two changes worth knowing when reading this:
   was genuinely redundant, it is gone.
 """
 
+from pathlib import Path
+
 from inbetweenies.domain import DomainTool, RelationshipRule, Walk, build_manifest
 
 from . import tools as house_tools
@@ -296,6 +298,20 @@ TOOLS = (
     ),
 )
 
+# --------------------------------------------------------------------------- #
+# Skills (ADR-012 §2): guided workflows over the tools, contributed from the
+# Corfe install (#92). Each is a Claude Code skill under skills/<name>/ that
+# shares the scripts in skills/scripts/. The manifest names them so a client
+# holding this domain can find them without knowing the repo layout.
+# --------------------------------------------------------------------------- #
+
+_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+
+SKILLS = {
+    name: _SKILLS_DIR / name / "SKILL.md"
+    for name in ("room-walk", "room-edit", "app-walk", "align-rooms")
+}
+
 HOUSE = build_manifest(
     name="house",
     entity_types=ENTITY_TYPES,
@@ -307,4 +323,5 @@ HOUSE = build_manifest(
     attachment_types=("manual",),
     merge_rules=MERGE_RULES,
     tools=TOOLS,
+    skills=SKILLS,
 )

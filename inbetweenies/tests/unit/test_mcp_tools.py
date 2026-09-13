@@ -266,6 +266,28 @@ class TestCreateEntityTool:
 
 
 class TestCreateRelationshipTool:
+    async def test_composition_between_devices_is_permitted(self, house):
+        """Issue #90: the manifest declares device part_of device; v0.7.0 refused it.
+
+        The refusal came from `EntityRelationship.is_valid_for_entities`, a
+        pre-ADR-013 table inside the model that still read part_of as
+        containment. The manifest is the only rule consulted now.
+        """
+        house.add_entity(make_entity("device-button", EntityType.DEVICE, "Button 1"))
+        house.add_entity(make_entity("device-keypad", EntityType.DEVICE, "Entry Keypad"))
+
+        result = await house.create_relationship_tool("device-button", "device-keypad", "part_of")
+
+        assert result.success is True, result.error
+
+    async def test_a_device_may_be_documented_by_a_note(self, house):
+        """Issue #91: device -> note is declared under documented_by; v0.7.0 refused it."""
+        house.add_entity(make_entity("note-1", EntityType.NOTE, "Left switch is dead"))
+
+        result = await house.create_relationship_tool("device-light", "note-1", "documented_by")
+
+        assert result.success is True, result.error
+
     async def test_creates_a_valid_relationship(self, house):
         house.add_entity(make_entity("device-fan", EntityType.DEVICE, "Fan"))
 

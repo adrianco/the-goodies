@@ -1,4 +1,4 @@
-# Claude Code skills for The Goodies
+# The house domain's skills (Claude Code)
 
 Conversational room cataloguing for a house graph, as Claude Code skills. Written
 and used at a real install; contributed here so the generic parts live next to the
@@ -34,8 +34,8 @@ open to re-run. "Saved" means confirmed in the graph, not "the calls returned 20
 ## Install
 
 ```
-cp -r skills/claude-code/scripts/*  <your-project>/.claude/scripts/
-cp -r skills/claude-code/room-walk  <your-project>/.claude/skills/
+cp -r domains/house/skills/scripts/*  <your-project>/.claude/scripts/
+cp -r domains/house/skills/room-walk  <your-project>/.claude/skills/
 # likewise room-edit, app-walk, align-rooms
 pip install pillow          # photo compression; everything else is stdlib
 ```
@@ -65,8 +65,23 @@ python3 .claude/scripts/fg_client_selftest.py
 byte-for-byte through `attach_photo`/`get_blob`, a move with history retained, tombstones.
 Uses throwaway entities and tombstones them at the end.
 
-## Known vocabulary gaps (v0.7.0)
+## Vocabulary gaps — closed
 
-- `device part_of device` is refused although the HOUSE manifest declares it (#90) —
-  `room_commit.py` records `content.part_of_device_id` on the button meanwhile.
-- No device → note edge (#91) — notes about a device are kept in `content.notes`.
+Both gaps filed against v0.7.0 are fixed on `main` (ADR-012 §1: the manifest
+is the only rule consulted on every write path):
+
+- `device part_of device` is accepted (#90).
+- `device documented_by note` is accepted (#91).
+
+`room_commit.py` still carries the fallbacks that recorded the intent in
+`content` while the edges were refused; they try the edge first, so they are
+inert against a fixed server and can be deleted once every install is past
+v0.7.0.
+
+## Where this lives
+
+These are the house domain's skills (ADR-012 §2): `domains/house/skills/`,
+named in `domains/house/manifest.py` under `skills=`, next to the vehicles
+domain's `vehicle-walk`. The engine only knows where they are; a client that
+holds a domain can find its skills from the manifest without knowing the repo
+layout.

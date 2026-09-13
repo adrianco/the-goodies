@@ -155,10 +155,12 @@ A tool that genuinely needs logic supplies `handler=` instead — an
 Either way the engine's 18 tools cannot be redeclared, and `catalog_for(manifest)`
 is what every transport serves.
 
-**Skills** are guided workflows over the tools — the house's room walk, the
-vehicles' `vehicle-walk`. A domain ships them as `SKILL.md` files under
-`domains/<name>/skills/` and names them in the manifest (`skills={...}`) so a
-client can find them without knowing the repo layout.
+**Skills** are guided workflows over the tools — the house's `room-walk`,
+`room-edit`, `app-walk` and `align-rooms`, the vehicles' `vehicle-walk`. A
+domain ships them as `SKILL.md` files under `domains/<name>/skills/` (shared
+scripts in `skills/scripts/`) and names them in the manifest (`skills={...}`)
+so a client can find them without knowing the repo layout. The house's
+`fg_client.py` is domain-blind and drives a vehicles server unchanged.
 
 ## 3. Adding a domain
 
@@ -254,7 +256,7 @@ be a reference, not a second home for the same entity.
 | Isolation test | done |
 | Boundary validation wired to the manifest | done — tool calls and sync pushes; the legacy enums are no longer consulted on any write path |
 | Declarative MCP tools | done — `DomainTool` / `Walk`; the house's `get_devices_in_room` is a walk, its other four are handlers in `domains/house/tools.py`; nothing house-specific remains in the engine |
-| Skills named by the manifest | done — `manifest.skills` |
+| Skills named by the manifest | done — `manifest.skills`; house ships four (`domains/house/skills/`, from Corfe's #92), vehicles one |
 | Per-domain database files and endpoints | done as **one process per domain** (`DOMAIN_MANIFEST`, `DATABASE_URL`, `API_PORT`); one process mounting N domains is not started |
 | `domains/vehicles` | **first pass done** — manifest, seed, 8 tools, `vehicle-walk` skill, tests (`tests/test_vehicles_domain.py`) |
 | Cross-domain references (§4) | not started |

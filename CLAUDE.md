@@ -237,7 +237,8 @@ The vocabulary is *domain* data, not engine schema: it lives in
 `domains/house/manifest.py`, not in the database columns. See
 [domains/house/README.md](domains/house/README.md) for what is declared versus
 what is actually used, and `docs/domains.md` for adding a second domain.
-The second domain exists: `domains/vehicles` (manifest, seed, tools, the
+The house's skills (`room-walk`, `room-edit`, `app-walk`, `align-rooms`) live in
+`domains/house/skills/` and are named in its manifest. The second domain exists: `domains/vehicles` (manifest, seed, tools, the
 `vehicle-walk` skill) — served with `DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES`.
 The engine never imports a domain (`tests/test_domain_isolation.py`); it loads
 the one it is told to serve.

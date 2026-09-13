@@ -18,7 +18,7 @@ Catalog a smart home app by walking through it together. User opens the app, des
 
 ## Required scripts
 
-All under `.claude/scripts/` (copy them there from `skills/claude-code/scripts/`):
+All under `.claude/scripts/` (copy them there from `domains/house/skills/scripts/`):
 - `app_session.py` — session state management
 - `app_commit.py` — apply session diffs to FunkyGibbon
 - `fg_client.py` — FunkyGibbon client over MCP tools (the-goodies ≥ v0.7.0; the graph REST API no longer exists). Writes are tombstones/interval edges: nothing is ever destroyed.

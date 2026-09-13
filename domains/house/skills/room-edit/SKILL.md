@@ -24,7 +24,7 @@ For adding new devices you just discovered, `/room-walk` is better (it's discove
 
 ## Helpers (shared with /room-walk)
 
-Under `.claude/scripts/` (from `skills/claude-code/scripts/`):
+Under `.claude/scripts/` (from `domains/house/skills/scripts/`):
 - `fg_client.py` — FunkyGibbon client over MCP tools (the-goodies ≥ v0.7.0; the graph REST API no longer exists). Writes are tombstones/interval edges: nothing is ever destroyed.
 - *(optional)* a lighting probe script, only if an edit needs a light flashed to identify it
 - `room_session.py` — session state

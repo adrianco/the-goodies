@@ -20,7 +20,7 @@ For editing an already-catalogued room (rename, remove, fix), use `/room-edit` i
 
 ## Required helpers
 
-All under `.claude/scripts/` (copy them there from `skills/claude-code/scripts/`):
+All under `.claude/scripts/` (copy them there from `domains/house/skills/scripts/`):
 - `fg_client.py` — FunkyGibbon client over MCP tools (the-goodies ≥ v0.7.0; the graph REST API no longer exists). Writes are tombstones/interval edges: nothing is ever destroyed.
 - *(optional, site-specific, not included)* probe scripts for your controllers — the examples below use a `vantage_probe` (lighting) and a `unifi_probe` (network); write your own or skip those steps
 - `room_session.py` — session state (in `$FG_SESSIONS_DIR/room-sessions/`)
@@ -204,7 +204,7 @@ session.add_diff({
 ```
 For each button, interactively probe/ask (if you have a lighting probe): "Button 2 is labeled 'CANS'. I'll flash load 2231 — tell me if that's the cans."
 
-   Note: at the-goodies v0.7.0 the HOUSE manifest refuses `device part_of device` (issue #90). `room_commit.py` records the composition as `content.part_of_device_id` on each button and attaches the edge once the vocabulary allows it.
+   Note: `device part_of device` is accepted from the-goodies main onwards (#90 was a v0.7.0 bug); `room_commit.py` still falls back to `content.part_of_device_id` on a v0.7.0 server.
 
 **Door**:
 the user: "there's a door to the garage with a Schlage lock"

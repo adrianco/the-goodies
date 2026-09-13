@@ -529,7 +529,7 @@ the vocabulary, the domain's own tools and its skills are a manifest under
 
 | Domain | Own tools | Skill | Run it |
 |---|---|---|---|
-| [`house`](domains/house/README.md) | 5 (`get_devices_in_room`, …) | room walk | the default |
+| [`house`](domains/house/README.md) | 5 (`get_devices_in_room`, …) | `room-walk`, `room-edit`, `app-walk`, `align-rooms` ([domains/house/skills](domains/house/skills/README.md)) | the default |
 | [`vehicles`](domains/vehicles/README.md) | 8 (`get_parts_on_vehicle`, `get_vehicle_history`, …) | `vehicle-walk` | `DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES DATABASE_URL=sqlite+aiosqlite:///./vehicles.db API_PORT=8001 python -m funkygibbon` |
 
 Each server advertises the 18 engine tools plus its own domain's, with

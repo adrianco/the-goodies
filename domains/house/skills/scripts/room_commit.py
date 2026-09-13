@@ -177,9 +177,9 @@ def _apply_create_keypad(
             source_type=btn.get("source_type", "imported"),
         )
         bid = _eid(btn_ent)
-        # Composition edge. The v0.7.0 HOUSE manifest currently refuses
-        # device part_of device (filed upstream); record the intent in content
-        # so nothing is lost, and attach the edge when the vocabulary allows it.
+        # Composition edge. v0.7.0 refused device part_of device (#90, fixed on
+        # main); against a fixed server the edge is created and the fallback
+        # below never runs. Kept until every install is past v0.7.0.
         try:
             fg.create_relationship(bid, kid, "part_of")
         except FunkyGibbonError as e:
@@ -265,9 +265,9 @@ def _apply_update(fg: FGClient, diff: Dict[str, Any], created: Dict[str, str]) -
         try:
             fg.create_relationship(eid, note["id"], "documented_by")
         except FunkyGibbonError as e:
-            # The v0.7.0 HOUSE manifest refuses documented_by from some types
-            # (device -> note; filed upstream). Keep the note reachable from the
-            # entity itself so nothing is lost, and leave the note entity in place.
+            # v0.7.0 refused device -> note (#91, fixed on main); against a fixed
+            # server the edge is created and this fallback never runs. Kept
+            # until every install is past v0.7.0.
             ent = fg.get_entity(eid)
             content = dict(ent.get("content") or {})
             notes = list(content.get("notes") or [])

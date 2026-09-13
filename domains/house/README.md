@@ -140,8 +140,16 @@ on a room, follow `located_in` backwards, keep devices — and the other four
 than a walk. They used to be methods on the engine's `MCPTools`; nothing
 house-specific lives there now.
 
-The house names no skills yet: the room walk exists as a skill outside this
-repo. When it moves in, `skills={"room-walk": ...}` in the manifest is the hook.
+## Skills
+
+Four Claude Code skills, contributed from the Corfe install (#92) and named in
+the manifest under `skills=`: `room-walk` (catalogue a room conversationally),
+`room-edit` (targeted edits), `app-walk` (what an app controls), `align-rooms`
+(reconcile room names across Home Assistant, HomeKit and the graph). They live
+under [`skills/`](skills/README.md) with the scripts they share; everything
+goes through the MCP tools, and nothing is written until the user reviews a
+diff and confirms. `python3 domains/house/skills/scripts/fg_client_selftest.py`
+runs 23 live gates against a server.
 
 ## Two installs, different halves of the vocabulary
 

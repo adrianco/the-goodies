@@ -149,3 +149,14 @@ def test_house_does_not_redeclare_base_vocabulary():
     assert "photo" not in manifest.ENTITY_TYPES
     assert "app" not in manifest.ENTITY_TYPES
     assert "has_photo" not in {r.name for r in manifest.RELATIONSHIP_RULES}
+
+
+# --- Skills are named by the manifest and exist on disk ------------------- #
+
+def test_the_house_names_its_skills_and_they_exist():
+    import pathlib
+    from domains.house import HOUSE
+    assert set(HOUSE.skills) == {"room-walk", "room-edit", "app-walk", "align-rooms"}
+    for name, path in HOUSE.skills.items():
+        text = pathlib.Path(path).read_text()
+        assert text.startswith(f"---\nname: {name}\n"), f"{name}: SKILL.md frontmatter must name the skill"
