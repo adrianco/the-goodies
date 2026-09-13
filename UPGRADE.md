@@ -33,6 +33,23 @@ protocol and the edge table, and both changes are hard:
 Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
 below; the migration detects which shape it is starting from.
 
+## v0.6.0 — MCP is the client interface (ADR-015)
+
+Additive on top of v0.5.0; the same one command upgrades from v0.2.2, v0.4.0
+or v0.5.0.
+
+- **Clients use MCP tools only.** The graph REST routes (`/api/v1/graph/*`)
+  are the local maintenance surface for `oook` and nothing else. Both
+  replicas already complied; the tool surface now covers everything REST did:
+  `list_relationships`, `get_connected`, `end_relationship` (the delete — an
+  ended interval, kept as history), `get_graph_diff`, and `at` on every graph
+  read (ADR-004 §3 delivered). Twenty-two tools; see `docs/mcp.md`.
+- **Edges carry `server_seq`.** The migration adds and backfills it, so a
+  cursor delta is one order over entities and edges together. No client
+  change is required.
+- **Matching clients:** blowing-off is in this repo; KittenKong
+  `adrianco/the-goodies-typescript` **`v0.6.0`**.
+
 ## What this release contains
 
 - **Authentication** is now attached to every data endpoint. After upgrading,

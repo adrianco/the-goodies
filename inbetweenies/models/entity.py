@@ -178,6 +178,21 @@ class Entity(Base, InbetweeniesTimestampMixin):
         """
         return bool((self.content or {}).get("deleted"))
 
+    @staticmethod
+    def version_key_at(at: datetime) -> str:
+        """The upper bound on version strings for "state as of ``at``".
+
+        A version is ``{utc-iso8601-with-microseconds}-{counter}-{user}``, and
+        lexical order equals chronological order because the timestamp prefix
+        is fixed-width UTC (PROTOCOL.md §2). Any version stamped at or before
+        ``at`` therefore sorts <= the ISO form of ``at`` followed by a byte
+        greater than the ``-`` that begins the counter field. ``~`` is that
+        byte. ADR-004 §3.2.
+        """
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        return at.astimezone(timezone.utc).isoformat(timespec="microseconds") + "~"
+
     @classmethod
     def create_version(cls, user_id: str) -> str:
         """Generate a version string: ``{utc-iso8601}-{counter:06d}-{user_id}``.

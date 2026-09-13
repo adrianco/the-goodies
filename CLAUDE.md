@@ -184,7 +184,7 @@ blowing-off search "smart"
 
 **FunkyGibbon (Server)**
 - FastAPI backend at `funkygibbon/`
-- MCP server implementation providing 12 tools
+- MCP server implementation providing 22 tools
 - Graph database using SQLite with immutable versioning
 - JWT authentication and role-based access control
 - REST API endpoints under `/api/v1/`
@@ -240,7 +240,7 @@ what is actually used, and `docs/domains.md` for adding a second domain.
 
 ### MCP Tools
 
-The 12 MCP tools are defined in `inbetweenies/mcp/tools.py` and implemented in both server and client:
+The 22 MCP tools are defined in `inbetweenies/mcp/tools.py` and implemented in both server and client:
 - Device discovery (`get_devices_in_room`, `find_device_controls`)
 - Graph navigation (`find_path`, `get_room_connections`)
 - Entity management (`create_entity`, `update_entity`, `search_entities`)

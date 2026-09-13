@@ -9,9 +9,45 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from abc import ABC
 
+from datetime import datetime, timezone
+
 from ..models import Entity, EntityType, EntityRelationship, RelationshipType, SourceType
 from ..graph.operations import GraphOperations
 from ..graph.search import GraphSearch
+
+
+def _parse_at(value: Optional[str]) -> Optional[datetime]:
+    """Parse a tool's ``at`` argument (ISO-8601) into an aware UTC instant.
+
+    ADR-004 §3: every graph read takes ``at``; omitted means now. The name and
+    the semantics are SQL:2011's ``AS OF`` (ADR-014 §1) -- state as it was at
+    that instant on the valid-time axis. A naive timestamp is read as UTC,
+    matching the storage convention.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _rel_dict(rel: EntityRelationship) -> Dict[str, Any]:
+    """Wire shape of one edge interval for tool results."""
+    return {
+        "id": rel.id,
+        "from_entity_id": rel.from_entity_id,
+        "to_entity_id": rel.to_entity_id,
+        "type": getattr(rel.relationship_type, "value", rel.relationship_type),
+        "properties": rel.properties or {},
+        "user_id": rel.user_id,
+        "valid_from": rel.valid_from.isoformat() if getattr(rel, "valid_from", None) else None,
+        "valid_to": rel.valid_to.isoformat() if getattr(rel, "valid_to", None) else None,
+    }
 
 
 @dataclass
@@ -38,23 +74,23 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
     the abstract GraphOperations interface.
     """
 
-    async def get_devices_in_room(self, room_id: str) -> ToolResult:
+    async def get_devices_in_room(self, room_id: str, at: Optional[str] = None) -> ToolResult:
         """Get all devices located in a specific room"""
         try:
+            moment = _parse_at(at)
             # Get the room to verify it exists
-            room = await self.get_entity(room_id)
+            room = await self.get_entity(room_id, at=moment)
             if not room or room.entity_type != EntityType.ROOM:
                 return ToolResult(False, None, f"Room {room_id} not found")
 
             # Get all devices in this room
-            relationships = await self.get_relationships(
-                to_id=room_id,
+            relationships = await self.get_relationships(at=moment, to_id=room_id,
                 rel_type=RelationshipType.LOCATED_IN
             )
 
             devices = []
             for rel in relationships:
-                device = await self.get_entity(rel.from_entity_id)
+                device = await self.get_entity(rel.from_entity_id, at=moment)
                 if device and device.entity_type == EntityType.DEVICE:
                     devices.append(device)
 
@@ -67,10 +103,11 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         except Exception as e:
             return ToolResult(False, None, str(e))
 
-    async def find_device_controls(self, device_id: str) -> ToolResult:
+    async def find_device_controls(self, device_id: str, at: Optional[str] = None) -> ToolResult:
         """Get available controls and services for a device"""
         try:
-            device = await self.get_entity(device_id)
+            moment = _parse_at(at)
+            device = await self.get_entity(device_id, at=moment)
             if not device or device.entity_type != EntityType.DEVICE:
                 return ToolResult(False, None, f"Device {device_id} not found")
 
@@ -78,14 +115,13 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             capabilities = device.content.get("capabilities", []) if device.content else []
 
             # Get devices this device controls
-            controls_relationships = await self.get_relationships(
-                from_id=device_id,
+            controls_relationships = await self.get_relationships(at=moment, from_id=device_id,
                 rel_type=RelationshipType.CONTROLS
             )
 
             controlled_devices = []
             for rel in controls_relationships:
-                controlled = await self.get_entity(rel.to_entity_id)
+                controlled = await self.get_entity(rel.to_entity_id, at=moment)
                 if controlled:
                     controlled_devices.append({
                         "id": controlled.id,
@@ -104,10 +140,11 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         except Exception as e:
             return ToolResult(False, None, str(e))
 
-    async def get_room_connections(self, room_id: str) -> ToolResult:
+    async def get_room_connections(self, room_id: str, at: Optional[str] = None) -> ToolResult:
         """Find all rooms connected to a given room"""
         try:
-            room = await self.get_entity(room_id)
+            moment = _parse_at(at)
+            room = await self.get_entity(room_id, at=moment)
             if not room or room.entity_type != EntityType.ROOM:
                 return ToolResult(False, None, f"Room {room_id} not found")
 
@@ -115,14 +152,12 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             connections = []
 
             # Outgoing connections
-            outgoing = await self.get_relationships(
-                from_id=room_id,
+            outgoing = await self.get_relationships(at=moment, from_id=room_id,
                 rel_type=RelationshipType.CONNECTS_TO
             )
 
             # Incoming connections
-            incoming = await self.get_relationships(
-                to_id=room_id,
+            incoming = await self.get_relationships(at=moment, to_id=room_id,
                 rel_type=RelationshipType.CONNECTS_TO
             )
 
@@ -132,7 +167,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                 other_id = rel.to_entity_id if rel.from_entity_id == room_id else rel.from_entity_id
 
                 if other_id not in connected_rooms:
-                    other_room = await self.get_entity(other_id)
+                    other_room = await self.get_entity(other_id, at=moment)
                     if other_room and other_room.entity_type == EntityType.ROOM:
                         connected_rooms[other_id] = {
                             "id": other_room.id,
@@ -268,11 +303,13 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         self,
         from_entity_id: str,
         to_entity_id: str,
-        max_depth: int = 10
+        max_depth: int = 10,
+        at: Optional[str] = None
     ) -> ToolResult:
         """Find shortest path between two entities"""
         try:
-            path = await self.find_path(from_entity_id, to_entity_id, max_depth)
+            path = await self.find_path(from_entity_id, to_entity_id, max_depth,
+                                        at=_parse_at(at))
 
             if not path:
                 return ToolResult(True, {
@@ -298,16 +335,17 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         except Exception as e:
             return ToolResult(False, None, str(e))
 
-    async def get_entity_details_tool(self, entity_id: str) -> ToolResult:
+    async def get_entity_details_tool(self, entity_id: str, at: Optional[str] = None) -> ToolResult:
         """Get comprehensive information about an entity"""
         try:
-            entity = await self.get_entity(entity_id)
+            moment = _parse_at(at)
+            entity = await self.get_entity(entity_id, at=moment)
             if not entity:
                 return ToolResult(False, None, f"Entity {entity_id} not found")
 
             # Get relationships
-            outgoing = await self.get_relationships(from_id=entity_id)
-            incoming = await self.get_relationships(to_id=entity_id)
+            outgoing = await self.get_relationships(at=moment, from_id=entity_id)
+            incoming = await self.get_relationships(at=moment, to_id=entity_id)
 
             # Get version history
             versions = await self.get_entity_versions(entity_id) if hasattr(self, 'get_entity_versions') else [entity]
@@ -355,10 +393,11 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         except Exception as e:
             return ToolResult(False, None, str(e))
 
-    async def get_procedures_for_device_tool(self, device_id: str) -> ToolResult:
+    async def get_procedures_for_device_tool(self, device_id: str, at: Optional[str] = None) -> ToolResult:
         """Get procedures and manuals for a device"""
         try:
-            device = await self.get_entity(device_id)
+            moment = _parse_at(at)
+            device = await self.get_entity(device_id, at=moment)
             if not device or device.entity_type != EntityType.DEVICE:
                 return ToolResult(False, None, f"Device {device_id} not found")
 
@@ -366,13 +405,12 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             manuals = []
 
             # Get procedures
-            proc_relationships = await self.get_relationships(
-                to_id=device_id,
+            proc_relationships = await self.get_relationships(at=moment, to_id=device_id,
                 rel_type=RelationshipType.PROCEDURE_FOR
             )
 
             for rel in proc_relationships:
-                proc = await self.get_entity(rel.from_entity_id)
+                proc = await self.get_entity(rel.from_entity_id, at=moment)
                 if proc and proc.entity_type == EntityType.PROCEDURE:
                     procedures.append({
                         "id": proc.id,
@@ -381,13 +419,12 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                     })
 
             # Get manuals
-            manual_relationships = await self.get_relationships(
-                from_id=device_id,
+            manual_relationships = await self.get_relationships(at=moment, from_id=device_id,
                 rel_type=RelationshipType.DOCUMENTED_BY
             )
 
             for rel in manual_relationships:
-                manual = await self.get_entity(rel.to_entity_id)
+                manual = await self.get_entity(rel.to_entity_id, at=moment)
                 if manual and manual.entity_type == EntityType.MANUAL:
                     manuals.append({
                         "id": manual.id,
@@ -406,16 +443,16 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         except Exception as e:
             return ToolResult(False, None, str(e))
 
-    async def get_automations_in_room_tool(self, room_id: str) -> ToolResult:
+    async def get_automations_in_room_tool(self, room_id: str, at: Optional[str] = None) -> ToolResult:
         """Find all automations affecting a room"""
         try:
-            room = await self.get_entity(room_id)
+            moment = _parse_at(at)
+            room = await self.get_entity(room_id, at=moment)
             if not room or room.entity_type != EntityType.ROOM:
                 return ToolResult(False, None, f"Room {room_id} not found")
 
             # Get devices in room
-            device_rels = await self.get_relationships(
-                to_id=room_id,
+            device_rels = await self.get_relationships(at=moment, to_id=room_id,
                 rel_type=RelationshipType.LOCATED_IN
             )
 
@@ -426,14 +463,13 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             seen_automations = set()
 
             for device_id in device_ids:
-                auto_rels = await self.get_relationships(
-                    to_id=device_id,
+                auto_rels = await self.get_relationships(at=moment, to_id=device_id,
                     rel_type=RelationshipType.AUTOMATES
                 )
 
                 for rel in auto_rels:
                     if rel.from_entity_id not in seen_automations:
-                        automation = await self.get_entity(rel.from_entity_id)
+                        automation = await self.get_entity(rel.from_entity_id, at=moment)
                         if automation and automation.entity_type == EntityType.AUTOMATION:
                             automations.append({
                                 "id": automation.id,
@@ -446,7 +482,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                 # Track which devices are affected
                 for auto in automations:
                     if auto["id"] in [r.from_entity_id for r in auto_rels]:
-                        device = await self.get_entity(device_id)
+                        device = await self.get_entity(device_id, at=moment)
                         if device:
                             auto["affects_devices"].append({
                                 "id": device.id,
@@ -715,6 +751,164 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                 "reason": reason,
                 "marked_as_error": bool(is_error),
                 "previous_version": existing.version,
+            })
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+
+    # ------------------------------------------------------------------
+    # Relationship parity (issue #85) and the as-of surface (ADR-004 §3)
+    #
+    # MCP is the client interface (ADR-015). Everything a client needs to do
+    # to the graph has to be possible here; these are the three edge
+    # operations that were not, plus the temporal queries the interval model
+    # exists to answer.
+    # ------------------------------------------------------------------
+
+    async def list_relationships(
+        self,
+        from_entity_id: Optional[str] = None,
+        to_entity_id: Optional[str] = None,
+        relationship_type: Optional[str] = None,
+        include_history: bool = False,
+        at: Optional[str] = None,
+    ) -> ToolResult:
+        """Enumerate edges, current by default, as of ``at``, or with history."""
+        try:
+            rel_type = RelationshipType(relationship_type) if relationship_type else None
+            rows = await self.get_relationships(
+                from_id=from_entity_id, to_id=to_entity_id, rel_type=rel_type,
+                include_all_versions=include_history, at=_parse_at(at),
+            )
+            return ToolResult(True, {
+                "relationships": [_rel_dict(r) for r in rows],
+                "count": len(rows),
+                "as_of": at,
+                "include_history": include_history,
+            })
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+    async def get_connected(
+        self,
+        entity_id: str,
+        relationship_type: Optional[str] = None,
+        direction: str = "both",
+        at: Optional[str] = None,
+    ) -> ToolResult:
+        """Generic neighbourhood: every entity one edge away, either direction."""
+        try:
+            if direction not in ("outgoing", "incoming", "both"):
+                return ToolResult(False, None, "direction must be outgoing, incoming or both")
+            moment = _parse_at(at)
+            entity = await self.get_entity(entity_id, at=moment)
+            if not entity:
+                return ToolResult(False, None, f"Entity {entity_id} not found")
+            rel_type = RelationshipType(relationship_type) if relationship_type else None
+
+            connected = []
+            if direction in ("outgoing", "both"):
+                for rel in await self.get_relationships(from_id=entity_id, rel_type=rel_type, at=moment):
+                    target = await self.get_entity(rel.to_entity_id, at=moment)
+                    if target:
+                        connected.append({"entity": target.to_dict(), "relationship": _rel_dict(rel),
+                                          "direction": "outgoing"})
+            if direction in ("incoming", "both"):
+                for rel in await self.get_relationships(to_id=entity_id, rel_type=rel_type, at=moment):
+                    source = await self.get_entity(rel.from_entity_id, at=moment)
+                    if source:
+                        connected.append({"entity": source.to_dict(), "relationship": _rel_dict(rel),
+                                          "direction": "incoming"})
+            return ToolResult(True, {
+                "entity": {"id": entity.id, "name": entity.name,
+                           "type": getattr(entity.entity_type, "value", entity.entity_type)},
+                "connected": connected,
+                "count": len(connected),
+                "as_of": at,
+            })
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+    async def end_relationship_tool(
+        self,
+        relationship_id: str,
+        reason: Optional[str] = None,
+        user_id: Optional[str] = None,
+        at: Optional[str] = None,
+    ) -> ToolResult:
+        """Retire an edge by ending its interval (ADR-004 §1).
+
+        This is the delete. Nothing is destroyed: the row is kept with its
+        ``valid_to`` set, so "where was it before?" still answers, and the
+        change replicates as an ordinary end-event (ADR-004 §6). To MOVE an
+        edge, end it and create the new one. Idempotent: ending an edge that
+        has no open interval reports ``already_ended``.
+
+        Named ``_tool`` like ``create_relationship_tool`` because the backend
+        primitive is ``end_relationship`` (GraphOperations) and every backend
+        subclasses this class -- the same name here would be shadowed by it.
+        """
+        try:
+            ended = await self.end_relationship(relationship_id, at=_parse_at(at))
+            if ended is None:
+                return ToolResult(True, {"relationship_id": relationship_id, "already_ended": True})
+            return ToolResult(True, {
+                "relationship_id": relationship_id,
+                "ended_at": ended.valid_to.isoformat() if ended.valid_to else None,
+                "reason": reason,
+                "user_id": user_id,
+                "relationship": _rel_dict(ended),
+            })
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+    async def get_graph_diff(self, since: str, until: Optional[str] = None) -> ToolResult:
+        """What changed between two instants (ADR-004 §3, the Diff operator).
+
+        Edges whose interval started or ended in ``(since, until]``, and
+        entities that gained a version in that window. Deletions show up as
+        tombstone versions and ended intervals, never as absences.
+        """
+        try:
+            t1 = _parse_at(since)
+            t2 = _parse_at(until) or datetime.now(timezone.utc)
+            if t1 is None:
+                return ToolResult(False, None, "since is required")
+
+            def in_window(moment) -> bool:
+                if moment is None:
+                    return False
+                m = moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+                return t1 < m <= t2
+
+            edges = await self.get_relationships(include_all_versions=True)
+            started = [_rel_dict(r) for r in edges if in_window(getattr(r, "valid_from", None))]
+            ended = [_rel_dict(r) for r in edges if in_window(getattr(r, "valid_to", None))]
+
+            lo, hi = Entity.version_key_at(t1), Entity.version_key_at(t2)
+            changed = []
+            for entity_type in EntityType:
+                for current in await self.get_entities_by_type(entity_type, include_deleted=True):
+                    versions = (await self.get_entity_versions(current.id)
+                                if hasattr(self, "get_entity_versions") else [current])
+                    hits = [v for v in versions if lo < v.version <= hi]
+                    if hits:
+                        newest = max(hits, key=lambda v: v.version)
+                        changed.append({
+                            "id": current.id, "name": newest.name,
+                            "type": getattr(newest.entity_type, "value", newest.entity_type),
+                            "versions_in_window": len(hits),
+                            "latest_version_in_window": newest.version,
+                            "tombstoned": newest.is_tombstone,
+                        })
+
+            return ToolResult(True, {
+                "since": t1.isoformat(), "until": t2.isoformat(),
+                "entities_changed": changed,
+                "edges_started": started,
+                "edges_ended": ended,
+                "counts": {"entities": len(changed), "edges_started": len(started),
+                           "edges_ended": len(ended)},
             })
         except Exception as e:
             return ToolResult(False, None, str(e))

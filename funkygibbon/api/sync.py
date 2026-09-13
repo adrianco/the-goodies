@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from funkygibbon.database import get_db
 from funkygibbon.graph.index_service import write_through_applied_changes
+from funkygibbon.repositories.graph import next_server_seq, stamp_relationship
 from inbetweenies.models import (
     Entity, EntityRelationship, EntityType, RelationshipType, SourceType,
 )
@@ -167,7 +168,14 @@ class SyncHandler:
         # topology but never learn any, and a fresh replica synced every entity
         # in the house and no edges between them. "Clients hold the whole graph"
         # (README) was true of the nodes only.
-        edges_by_source = await self._outgoing_relationships(request, entities)
+        #
+        # The page is defined over the union of both tables in server_seq
+        # order: a full entity page ends at `page_max`, and this page carries
+        # the edges up to that same position, so nothing is skipped or
+        # repeated across pages.
+        edges_by_source = await self._outgoing_relationships(
+            request, page_max=(int(cursor) if cursor else None)
+        )
 
         response_changes = []
         for entity in entities:
@@ -255,7 +263,7 @@ class SyncHandler:
         return list(result.scalars().all())
 
     async def _outgoing_relationships(
-        self, request: SyncRequest, entities: List[Entity]
+        self, request: SyncRequest, *, page_max: Optional[int] = None
     ) -> Dict[str, List[RelationshipChange]]:
         """Edge intervals this request should receive, grouped by source id.
 
@@ -265,26 +273,41 @@ class SyncHandler:
         else, which is the entire capability the temporal model exists to
         provide. The rows are immutable, so shipping history is idempotent.
 
-        Delta bound is ``updated_at``, matching the entity path. The cursor
-        (``server_seq``) is an entity-table column and edges do not carry it, so
-        a cursor-paginated request falls back to the wall-clock bound for edges
-        -- correct, if less precise, and the same bound v2 clients already use
-        (PROTOCOL.md §4).
+        Bounds, in priority order, matching `_outgoing_entities`:
+
+        * ``cursor`` — `server_seq > cursor`, and `<= page_max` when the entity
+          page was capped, so the page is one contiguous slice of the shared
+          sequence. Exact and clock-independent. Edges used to lack the stamp,
+          which forced a translation of the entity cursor into a wall-clock
+          instant — and edges are written after entities in the same
+          transaction, so every edge was always "newer" and a caught-up client
+          re-received the entire edge table on every poll.
+        * ``filters.since`` — the wall-clock bound v2 clients persist.
+        * neither (a full sync) — everything.
         """
         stmt = select(EntityRelationship)
 
         if request.sync_type == "delta":
-            since = None
-            if request.filters and request.filters.since:
-                since = _to_utc(request.filters.since)
-            elif request.cursor:
-                since = await self._wallclock_for_cursor(request.cursor)
-            if since is not None:
-                stmt = stmt.where(EntityRelationship.updated_at > since)
+            if request.cursor:
+                try:
+                    position = int(request.cursor)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"cursor must be a server_seq integer, got {request.cursor!r}",
+                    )
+                stmt = stmt.where(EntityRelationship.server_seq > position)
+                if page_max is not None:
+                    stmt = stmt.where(EntityRelationship.server_seq <= page_max)
+            elif request.filters and request.filters.since:
+                stmt = stmt.where(
+                    EntityRelationship.updated_at > _to_utc(request.filters.since)
+                )
 
-        # Oldest interval first, so a client applying in order sees each edge's
-        # history the way it happened rather than having to sort it.
-        stmt = stmt.order_by(EntityRelationship.valid_from)
+        # Replication order, so a client applying in sequence sees each edge's
+        # history the way it happened; ties (none, the stamp is unique) fall
+        # back to the valid-time axis.
+        stmt = stmt.order_by(EntityRelationship.server_seq, EntityRelationship.valid_from)
 
         grouped: Dict[str, List[RelationshipChange]] = {}
         result = await self.db_session.execute(stmt)
@@ -293,37 +316,6 @@ class SyncHandler:
                 self._relationship_to_change(row)
             )
         return grouped
-
-    async def _wallclock_for_cursor(self, cursor: str) -> Optional[datetime]:
-        """The wall-clock position a `server_seq` cursor corresponds to.
-
-        Edges have no `server_seq` of their own (see the note in
-        `_outgoing_relationships`), so a cursor cannot bound them directly. The
-        best available translation is the timestamp of the newest entity row
-        the client already holds: everything it has seen was written no later
-        than that.
-
-        The first attempt at this derived the bound from the entities in the
-        CURRENT page and skipped it when that page was empty — which is the
-        common case once a client has caught up. `since` then stayed None, the
-        filter was never applied, and every delta poll re-sent the entire edge
-        table forever. Bounding on the cursor itself rather than on the page
-        makes a caught-up client's delta correctly empty.
-
-        Returns None for a cursor at or before the start, which is right: a
-        client holding nothing should receive the whole edge history.
-        """
-        try:
-            position = int(cursor)
-        except ValueError:
-            # The entity path raises a 400 for this; don't raise a second time
-            # from here, and don't invent a bound off a value we can't read.
-            return None
-
-        newest_seen = await self.db_session.scalar(
-            select(func.max(Entity.updated_at)).where(Entity.server_seq <= position)
-        )
-        return _to_utc(newest_seen)
 
     @staticmethod
     def _relationship_to_change(row: EntityRelationship) -> RelationshipChange:
@@ -428,15 +420,16 @@ class SyncHandler:
         return result.scalars().first()
 
     async def _next_server_seq(self) -> int:
-        """Allocate the next replication stamp.
+        """Allocate the next replication stamp — from the ONE shared sequence.
 
         Gap-free and assigned in apply order, so a delta cursor is exact.
         Wall-clock cannot do this: two rows written in the same microsecond are
         indistinguishable to `updated_at > since`, and a clock adjustment can
-        move rows across a cursor a client has already passed.
+        move rows across a cursor a client has already passed. Edge intervals
+        draw from the same counter (ADR-005 §3), so the cursor is a position
+        in one order over the whole stream.
         """
-        result = await self.db_session.execute(select(func.max(Entity.server_seq)))
-        return (result.scalar() or 0) + 1
+        return await next_server_seq(self.db_session)
 
     async def _insert_version(
         self, change: SyncChange, *, deleted: bool = False, becomes_latest: bool = True
@@ -831,6 +824,7 @@ class SyncHandler:
             # client with a lagging clock cannot mint a negative-length row.
             incoming_from = max(incoming_from, _as_aware(current.valid_from))
             current.valid_to = incoming_from
+            await stamp_relationship(self.db_session, current)
 
         return await self._insert_edge_interval(
             relationship, rel_type, properties, user_id,
@@ -849,6 +843,9 @@ class SyncHandler:
         if current is not None:
             # Clamp forward: an end can never precede its own start.
             current.valid_to = max(incoming_to, _as_aware(current.valid_from))
+            # Re-stamp: ending is the change a replica has to learn about, and
+            # it only will if the row moves past the replica's cursor.
+            await stamp_relationship(self.db_session, current)
             await self.db_session.flush()
             return True
 
@@ -897,6 +894,7 @@ class SyncHandler:
             user_id=user_id,
             created_at=now,
             updated_at=now,
+            server_seq=await self._next_server_seq(),
         ))
 
         # Flush, not commit: this row belongs to the batch transaction opened

@@ -6,7 +6,7 @@ handling storage and retrieval of entities and relationships.
 """
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import and_, func, or_, select, update
@@ -14,6 +14,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Entity, EntityType, EntityRelationship, RelationshipType
 from .base import BaseRepository
+
+
+async def next_server_seq(db: AsyncSession) -> int:
+    """Allocate the next replication stamp (ADR-002 §2).
+
+    ONE sequence over entities AND edge intervals. The delta cursor is a
+    position in this order, so both tables must draw from the same counter —
+    two allocators would collide, and a client would skip whichever row lost
+    the tie. Gap-free and in apply order; wall-clock cannot do this.
+    """
+    entity_max = (await db.execute(select(func.max(Entity.server_seq)))).scalar() or 0
+    edge_max = (await db.execute(select(func.max(EntityRelationship.server_seq)))).scalar() or 0
+    return max(entity_max, edge_max) + 1
+
+
+async def stamp_relationship(db: AsyncSession, rel: EntityRelationship) -> EntityRelationship:
+    """Give an edge interval its replication stamp, or a NEW one if re-stamping.
+
+    Called on insert and again when an interval is ended: ending is the
+    change a replica must learn about, and it only will if the row moves
+    past the replica's cursor.
+    """
+    rel.server_seq = await next_server_seq(db)
+    return rel
 
 
 async def apply_write_invariants(db: AsyncSession, entity: Entity) -> Entity:
@@ -50,8 +74,7 @@ async def apply_write_invariants(db: AsyncSession, entity: Entity) -> Entity:
         )
 
     if entity.server_seq is None:
-        next_seq = (await db.execute(select(func.max(Entity.server_seq)))).scalar()
-        entity.server_seq = (next_seq or 0) + 1
+        entity.server_seq = await next_server_seq(db)
 
     return entity
 
@@ -87,17 +110,29 @@ class GraphRepository(BaseRepository[Entity]):
         await self.db.flush()
         return entity
 
-    async def get_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[Entity]:
+    async def get_entity(self, entity_id: str, version: Optional[str] = None,
+                         at: Optional[datetime] = None) -> Optional[Entity]:
         """
-        Get specific version or latest entity.
+        Get specific version, the state as of ``at``, or the latest entity.
 
         Args:
             entity_id: Entity ID
             version: Specific version to retrieve (optional)
+            at: ADR-004 §3.2 -- the greatest version stamped at or before this
+                instant; None if it did not exist, or was tombstoned, then.
 
         Returns:
             Entity if found, None otherwise
         """
+        if at is not None and not version:
+            stmt = (
+                select(Entity)
+                .where(Entity.id == entity_id, Entity.version <= Entity.version_key_at(at))
+                .order_by(Entity.version.desc())
+                .limit(1)
+            )
+            found = (await self.db.execute(stmt)).scalar_one_or_none()
+            return None if found is None or found.is_tombstone else found
         if version:
             # Get specific version
             stmt = select(Entity).where(
@@ -213,6 +248,11 @@ class GraphRepository(BaseRepository[Entity]):
         if not relationship.id:
             relationship.id = str(uuid4())
 
+        # ADR-002 §2: every stored row is replicable, or it is invisible to a
+        # cursor client (`server_seq > :cursor` is NULL for NULL).
+        if relationship.server_seq is None:
+            await stamp_relationship(self.db, relationship)
+
         self.db.add(relationship)
         await self.db.flush()
         return relationship
@@ -222,7 +262,8 @@ class GraphRepository(BaseRepository[Entity]):
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
         rel_type: Optional[RelationshipType] = None,
-        include_all_versions: bool = False
+        include_all_versions: bool = False,
+        at: Optional[datetime] = None
     ) -> List[EntityRelationship]:
         """
         Query relationships with filters.
@@ -264,7 +305,15 @@ class GraphRepository(BaseRepository[Entity]):
         # loading every retired interval just to discard it is the one query
         # here that gets worse as the house accumulates edits.
         if not include_all_versions:
-            stmt = stmt.where(EntityRelationship.valid_to.is_(None))
+            if at is None:
+                stmt = stmt.where(EntityRelationship.valid_to.is_(None))
+            else:
+                moment = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+                stmt = stmt.where(
+                    EntityRelationship.valid_from <= moment,
+                    or_(EntityRelationship.valid_to.is_(None),
+                        EntityRelationship.valid_to > moment),
+                )
 
         # ADR-004 §1: endpoints are no longer joinable from the edge row — the
         # pin that made from_entity/to_entity possible is gone. get_connected()

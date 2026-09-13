@@ -12,23 +12,23 @@ from blowingoff.mcp.server import TOOLS, result_payload, build_server
 # The 12 knowledge-graph tools the KittenKong (TypeScript) MCP server exposes.
 # This is a COMPATIBILITY FLOOR, not the whole surface: every one of these must
 # keep existing under the same name, because KittenKong clients call them.
+# The catalog (inbetweenies.mcp.catalog) is the contract for BOTH clients
+# (ADR-015). This literal exists so an accidental addition or removal fails a
+# test rather than silently changing the surface a client sees.
 KITTENKONG_TOOLS = {
     "search_entities", "get_entity_details", "create_entity", "update_entity",
     "create_relationship", "get_devices_in_room", "find_device_controls",
     "get_room_connections", "find_path", "find_similar_entities",
     "get_procedures_for_device", "get_automations_in_room",
-}
-
-# Tools the Python surface adds beyond KittenKong. Listed explicitly rather than
-# left implicit so that adding one is a deliberate edit here, and so the gap
-# with the TypeScript server is visible rather than discovered later.
-#
-# NOTE: KittenKong does not have these yet. A skill that needs to attach a photo
-# must run against this server until the TypeScript side gains parity.
-PYTHON_ONLY_TOOLS = {
+    # Attachments and history -- in KittenKong since the ADR-013 vocabulary
+    # merge; this set used to call them "Python only", which was stale.
     "attach_photo", "attach_document", "get_blob",
     "get_entity_versions", "tombstone_entity", "get_statistics",
+    # Relationship parity and the as-of surface (issue #85, ADR-004 §3).
+    "list_relationships", "get_connected", "end_relationship", "get_graph_diff",
 }
+
+PYTHON_ONLY_TOOLS: set = set()  # none: the two clients serve the same catalog
 
 EXPECTED_TOOLS = KITTENKONG_TOOLS | PYTHON_ONLY_TOOLS
 

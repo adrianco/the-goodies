@@ -5,15 +5,33 @@ This module provides the concrete implementation of the abstract
 graph operations using SQLAlchemy for database access.
 """
 
+from datetime import datetime, timezone
 from typing import List, Optional, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 
 from inbetweenies.graph import GraphOperations, GraphSearch
 from inbetweenies.mcp import MCPTools
 from inbetweenies.models import Entity, EntityType, EntityRelationship, RelationshipType, SourceType
 from inbetweenies.models.blob import Blob, BlobStatus
-from .graph import apply_write_invariants
+from .graph import apply_write_invariants, stamp_relationship
+
+
+def _current_at_clauses(at: Optional[datetime]):
+    """SQL for "this interval is true at `at`" (ADR-004 §1/§3.3).
+
+    Half-open: ``valid_from <= at < coalesce(valid_to, ∞)``. With ``at`` None
+    it is the current graph, ``valid_to IS NULL``, which `ix_rel_current`
+    serves directly.
+    """
+    if at is None:
+        return (EntityRelationship.valid_to.is_(None),)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return (
+        EntityRelationship.valid_from <= at,
+        or_(EntityRelationship.valid_to.is_(None), EntityRelationship.valid_to > at),
+    )
 
 
 class SQLGraphOperations(MCPTools):
@@ -99,18 +117,31 @@ class SQLGraphOperations(MCPTools):
         await self.db.flush()
         return entity
 
-    async def get_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[Entity]:
-        """Get an entity by ID and optional version"""
+    async def get_entity(self, entity_id: str, version: Optional[str] = None,
+                         at: Optional[datetime] = None) -> Optional[Entity]:
+        """Get an entity: a specific version, the state as of ``at``, or current."""
         if version:
-            # Get specific version
             stmt = select(Entity).where(
                 and_(Entity.id == entity_id, Entity.version == version)
             )
+        elif at is not None:
+            # ADR-004 §3.2: the greatest version stamped at or before `at`.
+            # A tombstone current at `at` means the entity did not exist then.
+            stmt = (
+                select(Entity)
+                .where(Entity.id == entity_id, Entity.version <= Entity.version_key_at(at))
+                .order_by(Entity.version.desc())
+                .limit(1)
+            )
+            found = (await self.db.execute(stmt)).scalar_one_or_none()
+            return None if found is None or found.is_tombstone else found
         else:
-            # Get latest version
+            # ADR-002 §1: the recorded answer, same rule as GraphRepository.
+            # This was the last reader still ranking by created_at, which
+            # serves a preserved LOSING version (later insert) as current.
             stmt = select(Entity).where(
-                Entity.id == entity_id
-            ).order_by(Entity.created_at.desc()).limit(1)
+                Entity.id == entity_id, Entity.is_latest.is_(True)
+            ).limit(1)
 
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -173,6 +204,32 @@ class SQLGraphOperations(MCPTools):
             return entities
         return [entity for entity in entities if not entity.is_tombstone]
 
+    async def end_relationship(
+        self, relationship_id: str, at: Optional[datetime] = None
+    ) -> Optional[EntityRelationship]:
+        """End an edge's open interval (ADR-004 §1). The row stays; it is history now."""
+        current = await self.db.scalar(
+            select(EntityRelationship).where(
+                EntityRelationship.id == relationship_id,
+                EntityRelationship.valid_to.is_(None),
+            )
+        )
+        if current is None:
+            return None
+        moment = at or datetime.now(timezone.utc)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        start = current.valid_from
+        if start is not None and start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        # Clamp forward: an end can never precede its own start.
+        current.valid_to = max(moment, start) if start else moment
+        # Ending is a replicated change (ADR-005 §3): re-stamp so a cursor
+        # client learns the edge is gone.
+        await stamp_relationship(self.db, current)
+        await self.db.flush()
+        return current
+
     async def store_relationship(self, relationship: EntityRelationship) -> EntityRelationship:
         """Store a relationship in the database"""
         from uuid import uuid4
@@ -180,6 +237,11 @@ class SQLGraphOperations(MCPTools):
         # Generate ID if not provided
         if not relationship.id:
             relationship.id = str(uuid4())
+
+        # ADR-002 §2: same stamp as the sync path and GraphRepository, from the
+        # one shared allocator. This is the MCP write path.
+        if relationship.server_seq is None:
+            await stamp_relationship(self.db, relationship)
 
         self.db.add(relationship)
         await self.db.flush()
@@ -190,7 +252,8 @@ class SQLGraphOperations(MCPTools):
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
         rel_type: Optional[RelationshipType] = None,
-        include_all_versions: bool = False
+        include_all_versions: bool = False,
+        at: Optional[datetime] = None
     ) -> List[EntityRelationship]:
         """Get relationships with optional filters.
 
@@ -223,7 +286,7 @@ class SQLGraphOperations(MCPTools):
         # an endpoint filter that has no bearing on currency (so the second half
         # let every unfiltered query return retired intervals as live edges).
         if not include_all_versions:
-            stmt = stmt.where(EntityRelationship.valid_to.is_(None))
+            stmt = stmt.where(*_current_at_clauses(at))
 
         # ADR-004 §1: endpoints are no longer joinable from the edge row — the
         # pin that made from_entity/to_entity possible is gone, and an as-of

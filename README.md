@@ -27,7 +27,7 @@ alternatives that were rejected and why.
 **Current status**: **installed and running in a real house since March 2026**,
 with a second install at another house. Authenticated data endpoints, a
 protocol-correct sync engine (see [`inbetweenies/PROTOCOL.md`](inbetweenies/PROTOCOL.md)),
-12 MCP tools, backup/restore, and data-migration + upgrade tooling. The Python
+22 MCP tools, backup/restore, and data-migration + upgrade tooling. The Python
 **blowing-off** client also runs as an MCP server, mirroring the TypeScript port
 (*KittenKong*). CI runs the test suites on Linux and macOS across Python
 3.11–3.14. Latest release: `v0.4.0` — the final `inbetweenies-v2` release before
@@ -47,7 +47,7 @@ the temporal cutover described below.
 
 1. **🚀 FunkyGibbon** (Server) - Python-based backend server
    - FastAPI REST API with graph operations
-   - 12 MCP tools for smart home management
+   - 22 MCP tools for smart home management
    - Entity-relationship knowledge graph
    - SQLite database with immutable versioning
    - **Security**: JWT authentication, rate limiting, audit logging
@@ -640,7 +640,7 @@ since March 2026**, with a second install at another house:
 - Authenticated data endpoints (bearer token), `funkygibbon setup-auth`
 - Protocol-correct sync: canonical versions, `server_time` watermark, one shared
   conflict resolver, tombstone deletes, per-id acks, convergence digest
-- 12 MCP tools; blowing-off also runs as an MCP server
+- 22 MCP tools; blowing-off also runs as an MCP server
 - Backup/restore + scheduler; data-migration and upgrade tooling
 - User Generated Content (PDFs, photos, notes) with BLOB storage, carried by sync
 - CI green on Linux and macOS across Python 3.11–3.14

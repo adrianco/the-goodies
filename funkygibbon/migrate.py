@@ -163,7 +163,7 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
     stats = {
         "entities": 0, "versions_fixed": 0, "photos_extracted": 0,
         "blobs_created": 0, "relationship_versions_fixed": 0,
-        "edges_migrated": 0,
+        "edges_migrated": 0, "edge_server_seq_set": 0,
     }
 
     entities_before = cur.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
@@ -263,6 +263,12 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
     # direction, and the doubled-Z repair rewrites both. Run any of them after
     # this and they fail on a column that no longer exists.
     stats.update(_migrate_edges_to_intervals(cur))
+
+    # --- relationships: replication stamp (ADR-005 §3) ---------------------- #
+    #
+    # After the rebuild: that step recreates the table from the ORM metadata,
+    # so the column exists here whatever shape the database started in.
+    stats.update(_backfill_edge_server_seq(cur))
 
     if apply:
         conn.commit()
@@ -465,6 +471,40 @@ def _rebuild_without(cur, table: str, new_sql: str) -> None:
         cur.execute("PRAGMA legacy_alter_table = OFF")
     for sql in index_sql:
         cur.execute(sql)
+
+
+def _backfill_edge_server_seq(cur) -> Dict[str, int]:
+    """Give every edge interval a replication stamp (ADR-002 §2, ADR-005 §3).
+
+    Edges share ONE sequence with entities, so the backfill continues from
+    `max(entities.server_seq)` rather than starting at 1 — two rows with the
+    same stamp would sit on the wrong side of some client's cursor. Order is
+    the valid-time axis, the closest thing to apply order the rows record.
+    Idempotent: rows already stamped are left alone.
+    """
+    stats = {"edge_server_seq_set": 0}
+    if not _table_has_column(cur, "entity_relationships", "server_seq"):
+        cur.execute("ALTER TABLE entity_relationships ADD COLUMN server_seq INTEGER")
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_rel_server_seq "
+                    "ON entity_relationships (server_seq)")
+
+    entity_max = cur.execute("SELECT COALESCE(MAX(server_seq), 0) FROM entities").fetchone()[0]
+    edge_max = cur.execute(
+        "SELECT COALESCE(MAX(server_seq), 0) FROM entity_relationships").fetchone()[0]
+    seq = max(entity_max, edge_max)
+
+    rows = cur.execute(
+        "SELECT id, valid_from FROM entity_relationships WHERE server_seq IS NULL "
+        "ORDER BY valid_from, id"
+    ).fetchall()
+    for rel_id, valid_from in rows:
+        seq += 1
+        cur.execute(
+            "UPDATE entity_relationships SET server_seq = ? WHERE id = ? AND valid_from = ?",
+            (seq, rel_id, valid_from),
+        )
+    stats["edge_server_seq_set"] = len(rows)
+    return stats
 
 
 def _edges_need_interval_migration(cur) -> bool:

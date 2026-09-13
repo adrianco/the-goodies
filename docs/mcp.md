@@ -24,7 +24,7 @@ became a de-facto schema that took a migration to undo:
 |---|---|---|
 | No way to attach a photo | `entity_type=note` + inline base64 + a `has_blob` edge pointing at the note | Six blob-linking conventions across two installs; ADR-013 §3 |
 | MCP writes silently discarded (see below) | a whole parallel REST helper | Two ways to write, only one enforced |
-| No delete (by design) | a `DELETE /relationships/{id}` call to a route that has never existed | Silent 404s |
+| No edge delete in the tool surface | a `DELETE /relationships/{id}` call to a route that has never existed | Silent 404s — now `end_relationship` |
 
 The tools now cover the whole job, so there is no gap left to paper over. If you
 find one, say so — do not route around it.
@@ -104,33 +104,40 @@ a new tool lands in one place and appears on both transports. (They used to be
 two hand-maintained lists, which is how the surface came to lack any photo tool
 while the implementation had one.)
 
-## The REST graph API
+## The REST graph API is not for clients
 
-Still mounted, and still used by the sync protocol, but **not the interface for
-skills or agents**. Do not add new callers. `kittenkong_helper.py` is being
-retired, not replaced.
+`/api/v1/graph/*` is still mounted. It is the **local maintenance surface**:
+its one client is `oook`, run by the operator on the server host. It is not the
+interface for a skill, an agent, a script, or either replica — those use the
+tools above, and only the tools ([ADR-015](adr/ADR-015-mcp-is-the-client-interface.md)).
+Do not add callers. If a tool is missing, that is a bug to report, not a reason
+to reach for a route.
 
-For reference, what it exposes:
+An earlier revision of this page listed `DELETE /api/v1/graph/relationships/{id}`.
+**That route has never existed**; the delete is `end_relationship`, below.
 
-```
-GET    /api/v1/graph/entities?entity_type=room
-POST   /api/v1/graph/entities
-GET    /api/v1/graph/entities/{id}
-PUT    /api/v1/graph/entities/{id}
-GET    /api/v1/graph/entities/{id}/versions
-GET    /api/v1/graph/entities/{id}/connected
-GET    /api/v1/graph/entities/{id}/similar
-POST   /api/v1/graph/relationships
-GET    /api/v1/graph/relationships
-DELETE /api/v1/graph/relationships/{id}
-POST   /api/v1/graph/search
-POST   /api/v1/graph/path
-GET    /api/v1/graph/statistics
-```
+## Relationships and time
 
-There is **no dedicated blob endpoint.** A blob reaches the server as base64
-inside an entity's `content`, and the server moves it into the `blobs` table.
-See below for the shape to send.
+Edges are immutable intervals (ADR-004): `valid_from` to `valid_to`, and an
+edge that changes is *ended* and a successor created. Four tools cover the
+whole of edge maintenance and history:
+
+| tool | what it does |
+|---|---|
+| `list_relationships` | enumerate edges by endpoint and/or type; current by default, `include_history` for every interval, `at` for an instant |
+| `get_connected` | every entity one edge away from an entity, either direction, with the edge |
+| `end_relationship` | **the delete.** Ends the interval and keeps the row; to move an edge, end it and create the new one. Idempotent |
+| `get_graph_diff` | what changed between two instants: versions gained, edges started, edges ended |
+
+**Every graph read takes `at`** (ISO-8601 UTC; omitted means now), and answers
+for the graph as it was then — `get_devices_in_room`, `find_device_controls`,
+`get_room_connections`, `find_path`, `get_entity_details`,
+`get_procedures_for_device`, `get_automations_in_room`, `list_relationships`,
+`get_connected`. An entity created after `at` does not exist at `at`; a
+renamed entity shows its old name. This is SQL:2011's `AS OF` (ADR-014 §1).
+
+There is **no dedicated blob endpoint.** A blob reaches the server through
+`attach_photo` / `attach_document`, and the server owns the bytes.
 
 ---
 

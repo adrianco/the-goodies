@@ -249,9 +249,11 @@ pulls the winner over its own edit, and the losing content is gone everywhere.
   is idempotent.
 - **`delta`**: server returns only changes with `updated_at` **strictly greater
   than** `filters.since` (exclusive lower bound, compared against `updated_at`,
-  UTC). Edges use the same bound. A **cursor**-paginated request has no
-  wall-clock bound of its own, so edges fall back to the oldest `updated_at` in
-  the page — `server_seq` is an entity-table column and edges do not carry one.
+  UTC), or — preferred — everything past a **`cursor`**. Entity versions and
+  edge intervals both carry `server_seq` from **one shared sequence**, so a
+  cursor is a position in a single order over the whole stream: a page is a
+  contiguous slice of that sequence, and ending an edge re-stamps its row so
+  the end-event crosses a replica's cursor like any other change.
 - Edges ride the change for their **source** entity (§3.1), which is what makes
   §5's "entities before relationships" satisfiable inside one batch. An edge
   whose source is not in the page rides an entity-less change instead.

@@ -246,6 +246,9 @@ class GraphPopulator:
             user_id="populate-script",
             valid_from=valid_from or datetime.now(timezone.utc),
             valid_to=valid_to,
+            # ADR-002 §2: one sequence over entities and edges (see
+            # next_server_seq). The seed's counter is that sequence.
+            server_seq=next(self._seq_counter),
         )
         session.add(relationship)
         return relationship
@@ -261,6 +264,8 @@ class GraphPopulator:
         managed by HomeKit".
         """
         relationship.valid_to = at
+        # Ending is a replicated change: re-stamp so a cursor client sees it.
+        relationship.server_seq = next(self._seq_counter)
         return relationship
 
     async def revise_entity(self, session: AsyncSession, entity: Entity, *,

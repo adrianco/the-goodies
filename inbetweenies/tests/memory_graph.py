@@ -138,11 +138,19 @@ class InMemoryGraph(MCPTools, GraphTraversal):
         return self.add_entity(entity)
 
     async def get_entity(
-        self, entity_id: str, version: Optional[str] = None
+        self, entity_id: str, version: Optional[str] = None,
+        at: Optional[datetime] = None,
     ) -> Optional[Entity]:
         versions = self._versions.get(entity_id)
         if not versions:
             return None
+        if at is not None and version is None:
+            key = Entity.version_key_at(at)
+            eligible = [v for v in versions if v.version <= key]
+            if not eligible:
+                return None
+            found = max(eligible, key=lambda v: v.version)
+            return None if found.is_tombstone else found
         if version is None:
             return versions[-1]
         for candidate in versions:
@@ -173,6 +181,7 @@ class InMemoryGraph(MCPTools, GraphTraversal):
         to_id: Optional[str] = None,
         rel_type: Optional[RelationshipType] = None,
         include_all_versions: bool = False,
+        at: Optional[datetime] = None,
     ) -> List[EntityRelationship]:
         matches = []
         for rel in self._relationships:
@@ -186,10 +195,19 @@ class InMemoryGraph(MCPTools, GraphTraversal):
             # retired intervals as live edges would let a traversal bug pass
             # here and fail against SQL — the fake's whole job is to be wrong in
             # the same ways the real backend is, and in no others.
-            if not include_all_versions and rel.valid_to is not None:
+            if not include_all_versions and not rel.is_current_at(at):
                 continue
             matches.append(rel)
         return matches
+
+    async def end_relationship(
+        self, relationship_id: str, at: Optional[datetime] = None
+    ) -> Optional[EntityRelationship]:
+        for rel in self._relationships:
+            if rel.id == relationship_id and rel.valid_to is None:
+                rel.valid_to = at or datetime.now(timezone.utc)
+                return rel
+        return None
 
     # ------------------------------------------------------------------
     # GraphSearch primitive
@@ -228,7 +246,8 @@ class ExplodingGraph(InMemoryGraph):
 
     MESSAGE = "backend unavailable"
 
-    async def get_entity(self, entity_id: str, version: Optional[str] = None):
+    async def get_entity(self, entity_id: str, version: Optional[str] = None,
+                         at: Optional[datetime] = None):
         raise RuntimeError(self.MESSAGE)
 
 

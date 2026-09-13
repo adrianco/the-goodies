@@ -194,9 +194,16 @@ class LocalGraphOperations(MCPTools):
             entity.parent_versions = []
         return self.storage.store_entity(entity, mark_dirty=mark_dirty)
 
-    async def get_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[Entity]:
-        """Get an entity from local storage"""
-        return self.storage.get_entity(entity_id, version)
+    async def get_entity(self, entity_id: str, version: Optional[str] = None,
+                         at: Optional[datetime] = None) -> Optional[Entity]:
+        """Get an entity from local storage (a version, the state as of ``at``, or latest)."""
+        return self.storage.get_entity(entity_id, version, at=at)
+
+    async def end_relationship(
+        self, relationship_id: str, at: Optional[datetime] = None
+    ) -> Optional[EntityRelationship]:
+        """End an edge locally (ADR-004 §1); pushed as an end-event on the next sync."""
+        return self.storage.end_relationship(relationship_id, at, mark_dirty=True)
 
     async def get_entities_by_type(self, entity_type: EntityType) -> List[Entity]:
         """Get all entities of a specific type"""
@@ -254,16 +261,17 @@ class LocalGraphOperations(MCPTools):
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
         rel_type: Optional[RelationshipType] = None,
-        include_all_versions: bool = False
+        include_all_versions: bool = False,
+        at: Optional[datetime] = None
     ) -> List[EntityRelationship]:
         """Get relationships with optional filters.
 
-        ADR-004 §1: current edges by default; ``include_all_versions=True``
-        adds retired intervals, which the sync push path needs and ordinary
-        graph reads must not see.
+        ADR-004 §1/§3: current edges by default, the state as of ``at`` when
+        given; ``include_all_versions=True`` adds retired intervals, which the
+        sync push path needs and ordinary graph reads must not see.
         """
         return self.storage.get_relationships(
-            from_id, to_id, rel_type, include_all_versions=include_all_versions
+            from_id, to_id, rel_type, include_all_versions=include_all_versions, at=at
         )
 
     async def search_entities(

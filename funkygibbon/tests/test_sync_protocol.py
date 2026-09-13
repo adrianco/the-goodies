@@ -935,3 +935,115 @@ class TestThePullCarriesEdges:
     def test_no_edges_means_no_relationship_payload(self, client, headers):
         _two_rooms(client, headers)
         assert self._edges_in(_sync(client, headers, "full").json()) == []
+
+
+class TestRelationshipToolsOverMcp:
+    """Issue #85 / ADR-015: everything a client does to the graph is a tool.
+
+    Driven through /api/v1/mcp/tools/<name> -- the transport every client
+    uses -- not through the graph REST routes, which are oook's maintenance
+    surface.
+    """
+
+    def _tool(self, client, headers, name, **args):
+        resp = client.post(f"/api/v1/mcp/tools/{name}", headers=headers, json={"arguments": args})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "error" not in body, body
+        return body["result"]
+
+    def _seed_edge(self, client, headers, to="room1", valid_from=None):
+        _two_rooms(client, headers)
+        rel = _rel("rel1", from_id="dev1", to_id=to, valid_from=valid_from)
+        _sync(client, headers, "full", [_rel_only_change([rel])])
+
+    def test_list_relationships_enumerates_the_current_graph(self, client, headers):
+        self._seed_edge(client, headers)
+        out = self._tool(client, headers, "list_relationships", from_entity_id="dev1")
+        assert out["count"] == 1 and out["relationships"][0]["to_entity_id"] == "room1"
+
+    def test_end_relationship_is_the_delete_and_keeps_history(self, client, headers):
+        self._seed_edge(client, headers)
+        out = self._tool(client, headers, "end_relationship", relationship_id="rel1", reason="mis-recorded")
+        assert out["ended_at"] is not None and out["reason"] == "mis-recorded"
+
+        current = self._tool(client, headers, "list_relationships", from_entity_id="dev1")
+        assert current["count"] == 0, "an ended edge is not part of the current graph"
+        history = self._tool(client, headers, "list_relationships", from_entity_id="dev1", include_history=True)
+        assert history["count"] == 1 and history["relationships"][0]["valid_to"] is not None
+
+        # Idempotent: ending again is a no-op that says so.
+        again = self._tool(client, headers, "end_relationship", relationship_id="rel1")
+        assert again["already_ended"] is True
+
+    def test_end_relationship_leaves_the_index_immediately(self, client, headers):
+        """ADR-003 decision 2: the write and the index update share a code path."""
+        self._seed_edge(client, headers)
+        self._tool(client, headers, "end_relationship", relationship_id="rel1")
+        stats = client.get("/api/v1/graph/statistics", headers=headers).json()
+        assert stats["total_relationships"] == 0
+
+    def test_get_connected_is_the_generic_neighbourhood(self, client, headers):
+        self._seed_edge(client, headers)
+        out = self._tool(client, headers, "get_connected", entity_id="room1")
+        assert out["count"] == 1
+        assert out["connected"][0]["direction"] == "incoming"
+        assert out["connected"][0]["entity"]["id"] == "dev1"
+
+    def test_an_ended_edge_replicates_as_an_end_event(self, client, headers):
+        """The tool's effect reaches a replica: the pull carries the ended row."""
+        self._seed_edge(client, headers)
+        self._tool(client, headers, "end_relationship", relationship_id="rel1")
+        body = _sync(client, headers, "full").json()
+        rows = [r for c in body["changes"] for r in c["relationships"] if r["id"] == "rel1"]
+        assert len(rows) == 1 and rows[0]["valid_to"] is not None
+
+    def test_as_of_reads_answer_for_the_past(self, client, headers):
+        """ADR-004 §3: `at` on a read tool, over the wire.
+
+        The entities are created with versions stamped in January: an entity
+        is only "there" at T if a version of it existed by T (§3.2), so a room
+        created today has no April state at all -- the first draft of this
+        test tripped exactly that, which is the model being right.
+        """
+        march = datetime(2026, 3, 1, 12, tzinfo=timezone.utc)
+        june = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+        jan = "2026-01-01T00:00:00.000000+00:00-000001-alice"
+        _sync(client, headers, "full", [
+            _change("create", id="dev1", version=jan, name="Lamp", etype="device"),
+            _change("create", id="room1", version=jan, name="Kitchen", etype="room"),
+            _change("create", id="room2", version=jan, name="Hall", etype="room"),
+        ])
+        _sync(client, headers, "full", [_rel_only_change([
+            _rel("rel1", from_id="dev1", to_id="room1", valid_from=march)])])
+        _sync(client, headers, "full", [_rel_only_change([
+            _rel("rel1", from_id="dev1", to_id="room2", valid_from=june)])])
+
+        april = self._tool(client, headers, "list_relationships", from_entity_id="dev1",
+                           at="2026-04-01T00:00:00Z")
+        july = self._tool(client, headers, "list_relationships", from_entity_id="dev1",
+                          at="2026-07-01T00:00:00Z")
+        assert [r["to_entity_id"] for r in april["relationships"]] == ["room1"]
+        assert [r["to_entity_id"] for r in july["relationships"]] == ["room2"]
+
+        devices_then = self._tool(client, headers, "get_devices_in_room", room_id="room1",
+                                  at="2026-04-01T00:00:00Z")
+        assert [d["id"] for d in devices_then["devices"]] == ["dev1"]
+        devices_now = self._tool(client, headers, "get_devices_in_room", room_id="room1")
+        assert devices_now["devices"] == []
+
+    def test_get_graph_diff_reports_the_move(self, client, headers):
+        march = datetime(2026, 3, 1, 12, tzinfo=timezone.utc)
+        june = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+        self._seed_edge(client, headers, to="room1", valid_from=march)
+        _sync(client, headers, "full", [_rel_only_change([
+            _rel("rel1", from_id="dev1", to_id="room2", valid_from=june)])])
+
+        out = self._tool(client, headers, "get_graph_diff",
+                         since="2026-05-01T00:00:00Z", until="2026-07-01T00:00:00Z")
+        assert [e["to_entity_id"] for e in out["edges_started"]] == ["room2"]
+        assert [e["to_entity_id"] for e in out["edges_ended"]] == ["room1"]
+
+    def test_the_catalog_advertises_the_new_tools(self, client, headers):
+        tools = {t["name"] for t in client.get("/api/v1/mcp/tools", headers=headers).json()["tools"]}
+        assert {"list_relationships", "get_connected", "end_relationship", "get_graph_diff"} <= tools

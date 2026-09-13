@@ -630,3 +630,179 @@ class TestBackendFailuresBecomeToolErrors:
         assert result.success is False
         assert result.result is None
         assert result.error == ExplodingGraph.MESSAGE
+
+
+# ---------------------------------------------------------------------------
+# Issue #85 / ADR-004 §3 -- the relationship tools and the as-of surface
+# ---------------------------------------------------------------------------
+from datetime import datetime, timezone
+
+from inbetweenies.mcp.tools import _parse_at
+from inbetweenies.tests.memory_graph import make_relationship
+
+MARCH = datetime(2026, 3, 1, 12, tzinfo=timezone.utc)
+APRIL = datetime(2026, 4, 1, 12, tzinfo=timezone.utc)
+JUNE = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+JULY = datetime(2026, 7, 1, 12, tzinfo=timezone.utc)
+
+
+def _ver(dt: datetime, n: int = 1) -> str:
+    """A PROTOCOL.md §2 version string stamped at `dt`."""
+    return f"{dt.isoformat(timespec='microseconds')}-{n:06d}-test"
+
+
+class TestParseAt:
+    def test_none_and_empty_mean_now(self):
+        assert _parse_at(None) is None and _parse_at("") is None
+
+    def test_iso_with_z_and_offset_and_naive_all_read_as_utc(self):
+        want = datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+        for text in ("2026-04-01T00:00:00Z", "2026-04-01T00:00:00+00:00", "2026-04-01T00:00:00"):
+            assert _parse_at(text) == want
+
+    def test_garbage_raises_so_the_tool_reports_it(self):
+        with pytest.raises(ValueError):
+            _parse_at("yesterday-ish")
+
+
+class TestListRelationships:
+    async def test_current_by_default_history_on_request(self, house):
+        house.add_relationship(make_relationship(
+            "rel-old", "device-light", "room-kitchen", RelationshipType.LOCATED_IN,
+            valid_from=MARCH, valid_to=JUNE))
+        current = await house.list_relationships(from_entity_id="device-light")
+        history = await house.list_relationships(from_entity_id="device-light", include_history=True)
+        assert "rel-old" not in {r["id"] for r in current.result["relationships"]}
+        assert "rel-old" in {r["id"] for r in history.result["relationships"]}
+        assert history.result["include_history"] is True
+
+    async def test_at_answers_for_the_past(self, house):
+        house.add_relationship(make_relationship(
+            "rel-old", "device-light", "room-kitchen", RelationshipType.LOCATED_IN,
+            valid_from=MARCH, valid_to=JUNE))
+        april = await house.list_relationships(from_entity_id="device-light", at=APRIL.isoformat())
+        july = await house.list_relationships(from_entity_id="device-light", at=JULY.isoformat())
+        assert "rel-old" in {r["id"] for r in april.result["relationships"]}
+        assert "rel-old" not in {r["id"] for r in july.result["relationships"]}
+        assert april.result["as_of"] == APRIL.isoformat()
+
+    async def test_unknown_type_is_a_reported_error(self, house):
+        result = await house.list_relationships(relationship_type="teleports_to")
+        assert result.success is False
+
+
+class TestGetConnected:
+    async def test_both_directions_with_the_edge(self, house):
+        result = await house.get_connected("room-kitchen")
+        assert result.success, result.error
+        dirs = {c["direction"] for c in result.result["connected"]}
+        assert "incoming" in dirs
+        assert all("relationship" in c and "entity" in c for c in result.result["connected"])
+        assert result.result["count"] == len(result.result["connected"])
+
+    async def test_direction_and_type_filters(self, house):
+        incoming = await house.get_connected("room-kitchen", direction="incoming",
+                                             relationship_type="located_in")
+        assert incoming.success
+        assert all(c["direction"] == "incoming" and c["relationship"]["type"] == "located_in"
+                   for c in incoming.result["connected"])
+        bad = await house.get_connected("room-kitchen", direction="sideways")
+        assert bad.success is False
+
+    async def test_missing_entity_is_an_error(self, house):
+        assert (await house.get_connected("ghost")).success is False
+
+
+class TestEndRelationshipTool:
+    async def test_ends_the_interval_and_keeps_the_row(self, house):
+        rel = house.connect("rel-x", "device-light", "room-kitchen", RelationshipType.LOCATED_IN)
+        result = await house.end_relationship_tool("rel-x", reason="moved", user_id="alice")
+        assert result.success, result.error
+        assert result.result["ended_at"] is not None and result.result["reason"] == "moved"
+        assert rel.valid_to is not None
+        assert "rel-x" not in {r.id for r in await house.get_relationships()}
+        assert "rel-x" in {r.id for r in await house.get_relationships(include_all_versions=True)}
+
+    async def test_idempotent(self, house):
+        house.connect("rel-y", "device-light", "room-kitchen", RelationshipType.LOCATED_IN)
+        await house.end_relationship_tool("rel-y")
+        again = await house.end_relationship_tool("rel-y")
+        assert again.success and again.result["already_ended"] is True
+
+    async def test_the_tool_and_the_primitive_do_not_shadow_each_other(self, house):
+        """Backends subclass MCPTools; the primitive `end_relationship` must
+        stay the backend's, and the tool must be reachable by its own name."""
+        house.connect("rel-z", "device-light", "room-kitchen", RelationshipType.LOCATED_IN)
+        primitive = await house.end_relationship("rel-z", at=JUNE)
+        assert primitive is not None and primitive.valid_to == JUNE
+
+
+class TestAsOfReads:
+    """ADR-004 §3.2/§3.3 through the read tools, on the in-memory double."""
+
+    def _timeline(self):
+        graph = VersionedInMemoryGraph()
+        graph.add_entity(make_entity("kitchen", EntityType.ROOM, "Kitchen", version=_ver(MARCH)))
+        graph.add_entity(make_entity("hall", EntityType.ROOM, "Hall", version=_ver(MARCH)))
+        graph.add_entity(make_entity("lamp", EntityType.DEVICE, "Lamp", version=_ver(MARCH)))
+        graph.add_relationship(make_relationship("e", "lamp", "kitchen", RelationshipType.LOCATED_IN,
+                                                 valid_from=MARCH, valid_to=JUNE))
+        graph.add_relationship(make_relationship("e", "lamp", "hall", RelationshipType.LOCATED_IN,
+                                                 valid_from=JUNE))
+        return graph
+
+    async def test_devices_in_room_follows_the_move(self):
+        graph = self._timeline()
+        then = await graph.get_devices_in_room("kitchen", at=APRIL.isoformat())
+        now = await graph.get_devices_in_room("kitchen")
+        assert [d["id"] for d in then.result["devices"]] == ["lamp"]
+        assert now.result["devices"] == []
+
+    async def test_an_entity_created_after_at_does_not_exist_then(self):
+        graph = self._timeline()
+        graph.add_entity(make_entity("new", EntityType.ROOM, "New Room", version=_ver(JULY)))
+        assert (await graph.get_devices_in_room("new", at=APRIL.isoformat())).success is False
+        assert (await graph.get_devices_in_room("new")).success is True
+
+    async def test_a_renamed_entity_shows_its_old_name_then(self):
+        graph = self._timeline()
+        graph.add_entity(make_entity("lamp", EntityType.DEVICE, "Lamp (renamed)", version=_ver(JULY, 2)))
+        then = await graph.get_entity_details_tool("lamp", at=APRIL.isoformat())
+        now = await graph.get_entity_details_tool("lamp")
+        assert then.result["entity"]["name"] == "Lamp"
+        assert now.result["entity"]["name"] == "Lamp (renamed)"
+
+    async def test_find_path_walks_the_graph_as_it_was(self):
+        graph = self._timeline()
+        then = await graph.find_path_tool("lamp", "kitchen", at=APRIL.isoformat())
+        now = await graph.find_path_tool("lamp", "kitchen")
+        assert then.result["found"] is True
+        assert now.result["found"] is False
+
+    async def test_a_bad_at_is_a_reported_error_not_a_crash(self):
+        graph = self._timeline()
+        result = await graph.get_devices_in_room("kitchen", at="not a time")
+        assert result.success is False and "not a time" in result.error
+
+
+class TestGetGraphDiff:
+    async def test_reports_started_ended_and_changed(self):
+        graph = VersionedInMemoryGraph()
+        graph.add_entity(make_entity("lamp", EntityType.DEVICE, "Lamp", version=_ver(MARCH)))
+        graph.add_entity(make_entity("lamp", EntityType.DEVICE, "Lamp v2", version=_ver(JUNE, 2)))
+        graph.add_entity(make_entity("kitchen", EntityType.ROOM, "Kitchen", version=_ver(MARCH)))
+        graph.add_entity(make_entity("hall", EntityType.ROOM, "Hall", version=_ver(MARCH)))
+        graph.add_relationship(make_relationship("e", "lamp", "kitchen", RelationshipType.LOCATED_IN,
+                                                 valid_from=MARCH, valid_to=JUNE))
+        graph.add_relationship(make_relationship("e", "lamp", "hall", RelationshipType.LOCATED_IN,
+                                                 valid_from=JUNE))
+
+        out = await graph.get_graph_diff(since="2026-05-01T00:00:00Z", until="2026-07-01T00:00:00Z")
+        assert out.success, out.error
+        assert [e["to_entity_id"] for e in out.result["edges_started"]] == ["hall"]
+        assert [e["to_entity_id"] for e in out.result["edges_ended"]] == ["kitchen"]
+        assert [e["id"] for e in out.result["entities_changed"]] == ["lamp"]
+        assert out.result["entities_changed"][0]["name"] == "Lamp v2"
+
+    async def test_since_is_required(self):
+        assert (await VersionedInMemoryGraph().get_graph_diff(since=None)).success is False

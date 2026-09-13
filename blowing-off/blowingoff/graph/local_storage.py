@@ -291,6 +291,30 @@ class LocalGraphStorage:
                     row[field] = None
         return row
 
+    def end_relationship(self, relationship_id: str, at: Optional[datetime] = None,
+                         mark_dirty: bool = True) -> Optional[EntityRelationship]:
+        """End an edge's open interval (ADR-004 §1) — the local delete/move.
+
+        The row stays as history. ``mark_dirty`` queues it for the next push,
+        where it travels as an end-event (``valid_to`` set); False when the end
+        came FROM the server on a pull.
+        """
+        open_row = next(
+            (r for r in self._relationships
+             if r.id == relationship_id and r.valid_to is None),
+            None,
+        )
+        if open_row is None:
+            return None
+        moment = _as_aware(at) if at else datetime.now(UTC)
+        start = _as_aware(open_row.valid_from)
+        open_row.valid_to = max(moment, start) if start else moment
+        self._reindex_rooms()
+        if mark_dirty:
+            self._pending_relationships[relationship_id] = "update"
+        self._save_data()
+        return open_row
+
     def _reindex_rooms(self) -> None:
         """Rebuild ``by_room`` from the CURRENT edges only (ADR-004 §1).
 
@@ -376,14 +400,24 @@ class LocalGraphStorage:
         self._save_data()
         return entity
 
-    def get_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[Entity]:
-        """Get an entity by ID and optional version"""
+    def get_entity(self, entity_id: str, version: Optional[str] = None,
+                   at: Optional[datetime] = None) -> Optional[Entity]:
+        """Get an entity by ID: a specific version, the state as of ``at``, or latest."""
         if entity_id not in self._entities:
             return None
 
         versions = self._entities[entity_id]
         if not versions:
             return None
+
+        if at is not None and not version:
+            # ADR-004 §3.2 / ADR-009: the replica answers as-of locally.
+            key = Entity.version_key_at(at)
+            eligible = [v for v in versions if v.version <= key]
+            if not eligible:
+                return None
+            found = max(eligible, key=lambda v: v.version)
+            return None if found.is_tombstone else found
 
         if version:
             # Find specific version

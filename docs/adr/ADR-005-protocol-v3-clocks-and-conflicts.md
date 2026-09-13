@@ -4,6 +4,8 @@
 
 **What is done:** §1 clamped LWW on client edit time; §3 wire changes — `inbetweenies-v3`, edge interval rows carrying `valid_from`/`valid_to`, pins off the wire, `vector_clock` removed outright, state digest now covering topology as well as entity versions; §4 PROTOCOL.md §7 rewritten to specify the ladder precisely enough to port from, with the conformance suite asserting §1/§3 clause by clause; §5 HLC deferred with its trigger recorded (§7.4 of PROTOCOL.md).
 
+*2026-09-13: edge interval rows now carry `server_seq` from the same sequence as entities, so the delta cursor is a total order over the whole stream (§3) and the wall-clock bound for edges is gone.*
+
 **What is NOT done:** §2 rungs 2 and 3 — the per-entity-type manifest rules and the three-way field merge. Resolution currently runs rung 1 (fast-forward), rung 4 (clamped LWW) and rung 5 (loser preserved and acknowledged). That is deterministic and loses nothing, but a concurrent edit to two different fields of one entity resolves by LWW where three-way would merge, so a simultaneous rename-and-recontent keeps only one of the two. Rungs 2 and 3 are the remaining work on this ADR. 
 
 ## Context

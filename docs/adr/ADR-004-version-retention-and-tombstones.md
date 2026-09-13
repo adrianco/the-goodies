@@ -1,10 +1,10 @@
 # ADR-004: Temporal model — as-of queries, interval edges, bitemporal-lite
 
-**Status:** Partially implemented · proposed 2026-08-01 (v2 — rewritten after the as-of-query requirement landed; supersedes the "graph is current" draft) · §1/§2/§4/§5/§6 landed 2026-08-22 on `feat/v3-temporal`.
+**Status:** Implemented · proposed 2026-08-01 (v2 — rewritten after the as-of-query requirement landed; supersedes the "graph is current" draft) · §1/§2/§4/§5/§6 landed 2026-08-22 on `feat/v3-temporal`.
 
 **What is done:** §1 interval edges (`(id, valid_from)` primary key, end-and-insert, version pins and their FKs dropped, migration in `funkygibbon/migrate.py::_migrate_edges_to_intervals`); §2 valid time carried on the wire and stored verbatim, with the end-clamp so a lagging clock cannot mint a negative interval; §4 structural tombstones; §5 keep-everything retention; §6 edge intervals sync as immutable rows and an end-event travels as an ordinary change.
 
-**What is NOT done — §3, the as-of query surface.** There is no `snapshot(at)`, no `at` parameter on REST/MCP/client reads, and no `diff(T1, T2)`. The *data* is now shaped to answer as-of questions and the model-level predicate (`EntityRelationship.is_current_at`) exists and is tested, but nothing exposes it: every read still answers `at = now`. Code comments that reference "snapshot() (ADR-004 §3.4)" are naming the intended caller, not an existing function. This is the remaining Stage E work and it is the reason the ADR is not simply "Implemented".
+**§3 delivered 2026-09-13 through the MCP surface (ADR-015):** every graph read tool takes `at` (the SQL:2011 `AS OF` form, ADR-014), resolved on the valid-time axis by `get_entity(at)` (greatest version ≤ `at`, tombstone-aware) and `get_relationships(at)` (half-open interval predicate) in every backend — SQL, the in-memory double, the Python client — and `get_graph_diff(since, until)` is the Diff operator. The persistent GraphIndex still caches `at = now`; an as-of read is a query, as specified. Not built: a REST `at` parameter — REST is a maintenance surface (ADR-015), so it does not need one.
 
 ## Context
 

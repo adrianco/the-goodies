@@ -32,6 +32,20 @@ class LocalMCPClient:
             "get_procedures_for_device": self.graph_ops.get_procedures_for_device_tool,
             "get_automations_in_room": self.graph_ops.get_automations_in_room_tool,
             "update_entity": self.graph_ops.update_entity_tool,
+            # The catalog (inbetweenies.mcp.catalog) is the contract; this map
+            # was twelve entries while the catalog had eighteen, so the Python
+            # MCP server advertised tools it could not run.
+            "attach_photo": self.graph_ops.attach_photo,
+            "attach_document": self.graph_ops.attach_document,
+            "get_blob": self.graph_ops.get_blob_tool,
+            "get_entity_versions": self.graph_ops.get_entity_versions_tool,
+            "tombstone_entity": self.graph_ops.tombstone_entity,
+            "get_statistics": self.graph_ops.get_statistics_tool,
+            # Issue #85 / ADR-004 §3
+            "list_relationships": self.graph_ops.list_relationships,
+            "get_connected": self.graph_ops.get_connected,
+            "end_relationship": self.graph_ops.end_relationship_tool,
+            "get_graph_diff": self.graph_ops.get_graph_diff,
         }
 
     async def execute_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:

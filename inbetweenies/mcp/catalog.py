@@ -40,6 +40,13 @@ class ToolSpec:
                 "inputSchema": self.parameters}
 
 
+#: The as-of argument every graph read accepts (ADR-004 §3; SQL:2011 AS OF).
+_AT_PARAM = {
+    'type': 'string',
+    'description': ('Answer as of this instant (ISO-8601 UTC), e.g. "2026-04-01T00:00:00Z". '
+                    'Omitted means now.'),
+}
+
 TOOL_SPECS: Tuple[ToolSpec, ...] = (
     ToolSpec(
         name='get_devices_in_room',
@@ -373,7 +380,108 @@ TOOL_SPECS: Tuple[ToolSpec, ...] = (
         description='Counts of entities and relationships by type, for the whole graph.',
         parameters={'type': 'object', 'properties': {}},
     ),
+    # ------------------------------------------------------------------
+    # Relationship parity (issue #85) and the as-of surface (ADR-004 §3).
+    #
+    # MCP is the client interface (ADR-015): anything a client must be able
+    # to do to the graph has to be a tool. These were the three edge
+    # operations that were not, plus the temporal queries the interval model
+    # exists to answer. `delete` is `end_relationship`: the store is
+    # append-only and an ended interval is kept as history.
+    # ------------------------------------------------------------------
+    ToolSpec(
+        name='list_relationships',
+        description=(
+            'List edges, filtered by endpoint and/or type. Current edges by '
+            'default; pass `at` for the graph as of an instant, or '
+            '`include_history` for every interval ever recorded.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {
+                'from_entity_id': {'type': 'string', 'description': 'Filter by source entity'},
+                'to_entity_id': {'type': 'string', 'description': 'Filter by target entity'},
+                'relationship_type': {'type': 'string', 'description': 'Filter by type, e.g. located_in'},
+                'include_history': {'type': 'boolean', 'description': 'Include retired intervals. Default false.'},
+                'at': _AT_PARAM,
+            },
+        },
+    ),
+    ToolSpec(
+        name='get_connected',
+        description=(
+            'Every entity one edge away from an entity, with the edge, in '
+            'either direction. The generic neighbourhood query; the room and '
+            'device tools are specialisations of it.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {
+                'entity_id': {'type': 'string', 'description': 'The centre entity'},
+                'relationship_type': {'type': 'string', 'description': 'Optional filter by edge type'},
+                'direction': {'type': 'string', 'enum': ['outgoing', 'incoming', 'both'],
+                              'description': 'Default both'},
+                'at': _AT_PARAM,
+            },
+            'required': ['entity_id'],
+        },
+    ),
+    ToolSpec(
+        name='end_relationship',
+        description=(
+            'Remove an edge by ending its interval. This is the delete: the '
+            'row is kept as history with its end recorded, so past state '
+            'still answers. To move an edge, end it and create the new one. '
+            'Idempotent.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {
+                'relationship_id': {'type': 'string', 'description': 'The edge to end'},
+                'reason': {'type': 'string', 'description': 'Why -- recorded in the result'},
+                'user_id': {'type': 'string', 'description': 'Who ended it'},
+                'at': {'type': 'string',
+                       'description': 'When it stopped being true (ISO-8601 UTC). Default now.'},
+            },
+            'required': ['relationship_id'],
+        },
+    ),
+    ToolSpec(
+        name='get_graph_diff',
+        description=(
+            'What changed between two instants: entities that gained a version, '
+            'edges that started, edges that ended. Deletions appear as '
+            'tombstone versions and ended edges, never as absences.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {
+                'since': {'type': 'string', 'description': 'Start of the window, exclusive (ISO-8601 UTC)'},
+                'until': {'type': 'string', 'description': 'End of the window, inclusive. Default now.'},
+            },
+            'required': ['since'],
+        },
+    ),
 )
+
+#: The tools whose reads answer "as of `at`" (ADR-004 §3). Any tool that
+#: reads the graph takes it; omitted means now.
+AS_OF_TOOLS = frozenset({
+    'get_devices_in_room', 'find_device_controls', 'get_room_connections',
+    'find_path', 'get_entity_details', 'get_procedures_for_device',
+    'get_automations_in_room', 'list_relationships', 'get_connected',
+})
+
+
+def _with_at(spec: ToolSpec) -> ToolSpec:
+    if 'at' in spec.parameters.get('properties', {}):
+        return spec
+    props = dict(spec.parameters.get('properties', {}))
+    props['at'] = _AT_PARAM
+    return ToolSpec(spec.name, spec.description, {**spec.parameters, 'properties': props})
+
+
+TOOL_SPECS = tuple(_with_at(t) if t.name in AS_OF_TOOLS else t for t in TOOL_SPECS)
 
 #: REST-wrapper view. ``funkygibbon.mcp.tools.MCP_TOOLS`` is this list.
 MCP_TOOLS: List[Dict[str, Any]] = [t.as_rest() for t in TOOL_SPECS]

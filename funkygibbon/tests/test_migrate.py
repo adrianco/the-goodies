@@ -655,3 +655,18 @@ def test_verify_fails_on_any_model_column_the_database_lacks(corfe_db):
     conn.execute("ALTER TABLE blobs DROP COLUMN summary")
     conn.commit()
     assert verify_db(path, "domains.house.manifest:HOUSE") == 1
+
+
+def test_the_rebuild_stamps_every_edge_on_the_shared_sequence(corfe_db):
+    """ADR-005 §3: after the upgrade no edge is unstamped, and stamps continue
+    past the entities' so the two tables share one cursor order."""
+    path, conn = corfe_db
+    stats = run_migration(conn, apply=True)
+    assert stats["edge_server_seq_set"] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM entity_relationships WHERE server_seq IS NULL").fetchone()[0] == 0
+    entity_max = conn.execute("SELECT MAX(server_seq) FROM entities").fetchone()[0]
+    edge_min = conn.execute("SELECT MIN(server_seq) FROM entity_relationships").fetchone()[0]
+    assert edge_min > entity_max
+    # Idempotent: a second run stamps nothing.
+    assert run_migration(conn, apply=True)["edge_server_seq_set"] == 0

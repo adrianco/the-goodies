@@ -8,7 +8,7 @@ between entities in the knowledge graph.
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from sqlalchemy import Column, DateTime, Index, String, JSON
+from sqlalchemy import Column, DateTime, Index, Integer, String, JSON
 
 from .base import Base, InbetweeniesTimestampMixin
 
@@ -127,6 +127,19 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     # single column, both maintained on every write for one lookup's benefit.
     valid_to = Column(DateTime(timezone=True), nullable=True)
 
+    # ADR-002 §2 / ADR-005 §3: the replication axis, shared with `entities`.
+    #
+    # A cursor is a position in ONE order over the whole delta stream, and a
+    # stream in which only half the rows carry the stamp is not orderable: the
+    # edges had to be bounded by translating the entity cursor into a wall-clock
+    # instant, which is structurally impossible when edges are written after
+    # entities in the same transaction (every edge `updated_at` is newer than
+    # every entity `updated_at`), so a caught-up client re-received the entire
+    # edge table on every poll. Allocated from the same counter as entities —
+    # see `next_server_seq` — and re-stamped when an interval is ENDED, because
+    # ending is the mutation a replica has to learn about.
+    server_seq = Column(Integer, nullable=True)
+
     # ADR-004 §1: the composite version-pin columns and their FKs are GONE.
     #
     # A pin recorded which entity *version* an edge pointed at when it was
@@ -147,6 +160,8 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
         Index("ix_rel_current", "valid_to"),
         # As-of resolution walks one edge id's intervals in time order.
         Index("ix_rel_id_validity", "id", "valid_from", "valid_to"),
+        # The delta scan: `where server_seq > :cursor order by server_seq`.
+        Index("ix_rel_server_seq", "server_seq"),
     )
 
     def __repr__(self):

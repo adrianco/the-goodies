@@ -121,27 +121,47 @@ class StorageMarker:
     the clock's resolution was invisible to it, so drift could go undetected —
     the exact failure it exists to catch.
 
-    Relationships are not versioned and carry no ``server_seq``, so their count
-    and ``max(updated_at)`` are still the best available signal for that table.
+    Edge intervals carry the same stamp since ADR-005 §3 landed it on both
+    tables, and ending an interval re-stamps the row -- so ``max(server_seq)``
+    now sees the change the old edge marker (row count + ``max(updated_at)``)
+    could miss: an end changes neither the count nor, within the clock's
+    resolution, the timestamp.
+
+    The row counts stay, for the opposite blind spot. The drift net exists
+    to catch a write that BYPASSED write-through, and the most likely such
+    write is a raw insert with no stamp at all -- which ``max(server_seq)``
+    cannot see, because NULL does not move a maximum.
+
+
+    ``max(updated_at)`` stays as the third signal, for the remaining shape:
+    a bypassed UPDATE of an existing row -- an interval ended by a raw session
+    write, say -- moves neither the count nor the stamp, but the ORM bumps
+    ``updated_at`` on every update. Three signals per table, all aggregates,
+    no row scan. Each one covers a bypass the other two cannot see.
     """
 
     entity_seq: Optional[int] = None
+    entity_rows: int = 0
+    entity_updated: Optional[Any] = None
+    relationship_seq: Optional[int] = None
     relationship_rows: int = 0
-    latest_relationship_update: Optional[Any] = None
+    relationship_updated: Optional[Any] = None
 
 
 async def _read_marker(db: AsyncSession) -> StorageMarker:
-    """Read the generation tag. Two aggregates, no row scan."""
-    entity_seq = (await db.execute(select(func.max(Entity.server_seq)))).scalar()
-    relationships = (
-        await db.execute(
-            select(func.count(EntityRelationship.id), func.max(EntityRelationship.updated_at))
-        )
-    ).one()
+    """Read the generation tag. Six aggregates in two statements, no row scan."""
+    entity_seq, entity_rows, entity_updated = (await db.execute(
+        select(func.max(Entity.server_seq), func.count(Entity.id), func.max(Entity.updated_at))
+    )).one()
+    relationship_seq, relationship_rows, relationship_updated = (await db.execute(
+        select(func.max(EntityRelationship.server_seq), func.count(EntityRelationship.id),
+               func.max(EntityRelationship.updated_at))
+    )).one()
     return StorageMarker(
-        entity_seq=entity_seq,
-        relationship_rows=relationships[0] or 0,
-        latest_relationship_update=_as_marker_value(relationships[1]),
+        entity_seq=entity_seq, entity_rows=entity_rows or 0,
+        entity_updated=_as_marker_value(entity_updated),
+        relationship_seq=relationship_seq, relationship_rows=relationship_rows or 0,
+        relationship_updated=_as_marker_value(relationship_updated),
     )
 
 
@@ -254,6 +274,19 @@ class GraphIndexService:
         if (rel.from_entity_id in self.index.entities
                 and rel.to_entity_id in self.index.entities):
             self.index.upsert_relationship(rel)
+        self.generation += 1
+        await self._sync_marker(db)
+
+    async def relationship_ended(self, db: AsyncSession, relationship_id: str) -> None:
+        """Record that an edge's open interval was just ended (ADR-004 §1).
+
+        The index caches `at = now`, so a retired edge leaves it -- in the same
+        code path as the write (ADR-003 decision 2), with the marker re-read so
+        the drift net does not fire on our own write.
+        """
+        if not self.enabled or not self.loaded:
+            return
+        self.index.remove_relationship(relationship_id)
         self.generation += 1
         await self._sync_marker(db)
 

@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 import funkygibbon.database as dbmod
 from funkygibbon.api.app import create_app
 from funkygibbon.config import settings
-from inbetweenies.models import Entity
+from inbetweenies.models import Entity, EntityRelationship
 
 USER = "access-layer"
 _ANCIENT = "2020-01-01T00:00:00.000000+00:00-000001-old"
@@ -489,3 +489,121 @@ class TestEveryWritePathMaintainsIsLatest:
 
         seqs = [r.server_seq for r in _rows()]
         assert len(seqs) == len(set(seqs)), "stamps must be unique across writers"
+
+
+class TestEdgesOnTheReplicationAxis:
+    """ADR-005 §3: edges carry server_seq from the ONE shared sequence.
+
+    Without it the cursor was not a total order over the stream: edges had to
+    be bounded by translating the entity cursor into a wall-clock instant, and
+    since edges are written after entities in the same transaction, every edge
+    was always "newer" -- a caught-up client re-received the whole edge table
+    on every poll.
+    """
+
+    def _house(self, client, headers):
+        vs = [Entity.create_version("a") for _ in range(3)]
+        _sync(client, headers, [
+            _change("create", id="lamp", version=vs[0]),
+            _change("create", id="kitchen", version=vs[1]),
+            _change("create", id="hall", version=vs[2]),
+        ])
+
+    def _edge(self, client, headers, to, valid_from=None, valid_to=None):
+        rel = {"id": "e1", "from_entity_id": "lamp", "to_entity_id": to,
+               "relationship_type": "located_in", "properties": {}}
+        if valid_from: rel["valid_from"] = valid_from
+        if valid_to: rel["valid_to"] = valid_to
+        return _sync(client, headers, [{"change_type": "update", "entity": None,
+                                        "relationships": [rel]}])
+
+    def _delta(self, client, headers, cursor):
+        return client.post("/api/v1/sync/", headers=headers, json={
+            "protocol_version": "inbetweenies-v3", "device_id": "d",
+            "user_id": USER, "sync_type": "delta", "changes": [], "cursor": cursor,
+        }).json()
+
+    @staticmethod
+    def _edges(body):
+        return [r for c in body["changes"] for r in c["relationships"]]
+
+    def _top(self, client, headers):
+        """The highest stamp in the stream -- what a caught-up client holds."""
+        seqs = [r.server_seq for r in _rows()] + [
+            r.server_seq for r in _edge_rows()]
+        return max(s for s in seqs if s is not None)
+
+    def test_every_stored_edge_interval_is_stamped(self, client, headers):
+        self._house(client, headers)
+        self._edge(client, headers, "kitchen")
+        assert all(r.server_seq is not None for r in _edge_rows())
+
+    def test_entities_and_edges_share_one_sequence(self, client, headers):
+        self._house(client, headers)
+        self._edge(client, headers, "kitchen")
+        seqs = [r.server_seq for r in _rows()] + [r.server_seq for r in _edge_rows()]
+        assert len(seqs) == len(set(seqs)), "a stamp may name one row, entity or edge"
+
+    def test_a_caught_up_client_receives_no_edges(self, client, headers):
+        """The resend bug, pinned: cursor at the top of the stream -> empty."""
+        self._house(client, headers)
+        self._edge(client, headers, "kitchen")
+        top = self._top(client, headers)
+        assert self._edges(self._delta(client, headers, str(top))) == []
+        assert self._edges(self._delta(client, headers, str(top))) == []
+
+    def test_a_move_after_the_cursor_is_delivered_once(self, client, headers):
+        self._house(client, headers)
+        self._edge(client, headers, "kitchen")
+        top = self._top(client, headers)
+
+        self._edge(client, headers, "hall")  # ends kitchen row, opens hall row
+        delivered = self._edges(self._delta(client, headers, str(top)))
+        # Both rows changed past the cursor: the ended one (re-stamped) and
+        # the new one. A replica needs both to converge.
+        assert sorted(r["to_entity_id"] for r in delivered) == ["hall", "kitchen"]
+        assert next(r for r in delivered if r["to_entity_id"] == "kitchen")["valid_to"] is not None
+
+        # And the client that took them is now caught up.
+        assert self._edges(self._delta(client, headers, str(self._top(client, headers)))) == []
+
+    def test_an_end_event_alone_crosses_the_cursor(self, client, headers):
+        """Ending re-stamps the row; a replica must learn the edge is gone."""
+        self._house(client, headers)
+        self._edge(client, headers, "kitchen", valid_from="2026-03-01T12:00:00+00:00")
+        top = self._top(client, headers)
+
+        self._edge(client, headers, "kitchen", valid_from="2026-03-01T12:00:00+00:00",
+                   valid_to="2026-06-01T12:00:00+00:00")
+        delivered = self._edges(self._delta(client, headers, str(top)))
+        assert len(delivered) == 1 and delivered[0]["valid_to"] is not None
+
+    def test_a_cursor_drain_delivers_every_edge_exactly_once(self, client, headers, monkeypatch):
+        import funkygibbon.api.sync as syncmod
+        monkeypatch.setattr(syncmod, "PAGE_SIZE", 2)
+        self._house(client, headers)
+        for i, to in enumerate(["kitchen", "hall", "kitchen"]):
+            rel = {"id": f"e{i}", "from_entity_id": "lamp", "to_entity_id": to,
+                   "relationship_type": "located_in", "properties": {}}
+            _sync(client, headers, [{"change_type": "update", "entity": None, "relationships": [rel]}])
+
+        seen, cursor, pages = [], "0", 0
+        while pages < 20:
+            body = self._delta(client, headers, cursor)
+            seen += [(r["id"], r["valid_from"]) for r in self._edges(body)]
+            pages += 1
+            if body["cursor"] is None:
+                break
+            cursor = body["cursor"]
+
+        assert pages > 1, "the fixture must span pages"
+        assert len(seen) == len(set(seen)), "no interval delivered twice"
+        assert len(seen) == 3, "no interval skipped"
+
+
+def _edge_rows():
+    async def _read():
+        async with dbmod.async_session() as session:
+            result = await session.execute(select(EntityRelationship))
+            return list(result.scalars().all())
+    return asyncio.run(_read())

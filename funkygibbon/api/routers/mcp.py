@@ -14,7 +14,8 @@ from ...database import get_db
 from ...repositories.graph_impl import SQLGraphOperations
 from ...graph.index import GraphIndex
 from ...mcp.server import FunkyGibbonMCPServer
-from ..dependencies import get_graph_index
+from ...graph.index_service import GraphIndexService
+from ..dependencies import get_graph_index, get_graph_index_service
 
 
 class MCPToolCall(BaseModel):
@@ -28,7 +29,8 @@ router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 async def get_mcp_server(
     db: AsyncSession = Depends(get_db),
-    graph: GraphIndex = Depends(get_graph_index)
+    graph: GraphIndex = Depends(get_graph_index),
+    service: GraphIndexService = Depends(get_graph_index_service),
 ) -> FunkyGibbonMCPServer:
     """Build the MCP server for this request.
 
@@ -38,7 +40,7 @@ async def get_mcp_server(
     index (ADR-003) -- the same object every time, kept current by write-through
     and the drift check -- so there is nothing expensive to cache here.
     """
-    return FunkyGibbonMCPServer(graph, SQLGraphOperations(db))
+    return FunkyGibbonMCPServer(graph, SQLGraphOperations(db), index_service=service)
 
 
 @router.get("/tools", response_model=Dict[str, Any])

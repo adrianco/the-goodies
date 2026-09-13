@@ -22,8 +22,16 @@ class GraphOperations(ABC):
         pass
 
     @abstractmethod
-    async def get_entity(self, entity_id: str, version: Optional[str] = None) -> Optional[Entity]:
-        """Get an entity by ID and optional version"""
+    async def get_entity(self, entity_id: str, version: Optional[str] = None,
+                         at: Optional[datetime] = None) -> Optional[Entity]:
+        """Get an entity by ID: a specific version, the state at ``at``, or current.
+
+        ADR-004 §3.2: with ``at`` set, the accepted version with the greatest
+        valid time <= ``at`` -- and None if the entity did not yet exist, or
+        was tombstoned, at that instant. Version strings sort lexically by
+        their UTC prefix (PROTOCOL.md §2), which is what makes this a range
+        comparison rather than a parse. ``version`` and ``at`` are exclusive.
+        """
         pass
 
     @abstractmethod
@@ -81,16 +89,32 @@ class GraphOperations(ABC):
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
         rel_type: Optional[RelationshipType] = None,
-        include_all_versions: bool = False
+        include_all_versions: bool = False,
+        at: Optional[datetime] = None
     ) -> List[EntityRelationship]:
         """Get relationships with optional filters.
 
-        ADR-004 §1: edges are interval rows, so "which edges?" needs a stance on
-        time. The default is the current graph (``valid_to IS NULL``);
-        ``include_all_versions=True`` adds retired intervals. It is part of the
-        abstract signature so every backend — SQL, in-memory, client cache —
-        answers the same question, which is what lets the conformance suite hold
-        them to one contract.
+        ADR-004 §1/§3: edges are interval rows, so "which edges?" needs a stance
+        on time. ``at`` picks the instant (omitted = now): an edge is included
+        iff ``valid_from <= at < coalesce(valid_to, ∞)``. ``include_all_versions``
+        returns every interval regardless — history, not state; the sync push
+        path needs it and ordinary reads must not. Part of the abstract
+        signature so every backend — SQL, in-memory, client cache — answers the
+        same question, which is what lets the conformance suite hold them to
+        one contract.
+        """
+        pass
+
+    @abstractmethod
+    async def end_relationship(
+        self, relationship_id: str, at: Optional[datetime] = None
+    ) -> Optional[EntityRelationship]:
+        """End an edge's open interval at ``at`` (default now) — ADR-004 §1.
+
+        This is the delete/move primitive. Ending is not deleting: the row is
+        kept and every question about the period it covered still answers.
+        Returns the ended row, or None if the edge has no open interval (already
+        ended, or never existed) — callers treat that as idempotent success.
         """
         pass
 
@@ -121,7 +145,8 @@ class GraphOperations(ABC):
         self,
         from_id: str,
         to_id: str,
-        max_depth: int = 10
+        max_depth: int = 10,
+        at: Optional[datetime] = None
     ) -> Optional[List[Entity]]:
         """
         Find shortest path between two entities using BFS.
@@ -135,7 +160,7 @@ class GraphOperations(ABC):
             List of entities forming the path, or None if no path exists
         """
         if from_id == to_id:
-            entity = await self.get_entity(from_id)
+            entity = await self.get_entity(from_id, at=at)
             return [entity] if entity else None
 
         # BFS implementation
@@ -148,7 +173,7 @@ class GraphOperations(ABC):
 
             for current_id, path in queue:
                 # Get all connected entities
-                relationships = await self.get_relationships(from_id=current_id)
+                relationships = await self.get_relationships(from_id=current_id, at=at)
 
                 for rel in relationships:
                     neighbor_id = rel.to_entity_id
@@ -157,7 +182,7 @@ class GraphOperations(ABC):
                         # Found the target
                         full_path = []
                         for entity_id in path + [neighbor_id]:
-                            entity = await self.get_entity(entity_id)
+                            entity = await self.get_entity(entity_id, at=at)
                             if entity:
                                 full_path.append(entity)
                         return full_path

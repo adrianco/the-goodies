@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, List
 import logging
 
 from ..graph.index import GraphIndex
+from ..graph.index_service import GraphIndexService
 from ..repositories.graph_impl import SQLGraphOperations
 from .tools import MCP_TOOLS
 
@@ -19,9 +20,16 @@ logger = logging.getLogger(__name__)
 class FunkyGibbonMCPServer:
     """MCP server exposing graph operations"""
 
-    def __init__(self, graph_index: GraphIndex, graph_ops: SQLGraphOperations):
+    def __init__(self, graph_index: GraphIndex, graph_ops: SQLGraphOperations,
+                 index_service: Optional["GraphIndexService"] = None):
         self.graph = graph_index
         self.graph_ops = graph_ops
+        # ADR-003 decision 2: writes go through the service so the index is
+        # patched AND its storage marker re-read. Patching `self.graph`
+        # directly (the old way, still the fallback when no service is given)
+        # left the marker behind, so the next read saw drift and rebuilt --
+        # correct, but a full rebuild on every MCP edge write.
+        self.index_service = index_service
         self.tools = {tool["name"]: tool for tool in MCP_TOOLS}
 
     def get_available_tools(self) -> List[Dict[str, Any]]:
@@ -58,25 +66,25 @@ class FunkyGibbonMCPServer:
             logger.error(f"Error executing tool {tool_name}: {str(e)}")
             return {"error": str(e)}
 
-    async def _handle_get_devices_in_room(self, room_id: str) -> Dict[str, Any]:
+    async def _handle_get_devices_in_room(self, room_id: str, at: Optional[str] = None) -> Dict[str, Any]:
         """Get all devices in a specific room"""
-        result = await self.graph_ops.get_devices_in_room(room_id)
+        result = await self.graph_ops.get_devices_in_room(room_id, at=at)
         if result.success:
             return result.result
         else:
             raise Exception(result.error)
 
-    async def _handle_find_device_controls(self, device_id: str) -> Dict[str, Any]:
+    async def _handle_find_device_controls(self, device_id: str, at: Optional[str] = None) -> Dict[str, Any]:
         """Get controls for a device"""
-        result = await self.graph_ops.find_device_controls(device_id)
+        result = await self.graph_ops.find_device_controls(device_id, at=at)
         if result.success:
             return result.result
         else:
             raise Exception(result.error)
 
-    async def _handle_get_room_connections(self, room_id: str) -> Dict[str, Any]:
+    async def _handle_get_room_connections(self, room_id: str, at: Optional[str] = None) -> Dict[str, Any]:
         """Find connections between rooms"""
-        result = await self.graph_ops.get_room_connections(room_id)
+        result = await self.graph_ops.get_room_connections(room_id, at=at)
         if result.success:
             return result.result
         else:
@@ -133,14 +141,17 @@ class FunkyGibbonMCPServer:
             user_id="mcp-user"
         )
         if result.success:
-            # Update in-memory index
+            await self.graph_ops.db.commit()
             rels = await self.graph_ops.get_relationships(
                 from_id=from_entity_id,
                 to_id=to_entity_id
             )
             for rel in rels:
                 if getattr(rel.relationship_type, "value", rel.relationship_type) == relationship_type:
-                    self.graph._add_relationship(rel)
+                    if self.index_service is not None:
+                        await self.index_service.relationship_written(self.graph_ops.db, rel)
+                    else:
+                        self.graph._add_relationship(rel)
                     break
             return result.result
         else:
@@ -150,10 +161,11 @@ class FunkyGibbonMCPServer:
         self,
         from_entity_id: str,
         to_entity_id: str,
-        max_depth: int = 10
+        max_depth: int = 10,
+        at: Optional[str] = None
     ) -> Dict[str, Any]:
         """Find path between entities"""
-        result = await self.graph_ops.find_path_tool(from_entity_id, to_entity_id, max_depth)
+        result = await self.graph_ops.find_path_tool(from_entity_id, to_entity_id, max_depth, at=at)
         if result.success:
             return result.result
         else:
@@ -163,10 +175,11 @@ class FunkyGibbonMCPServer:
         self,
         entity_id: str,
         include_relationships: bool = True,
-        include_connected: bool = False
+        include_connected: bool = False,
+        at: Optional[str] = None
     ) -> Dict[str, Any]:
         """Get detailed entity information"""
-        result = await self.graph_ops.get_entity_details_tool(entity_id)
+        result = await self.graph_ops.get_entity_details_tool(entity_id, at=at)
         if result.success:
             # Add connected entities if requested
             if include_connected:
@@ -198,17 +211,17 @@ class FunkyGibbonMCPServer:
         else:
             raise Exception(result.error)
 
-    async def _handle_get_procedures_for_device(self, device_id: str) -> Dict[str, Any]:
+    async def _handle_get_procedures_for_device(self, device_id: str, at: Optional[str] = None) -> Dict[str, Any]:
         """Get procedures and manuals for a device"""
-        result = await self.graph_ops.get_procedures_for_device_tool(device_id)
+        result = await self.graph_ops.get_procedures_for_device_tool(device_id, at=at)
         if result.success:
             return result.result
         else:
             raise Exception(result.error)
 
-    async def _handle_get_automations_in_room(self, room_id: str) -> Dict[str, Any]:
+    async def _handle_get_automations_in_room(self, room_id: str, at: Optional[str] = None) -> Dict[str, Any]:
         """Get automations affecting a room"""
-        result = await self.graph_ops.get_automations_in_room_tool(room_id)
+        result = await self.graph_ops.get_automations_in_room_tool(room_id, at=at)
         if result.success:
             return result.result
         else:
@@ -309,6 +322,67 @@ class FunkyGibbonMCPServer:
         entity = await self.graph_ops.get_entity(entity_id)
         if entity:
             self.graph._add_entity(entity)
+        return result.result
+
+    # --- Relationship parity (issue #85) and the as-of surface (ADR-004 §3) ---
+
+    async def _handle_list_relationships(
+        self,
+        from_entity_id: Optional[str] = None,
+        to_entity_id: Optional[str] = None,
+        relationship_type: Optional[str] = None,
+        include_history: bool = False,
+        at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        result = await self.graph_ops.list_relationships(
+            from_entity_id=from_entity_id, to_entity_id=to_entity_id,
+            relationship_type=relationship_type, include_history=include_history, at=at,
+        )
+        if not result.success:
+            raise Exception(result.error)
+        return result.result
+
+    async def _handle_get_connected(
+        self,
+        entity_id: str,
+        relationship_type: Optional[str] = None,
+        direction: str = "both",
+        at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        result = await self.graph_ops.get_connected(
+            entity_id, relationship_type=relationship_type, direction=direction, at=at
+        )
+        if not result.success:
+            raise Exception(result.error)
+        return result.result
+
+    async def _handle_end_relationship(
+        self,
+        relationship_id: str,
+        reason: Optional[str] = None,
+        user_id: Optional[str] = None,
+        at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """End an edge's interval -- the delete. The index caches `at = now`,
+        so a retired edge leaves it here, in the same code path as the write
+        (ADR-003 decision 2)."""
+        result = await self.graph_ops.end_relationship_tool(
+            relationship_id, reason=reason, user_id=user_id or "mcp-user", at=at
+        )
+        if not result.success:
+            raise Exception(result.error)
+        await self.graph_ops.db.commit()
+        if not result.result.get("already_ended"):
+            if self.index_service is not None:
+                await self.index_service.relationship_ended(self.graph_ops.db, relationship_id)
+            else:
+                self.graph.remove_relationship(relationship_id)
+        return result.result
+
+    async def _handle_get_graph_diff(self, since: str, until: Optional[str] = None) -> Dict[str, Any]:
+        result = await self.graph_ops.get_graph_diff(since, until)
+        if not result.success:
+            raise Exception(result.error)
         return result.result
 
     async def _handle_get_statistics(self) -> Dict[str, Any]:
