@@ -26,8 +26,9 @@ protocol and the edge table, and both changes are hard:
   the table did not have. `--verify` now compares the live schema against the
   models and fails on that state instead of passing it.
 - **Clients:** the Python client (blowing-off, in this repo) is v3. The
-  TypeScript client (KittenKong, `adrianco/the-goodies-typescript`) must be on
-  its matching v3 release before it reconnects.
+  TypeScript client (KittenKong) must be on its matching release before it
+  reconnects: **`adrianco/the-goodies-typescript` tag `v0.5.0`** pairs with
+  this server's `v0.5.0`.
 
 Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
 below; the migration detects which shape it is starting from.
