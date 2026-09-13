@@ -156,17 +156,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install flake8 black isort mypy
 
-      - name: Run linting
+      - name: Run linting (errors)
+        # NO `|| true`. This select is the error class, not the style class:
+        # E9 syntax errors, F82 undefined names, F63/F7 broken comparisons and
+        # statements. Every one of them is code that cannot work, and the repo
+        # passes them today -- so the gate costs nothing until someone breaks
+        # something, which is the only moment a gate is worth having.
+        #
+        # The style pass below stays advisory, deliberately: 180 pre-existing
+        # findings would make it a wall of noise that gets ignored, and an
+        # ignored gate is the `|| true` we are removing, just spelled longer.
+        #
+        # This repo has been bitten four times by CI steps that reported success
+        # without checking anything -- `pytest || true`, validate-dependencies'
+        # `|| echo` no-ops, that job silently importing from the checkout via an
+        # inherited PYTHONPATH, and graphify's post-commit hook backgrounding its
+        # rebuild so a failure never reached git. This step was the fifth.
         run: |
-          # Run flake8 (allow to fail)
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics || true
-          
-          # Check black formatting (don't modify files)
-          black --check . --diff || true
-          
-          # Check import sorting
-          isort --check-only --diff . || true
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Run linting (style, advisory)
+        # Advisory by design, and `continue-on-error` rather than `|| true` so
+        # the run is marked as having a finding instead of reporting a clean
+        # pass. The distinction is the whole point: a reader of the CI summary
+        # can see there is something here.
+        continue-on-error: true
+        run: |
+          flake8 . --count --max-complexity=10 --max-line-length=127 --statistics
+          black --check . --diff
+          isort --check-only --diff .
 
   integration-test:
     name: Integration Tests

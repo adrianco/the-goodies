@@ -1,6 +1,10 @@
 # ADR-004: Temporal model — as-of queries, interval edges, bitemporal-lite
 
-**Status:** Proposed (v2 — rewritten 2026-08-01 after the as-of-query requirement landed; supersedes the "graph is current" draft)
+**Status:** Partially implemented · proposed 2026-08-01 (v2 — rewritten after the as-of-query requirement landed; supersedes the "graph is current" draft) · §1/§2/§4/§5/§6 landed 2026-08-22 on `feat/v3-temporal`.
+
+**What is done:** §1 interval edges (`(id, valid_from)` primary key, end-and-insert, version pins and their FKs dropped, migration in `funkygibbon/migrate.py::_migrate_edges_to_intervals`); §2 valid time carried on the wire and stored verbatim, with the end-clamp so a lagging clock cannot mint a negative interval; §4 structural tombstones; §5 keep-everything retention; §6 edge intervals sync as immutable rows and an end-event travels as an ordinary change.
+
+**What is NOT done — §3, the as-of query surface.** There is no `snapshot(at)`, no `at` parameter on REST/MCP/client reads, and no `diff(T1, T2)`. The *data* is now shaped to answer as-of questions and the model-level predicate (`EntityRelationship.is_current_at`) exists and is tested, but nothing exposes it: every read still answers `at = now`. Code comments that reference "snapshot() (ADR-004 §3.4)" are naming the intended caller, not an existing function. This is the remaining Stage E work and it is the reason the ADR is not simply "Implemented".
 
 ## Context
 
@@ -64,6 +68,8 @@ Edge interval rows sync as immutable rows exactly like entity versions: idempote
 - One real migration: add interval columns (backfill `valid_from` from `created_at`, `valid_to` null), drop the pinned-version FKs, and change the edge write path from update-in-place to end+insert. Both installs controlled; the edge count is 461.
 - Clients replicate the temporal schema and answer as-of locally with the same resolution rule (ADR-009 v2) — every query takes `at`, omitted = now, so "current" is nowhere a special case.
 - The conformance suite (ADR-010) gains snapshot invariants: `snapshot(T)` is internally consistent (no dangling edges), stable under replay, and `diff(T1,T2) ∘ snapshot(T1) = snapshot(T2)`.
+
+*Prior art and scale evidence for everything above: [ADR-014](ADR-014-temporal-prior-art-and-platform.md) — this design is the Bitemporal Conceptual Data Model (Snodgrass & Jensen 1994 → SQL:2011), edges in the "Valid Edge Representation"; §3's snapshot/diff are the literature's named operators; and the query costs are measured at ADR-001's worst case.*
 
 ## Alternatives considered
 

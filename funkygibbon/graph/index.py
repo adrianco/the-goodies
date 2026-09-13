@@ -31,8 +31,13 @@ from ..repositories.graph import GraphRepository
 
 
 def is_tombstoned(entity: Entity) -> bool:
-    """True when an entity version is a delete tombstone (PROTOCOL.md §8)."""
-    return bool((entity.content or {}).get("deleted"))
+    """True when an entity version is a delete tombstone (PROTOCOL.md §8).
+
+    Kept as a module-level function because callers and tests import it by this
+    name; the predicate itself now lives on the model, so the index and the
+    repositories cannot drift apart on what "deleted" means.
+    """
+    return entity.is_tombstone
 
 
 @dataclass

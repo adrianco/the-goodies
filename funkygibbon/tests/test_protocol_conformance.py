@@ -29,6 +29,7 @@ ordering, watermark persistence) are asserted in the client suites.
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -39,7 +40,7 @@ from fastapi.testclient import TestClient
 import funkygibbon.database as dbmod
 from funkygibbon.api.app import create_app
 from funkygibbon.config import settings
-from inbetweenies.models import Entity
+from inbetweenies.models import Entity, EntityRelationship
 
 # --- Domain vocabulary -------------------------------------------------------
 # The ADR-012 seam. Today these are the house vocabulary; after the abstraction
@@ -94,26 +95,47 @@ def entity_change(change_type, *, id, version, name="N", content=None,
     }
 
 
-def edge(id, *, from_id, from_version, to_id, to_version, properties=None):
-    return {
+def edge(id, *, from_id, to_id, properties=None, valid_from=None, valid_to=None):
+    """One edge interval on the wire (PROTOCOL.md §1/§3).
+
+    `from_version`/`to_version` were required parameters that the body then
+    discarded — vestiges of the pinned-edge era. The interval bounds replace
+    them and are read.
+    """
+    body = {
         "id": id,
         "from_entity_id": from_id,
         "to_entity_id": to_id,
         "relationship_type": RELATIONSHIP_TYPE, "properties": properties or {},
     }
+    if valid_from is not None:
+        body["valid_from"] = valid_from.isoformat()
+    if valid_to is not None:
+        body["valid_to"] = valid_to.isoformat()
+    return body
 
 
 def sync(client, headers, sync_type="full", changes=None, since=None):
     body = {
         "protocol_version": "inbetweenies-v3", "device_id": "conformance-device",
         "user_id": USER, "sync_type": sync_type, "changes": changes or [],
-        "vector_clock": {"clocks": {}},
     }
     if since is not None:
         body["filters"] = {"since": since}
     response = client.post("/api/v1/sync/", json=body, headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def stored_relationships(rel_id):
+    """Every persisted interval of one edge, as ORM rows."""
+    async def _read():
+        async with dbmod.async_session() as session:
+            result = await session.execute(
+                select(EntityRelationship).where(EntityRelationship.id == rel_id)
+            )
+            return list(result.scalars().all())
+    return asyncio.run(_read())
 
 
 def stored_versions(entity_id):
@@ -185,7 +207,7 @@ class TestAcknowledgement:
         body = sync(client, headers, changes=[
             entity_change("create", id="A", version=v1),
             entity_change("create", id="B", version=v2, rels=[
-                edge("EDGE", from_id="B", from_version=v2, to_id="A", to_version=v1)
+                edge("EDGE", from_id="B", to_id="A")
             ]),
         ])
 
@@ -197,8 +219,7 @@ class TestAcknowledgement:
         v1 = Entity.create_version("a")
         body = sync(client, headers, changes=[
             entity_change("create", id="A", version=v1, rels=[
-                edge("EDGE", from_id="A", from_version=v1,
-                     to_id="NOT-HERE", to_version="v-missing")
+                edge("EDGE", from_id="A", to_id="NOT-HERE")
             ]),
         ])
 
@@ -270,7 +291,7 @@ class TestApplyOrdering:
         v1, v2 = Entity.create_version("a"), Entity.create_version("b")
         body = sync(client, headers, changes=[
             entity_change("create", id="FIRST", version=v1, rels=[
-                edge("EDGE", from_id="FIRST", from_version=v1, to_id="LATER", to_version=v2)
+                edge("EDGE", from_id="FIRST", to_id="LATER")
             ]),
             entity_change("create", id="LATER", version=v2),
         ])
@@ -405,15 +426,127 @@ class TestTombstones:
 
 
 # --------------------------------------------------------------------------- #
+# §1/§3 Edge intervals — the v3 contract a port is built from
+# --------------------------------------------------------------------------- #
+class TestEdgeIntervals:
+    """PROTOCOL.md §3's three inbound shapes, asserted clause by clause.
+
+    These sit in the conformance suite rather than only in the server's own
+    tests because they are the half of v3 a port gets wrong silently: a v2-shaped
+    client that omits the interval fields does not fail, it just stops being able
+    to delete an edge and dates all of its history to the sync instant.
+    """
+
+    def _endpoints(self, client, headers):
+        versions = [Entity.create_version(USER) for _ in range(3)]
+        sync(client, headers, "full", [
+            entity_change("create", id="lamp", version=versions[0], name="Lamp"),
+            entity_change("create", id="kitchen", version=versions[1], name="Kitchen"),
+            entity_change("create", id="hall", version=versions[2], name="Hall"),
+        ])
+
+    def test_an_assert_opens_an_interval_at_the_client_edit_time(self, client, headers):
+        """§1: both bounds are on the valid-time axis, stored verbatim."""
+        self._endpoints(client, headers)
+        edited = datetime(2026, 3, 1, 14, 0, tzinfo=timezone.utc)
+        sync(client, headers, "full", [
+            {"change_type": "update", "entity": None,
+             "relationships": [edge("e1", from_id="lamp", to_id="kitchen",
+                                    valid_from=edited)]},
+        ])
+
+        rows = stored_relationships("e1")
+        assert len(rows) == 1
+        assert rows[0].valid_from.replace(tzinfo=timezone.utc) == edited
+        assert rows[0].valid_to is None
+
+    def test_an_end_event_closes_the_interval_and_opens_none(self, client, headers):
+        """§3: `valid_to` set is how a client deletes or moves an edge."""
+        self._endpoints(client, headers)
+        began = datetime(2026, 3, 1, 14, 0, tzinfo=timezone.utc)
+        ended = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
+        sync(client, headers, "full", [
+            {"change_type": "update", "entity": None,
+             "relationships": [edge("e1", from_id="lamp", to_id="kitchen",
+                                    valid_from=began)]},
+        ])
+        body = sync(client, headers, "full", [
+            {"change_type": "update", "entity": None,
+             "relationships": [edge("e1", from_id="lamp", to_id="kitchen",
+                                    valid_from=began, valid_to=ended)]},
+        ])
+
+        assert body["applied_relationships"] == ["e1"]
+        rows = stored_relationships("e1")
+        assert len(rows) == 1, "an end event must not open an interval"
+        assert rows[0].valid_to is not None
+
+    def test_a_move_leaves_both_intervals_with_a_shared_boundary(self, client, headers):
+        """§1: half-open intervals tile — exactly one edge current at any T."""
+        self._endpoints(client, headers)
+        march = datetime(2026, 3, 1, 14, 0, tzinfo=timezone.utc)
+        june = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
+        sync(client, headers, "full", [
+            {"change_type": "update", "entity": None,
+             "relationships": [edge("e1", from_id="lamp", to_id="kitchen",
+                                    valid_from=march)]},
+        ])
+        sync(client, headers, "full", [
+            {"change_type": "update", "entity": None,
+             "relationships": [edge("e1", from_id="lamp", to_id="hall",
+                                    valid_from=june)]},
+        ])
+
+        rows = sorted(stored_relationships("e1"), key=lambda r: r.valid_from)
+        assert len(rows) == 2
+        assert rows[0].valid_to == rows[1].valid_from
+        for moment in (march, june, june + timedelta(days=1)):
+            assert len([r for r in rows if r.is_current_at(moment)]) == 1
+
+    def test_an_unchanged_repush_writes_nothing(self, client, headers):
+        """§3: a retried sync must not shred one fact into adjacent slivers."""
+        self._endpoints(client, headers)
+        began = datetime(2026, 3, 1, 14, 0, tzinfo=timezone.utc)
+        change_body = {"change_type": "update", "entity": None,
+                       "relationships": [edge("e1", from_id="lamp", to_id="kitchen",
+                                              valid_from=began)]}
+        for _ in range(3):
+            sync(client, headers, "full", [change_body])
+
+        assert len(stored_relationships("e1")) == 1
+
+
+# --------------------------------------------------------------------------- #
 # §9 Reserved fields
 # --------------------------------------------------------------------------- #
 class TestReservedFields:
 
-    def test_vector_clock_is_echoed_and_never_interpreted(self, client, headers):
-        """§9: reserved. A port must round-trip it without depending on it."""
+    def test_vector_clock_is_gone_from_the_response(self, client, headers):
+        """§9: removed in v3, not reserved (ADR-005 §3).
+
+        It was echoed back unchanged and never read. Keeping it as a reserved
+        field advertised causal ordering the server does not do, and every port
+        had to round-trip it for nothing.
+        """
         body = sync(client, headers, "full")
 
-        assert "vector_clock" in body
+        assert "vector_clock" not in body
+
+    def test_an_unknown_request_field_is_ignored_rather_than_fatal(self, client, headers):
+        """A v2-shaped client still sends `vector_clock`. It must be dropped,
+        not 400 — the protocol version check is the one that rejects v2, and it
+        should be the only thing that does, so the error names the real cause."""
+        resp = client.post(
+            "/api/v1/sync/",
+            headers=headers,
+            json={
+                "protocol_version": "inbetweenies-v3",
+                "device_id": "dev1", "user_id": "alice",
+                "sync_type": "full", "changes": [],
+                "vector_clock": {"clocks": {}},
+            },
+        )
+        assert resp.status_code == 200, resp.text
 
     def test_cursor_is_null_when_the_stream_is_drained(self, client, headers):
         """No longer reserved — ADR-002 §4 implemented it, as the previous
@@ -482,8 +615,7 @@ class TestWireProtocol:
 
         body = sync(client, headers, changes=[{
             "change_type": "update", "entity": None,
-            "relationships": [edge("EDGE", from_id="A", from_version=v1,
-                                   to_id="B", to_version=v2)],
+            "relationships": [edge("EDGE", from_id="A", to_id="B")],
         }])
 
         assert body["applied_relationships"] == ["EDGE"]

@@ -187,6 +187,93 @@ class TestServerSeq:
         assert loser.server_seq is not None
 
 
+class TestEveryWritePathMaintainsTheInvariants:
+    """ADR-002 §1-2 hold for ALL writers, not just the sync apply path.
+
+    `GraphRepository.store_entity`'s docstring already said why this matters --
+    "a column that only one writer maintains is worse than no column: readers
+    trust it, and the paths that skip it leave two rows claiming to be current
+    with nothing to say which is right" -- and then a second writer skipped it.
+    Every existing test in this file drove one of the two stamping paths, so
+    nothing noticed.
+    """
+
+    def _mcp_update(self, entity_id, name):
+        """Drive the MCP tools' write path (SQLGraphOperations)."""
+        import asyncio as _asyncio
+        from funkygibbon.repositories.graph_impl import SQLGraphOperations
+
+        async def _run():
+            async with dbmod.async_session() as session:
+                await SQLGraphOperations(session).update_entity(
+                    entity_id, {"name": name}, USER
+                )
+                await session.commit()
+        _asyncio.run(_run())
+
+    def _mcp_store(self, entity_id, version):
+        import asyncio as _asyncio
+        from funkygibbon.repositories.graph_impl import SQLGraphOperations
+        from inbetweenies.models import EntityType, SourceType
+
+        async def _run():
+            async with dbmod.async_session() as session:
+                await SQLGraphOperations(session).store_entity(Entity(
+                    id=entity_id, version=version,
+                    entity_type=EntityType.DEVICE, name="via-mcp", content={},
+                    source_type=SourceType.MANUAL, user_id=USER, parent_versions=[],
+                ))
+                await session.commit()
+        _asyncio.run(_run())
+
+    def test_the_mcp_write_path_stamps_a_server_seq(self, client, headers):
+        """Without a stamp the row is invisible to every cursor delta -- and
+        silently so, because `server_seq > :cursor` is NULL for a NULL, which
+        excludes the row rather than raising."""
+        self._mcp_store("M1", Entity.create_version("a"))
+
+        assert _rows("M1")[0].server_seq is not None
+
+    def test_the_mcp_update_path_demotes_the_superseded_version(self, client, headers):
+        """Two rows both marked current is not a cosmetic problem.
+
+        `GraphRepository.get_entity` resolves the current row with
+        `where is_latest limit 1`, so with two matches it returns whichever the
+        database yields -- and REST and MCP could then report different current
+        versions of the same entity.
+        """
+        self._mcp_store("M2", Entity.create_version("a"))
+        self._mcp_update("M2", "via-mcp v2")
+
+        rows = _rows("M2")
+        assert len(rows) == 2, "an update must append a version, not overwrite"
+        assert sum(1 for r in rows if r.is_latest) == 1, (
+            "exactly one row per id may claim to be current"
+        )
+        assert next(r for r in rows if r.is_latest).name == "via-mcp v2"
+
+    def test_the_mcp_update_path_stamps_the_new_version_too(self, client, headers):
+        self._mcp_store("M3", Entity.create_version("a"))
+        self._mcp_update("M3", "via-mcp v2")
+
+        assert all(r.server_seq is not None for r in _rows("M3"))
+
+    def test_all_three_writers_share_one_sequence(self, client, headers):
+        """A cursor is a position in ONE order. Two allocators would collide,
+        and a client would skip whichever row lost the tie."""
+        client.post("/api/v1/graph/entities", headers=headers, json={
+            "entity_type": "device", "name": "via-rest", "content": {},
+            "source_type": "manual", "user_id": USER,
+        })
+        _sync(client, headers, [_change("create", id="VIA-SYNC",
+                                        version=Entity.create_version("a"))])
+        self._mcp_store("VIA-MCP", Entity.create_version("a"))
+
+        seqs = [r.server_seq for r in _rows()]
+        assert None not in seqs, "every stored row carries a stamp"
+        assert len(seqs) == len(set(seqs)), "stamps are unique across writers"
+
+
 class TestAtomicPushBatch:
     """ADR-011 §3 — a push lands whole or not at all."""
 

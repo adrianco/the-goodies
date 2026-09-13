@@ -45,7 +45,34 @@ import json
 from .protocol import InbetweeniesProtocol
 from inbetweenies.sync import SyncState, SyncResult, Change, Conflict, SyncOperation
 from ..repositories import SyncMetadataRepository
-from inbetweenies.models import Entity, EntityType, SourceType
+from inbetweenies.models import (
+    Entity, EntityRelationship, EntityType, RelationshipType, SourceType,
+)
+
+
+
+def _parse_bound(value):
+    """Parse a wire interval bound into an aware UTC datetime (None passes through).
+
+    The bounds arrive as ISO-8601 strings and must not reach the model as
+    strings: every comparison in `is_current_at` would then quietly do the wrong
+    thing rather than raising.
+    """
+    if value is None or isinstance(value, datetime):
+        return value if value is None or value.tzinfo else value.replace(tzinfo=timezone.utc)
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _sort_key(value):
+    """Order interval starts, tolerating None and the naive/aware mix.
+
+    An unstamped start sorts oldest: a row that has never been given a bound is
+    by definition not the newest interval of its edge.
+    """
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 class SyncEngine:
@@ -117,11 +144,19 @@ class SyncEngine:
             # Process server changes
             server_changes, conflicts = self.protocol.parse_sync_delta(sync_response)
 
-            # Apply server changes
+            # Apply server changes.
+            #
+            # One store rewrite for the whole batch, not one per row: each
+            # store_* call otherwise rewrites four JSON files and fsyncs each,
+            # so applying a pulled batch cost O(rows) full-store rewrites. That
+            # crossed the client's own 5-second request timeout once the server
+            # began sending edge intervals alongside entities (ADR-005 §3) and
+            # a sync went from ~35 rows to ~85.
             pulled_count = 0
-            for change in server_changes:
-                if await self._apply_single_change(change):
-                    pulled_count += 1
+            with self.graph_operations.batch_writes():
+                for change in server_changes:
+                    if await self._apply_single_change(change):
+                        pulled_count += 1
 
             # Push local changes if any
             pushed_entities = 0
@@ -237,11 +272,25 @@ class SyncEngine:
         return changes
 
     async def _get_relationship(self, relationship_id: str):
-        """Look up a single relationship by id from the local graph."""
-        for relationship in await self.graph_operations.get_relationships():
-            if relationship.id == relationship_id:
-                return relationship
-        return None
+        """Look up the newest interval of one edge, current or not.
+
+        ADR-004 §1: reads default to the current graph, but the push path is
+        the one caller that must see a *retired* interval — an edge the user
+        just deleted locally is pending precisely because it ended, and a
+        current-only lookup would find nothing and drop the change on the floor
+        forever. Newest-first so a moved edge pushes the interval that carries
+        the move.
+        """
+        matches = [
+            relationship
+            for relationship in await self.graph_operations.get_relationships(
+                include_all_versions=True
+            )
+            if relationship.id == relationship_id
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda r: _sort_key(r.valid_from))
 
     def mark_entity_for_sync(self, entity_id: str):
         """Explicitly queue an entity for the next push.
@@ -281,24 +330,63 @@ class SyncEngine:
 
         try:
             entity_data = change.data
-            entity = Entity(
-                id=entity_data.get('id'),
-                version=entity_data.get('version', ''),
-                entity_type=EntityType(entity_data.get('entity_type', 'unknown')),
-                name=entity_data.get('name', ''),
-                content=entity_data.get('content', {}),
-                source_type=SourceType(entity_data.get('source_type', SourceType.IMPORTED)),
-                parent_versions=entity_data.get('parent_versions', []),
-                user_id=entity_data.get('user_id', 'sync')
-            )
-            # mark_dirty=False: this version came FROM the server, so queuing it
-            # for push would bounce the server's own change straight back.
-            await self.graph_operations.store_entity(entity, mark_dirty=False)
+            # PROTOCOL.md §5: entities before relationships. `entity_id` is
+            # empty on an edge-only change, whose endpoints are already local.
+            if change.entity_id:
+                entity = Entity(
+                    id=entity_data.get('id'),
+                    version=entity_data.get('version', ''),
+                    entity_type=EntityType(entity_data.get('entity_type', 'unknown')),
+                    name=entity_data.get('name', ''),
+                    content=entity_data.get('content', {}),
+                    source_type=SourceType(entity_data.get('source_type', SourceType.IMPORTED)),
+                    parent_versions=entity_data.get('parent_versions', []),
+                    user_id=entity_data.get('user_id', 'sync')
+                )
+                # mark_dirty=False: this version came FROM the server, so queuing it
+                # for push would bounce the server's own change straight back.
+                await self.graph_operations.store_entity(entity, mark_dirty=False)
+
+            self._apply_pulled_relationships(change)
             return True
 
         except Exception as e:
             print(f"Error applying change: {e}")
             return False
+
+    def _apply_pulled_relationships(self, change: Change) -> None:
+        """Store the edge intervals riding on a pulled change (ADR-005 §3).
+
+        These were dropped on the floor until the server started sending them:
+        `change.relationships` existed on the way out and was never read on the
+        way in. A client could push topology and never receive any, so a fresh
+        replica held every entity in the house and no edges between them.
+
+        A pending local edit for the same edge id wins, exactly as it does for
+        entities: the pull-guard exists so an offline edit is not overwritten by
+        the server's version before it has been pushed and adjudicated.
+        """
+        if not change.relationships:
+            return
+
+        pending = self.graph_operations.get_pending_relationships()
+        for raw in change.relationships:
+            if raw.get("id") in pending:
+                continue
+            self.graph_operations.storage.store_relationship(
+                EntityRelationship(
+                    id=raw["id"],
+                    from_entity_id=raw["from_entity_id"],
+                    to_entity_id=raw["to_entity_id"],
+                    relationship_type=RelationshipType(raw["relationship_type"]),
+                    properties=raw.get("properties") or {},
+                    user_id=raw.get("user_id"),
+                    valid_from=_parse_bound(raw.get("valid_from")),
+                    valid_to=_parse_bound(raw.get("valid_to")),
+                ),
+                # Same reason as store_entity above: this came FROM the server.
+                mark_dirty=False,
+            )
 
     async def _push_local_changes(self, changes: List[Change]) -> Dict[str, Any]:
         """Push local changes to server."""

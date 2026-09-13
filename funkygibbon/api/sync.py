@@ -18,10 +18,13 @@ from funkygibbon.graph.index_service import write_through_applied_changes
 from inbetweenies.models import (
     Entity, EntityRelationship, EntityType, RelationshipType, SourceType,
 )
+# Interval clamps compare a wire datetime against a stored one, and SQLite
+# hands back naive values however they were written (see the helper's docstring).
+from inbetweenies.models.relationship import _as_aware
 from inbetweenies.sync import (
     BlobChange,
-    VectorClock, EntityChange, RelationshipChange, SyncChange,
-    SyncFilters, SyncRequest, ConflictInfo, SyncStats, SyncResponse,
+    EntityChange, RelationshipChange, SyncChange,
+    SyncRequest, ConflictInfo, SyncStats, SyncResponse,
     ConflictResolver,
 )
 
@@ -157,6 +160,15 @@ class SyncHandler:
         if more_remain and entities:
             cursor = str(max(e.server_seq or 0 for e in entities))
 
+        # ADR-005 §3: the delta stream carries edge interval rows, not only
+        # entity versions. Without this the pull direction never mentioned a
+        # relationship at all -- `SyncChange.relationships` was populated on the
+        # way in and left empty on the way out -- so a client could push
+        # topology but never learn any, and a fresh replica synced every entity
+        # in the house and no edges between them. "Clients hold the whole graph"
+        # (README) was true of the nodes only.
+        edges_by_source = await self._outgoing_relationships(request, entities)
+
         response_changes = []
         for entity in entities:
             deleted = bool((entity.content or {}).get("deleted"))
@@ -169,6 +181,19 @@ class SyncHandler:
                 # the server directly -- which is the direct access this exists
                 # to remove.
                 blobs=await self._blobs_for(entity),
+                # §3.1: edges ride the change for their SOURCE entity, which is
+                # also what makes §5's apply ordering satisfiable -- the
+                # endpoint is in the same batch, ahead of the edge.
+                relationships=edges_by_source.pop(entity.id, []),
+            ))
+
+        # Edges whose source entity is not in this page still have to travel:
+        # the entity may have been synced long ago and only the edge changed.
+        # They ride an entity-less change, the same shape a client uses to push
+        # an orphan edge (§3.1).
+        for orphans in edges_by_source.values():
+            response_changes.append(SyncChange(
+                change_type="update", entity=None, relationships=orphans,
             ))
 
         duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
@@ -179,7 +204,6 @@ class SyncHandler:
             conflicts=conflicts,
             applied=applied,
             applied_relationships=applied_relationships,
-            vector_clock=request.vector_clock,  # RESERVED — echoed, never read
             server_time=server_time.isoformat(),
             cursor=cursor,
             state_digest=await self._state_digest(),
@@ -230,8 +254,97 @@ class SyncHandler:
         result = await self.db_session.execute(stmt)
         return list(result.scalars().all())
 
+    async def _outgoing_relationships(
+        self, request: SyncRequest, entities: List[Entity]
+    ) -> Dict[str, List[RelationshipChange]]:
+        """Edge intervals this request should receive, grouped by source id.
+
+        ADR-004 §6 / ADR-005 §3: **every immutable row**, not a latest-per-id
+        projection -- retired intervals included. A replica that only ever
+        received open intervals could answer "where is it now?" and nothing
+        else, which is the entire capability the temporal model exists to
+        provide. The rows are immutable, so shipping history is idempotent.
+
+        Delta bound is ``updated_at``, matching the entity path. The cursor
+        (``server_seq``) is an entity-table column and edges do not carry it, so
+        a cursor-paginated request falls back to the wall-clock bound for edges
+        -- correct, if less precise, and the same bound v2 clients already use
+        (PROTOCOL.md §4).
+        """
+        stmt = select(EntityRelationship)
+
+        if request.sync_type == "delta":
+            since = None
+            if request.filters and request.filters.since:
+                since = _to_utc(request.filters.since)
+            elif request.cursor:
+                since = await self._wallclock_for_cursor(request.cursor)
+            if since is not None:
+                stmt = stmt.where(EntityRelationship.updated_at > since)
+
+        # Oldest interval first, so a client applying in order sees each edge's
+        # history the way it happened rather than having to sort it.
+        stmt = stmt.order_by(EntityRelationship.valid_from)
+
+        grouped: Dict[str, List[RelationshipChange]] = {}
+        result = await self.db_session.execute(stmt)
+        for row in result.scalars().all():
+            grouped.setdefault(row.from_entity_id, []).append(
+                self._relationship_to_change(row)
+            )
+        return grouped
+
+    async def _wallclock_for_cursor(self, cursor: str) -> Optional[datetime]:
+        """The wall-clock position a `server_seq` cursor corresponds to.
+
+        Edges have no `server_seq` of their own (see the note in
+        `_outgoing_relationships`), so a cursor cannot bound them directly. The
+        best available translation is the timestamp of the newest entity row
+        the client already holds: everything it has seen was written no later
+        than that.
+
+        The first attempt at this derived the bound from the entities in the
+        CURRENT page and skipped it when that page was empty — which is the
+        common case once a client has caught up. `since` then stayed None, the
+        filter was never applied, and every delta poll re-sent the entire edge
+        table forever. Bounding on the cursor itself rather than on the page
+        makes a caught-up client's delta correctly empty.
+
+        Returns None for a cursor at or before the start, which is right: a
+        client holding nothing should receive the whole edge history.
+        """
+        try:
+            position = int(cursor)
+        except ValueError:
+            # The entity path raises a 400 for this; don't raise a second time
+            # from here, and don't invent a bound off a value we can't read.
+            return None
+
+        newest_seen = await self.db_session.scalar(
+            select(func.max(Entity.updated_at)).where(Entity.server_seq <= position)
+        )
+        return _to_utc(newest_seen)
+
+    @staticmethod
+    def _relationship_to_change(row: EntityRelationship) -> RelationshipChange:
+        """Convert a stored edge interval to its wire RelationshipChange."""
+        return RelationshipChange(
+            id=row.id,
+            from_entity_id=row.from_entity_id,
+            to_entity_id=row.to_entity_id,
+            relationship_type=getattr(
+                row.relationship_type, "value", row.relationship_type
+            ),
+            properties=row.properties or {},
+            # Sent verbatim: these are the client's own edit times on the
+            # valid-time axis (ADR-004 §2), and a replica that recomputed them
+            # locally would disagree with every other replica about the past.
+            valid_from=_to_utc(row.valid_from),
+            valid_to=_to_utc(row.valid_to),
+        )
+
     async def _state_digest(self) -> str:
-        """sha256 over the sorted (id, version) set of every current row.
+        """sha256 over the current entity versions AND the current edges.
 
         ADR-011 §4. Divergence between a server and a replica is otherwise
         undetectable: both sides believe they are in sync, because both applied
@@ -239,17 +352,50 @@ class SyncHandler:
         same computation over its own cache and resyncs on mismatch.
 
         Deliberately the degenerate form of the Merkle tree in the deleted sync
-        stack: at this scale one hash over the id/version pairs delivers the
+        stack: at this scale one hash over the identifying tuples delivers the
         verification value, and a tree would be machinery without a payload.
+
+        **Edges are in the digest, and that is not incidental.** Hashing only
+        entity ids and versions left the graph's entire topology outside the
+        convergence check — which mattered little while an edge was a mutable
+        row that followed its endpoints, and matters a great deal now that edges
+        carry independent history (ADR-004 §1). Two replicas could disagree
+        about which room every device is in and still produce identical
+        digests, so the one mechanism meant to catch silent divergence was blind
+        to exactly the half this protocol version changed.
+
+        Edges contribute `(id, valid_from)` — their primary key, and the pair
+        that distinguishes one interval of an edge from the next. Only open
+        intervals are hashed: the digest verifies agreement about *state*, and
+        replicas legitimately hold different depths of history depending on when
+        they first synced.
         """
-        result = await self.db_session.execute(
+        digest = hashlib.sha256()
+
+        entities = await self.db_session.execute(
             select(Entity.id, Entity.version)
             .where(Entity.is_latest.is_(True))
             .order_by(Entity.id)
         )
-        digest = hashlib.sha256()
-        for entity_id, version in result.all():
+        for entity_id, version in entities.all():
             digest.update(f"{entity_id}\x1f{version}\x1e".encode())
+
+        # The separator keeps the two sections from aliasing: without it an
+        # entity id could, in principle, be split so that the byte stream
+        # matched a different entity/edge division.
+        digest.update(b"\x1d")
+
+        edges = await self.db_session.execute(
+            select(EntityRelationship.id, EntityRelationship.valid_from)
+            .where(EntityRelationship.valid_to.is_(None))
+            .order_by(EntityRelationship.id, EntityRelationship.valid_from)
+        )
+        for edge_id, valid_from in edges.all():
+            stamp = _to_utc(valid_from)
+            digest.update(
+                f"{edge_id}\x1f{stamp.isoformat() if stamp else ''}\x1e".encode()
+            )
+
         return digest.hexdigest()
 
     async def _latest_entities(self) -> Dict[str, Entity]:
@@ -570,13 +716,19 @@ class SyncHandler:
         return True
 
     @staticmethod
-    def _edge_content_differs_impl(current, incoming, rel_type, properties) -> bool:
+    def _edge_content_differs_impl(current, incoming, rel_type, properties,
+                                   user_id=None) -> bool:
         """Would storing `incoming` change what the edge says? (ADR-004 §1)
 
         Only a real change opens a new interval. Without this, a client that
         re-pushes an unchanged edge on every sync would end and reopen the row
         each time, turning one continuous fact into a chain of slivers and
         making `snapshot(T)` answer correctly but read as churn.
+
+        ``user_id`` is part of what the edge says — it is the attribution the
+        audit log and the review queue read back. Leaving it out meant a
+        re-attribution (the same edge, now claimed by another user) compared
+        equal and was silently dropped.
         """
         return (
             current.from_entity_id != incoming.from_entity_id
@@ -584,17 +736,31 @@ class SyncHandler:
             or getattr(current.relationship_type, "value", current.relationship_type)
             != getattr(rel_type, "value", rel_type)
             or (current.properties or {}) != properties
+            or current.user_id != user_id
         )
 
     async def _persist_relationship(self, relationship: RelationshipChange,
                                     user_id: Optional[str] = None) -> bool:
-        """Persist one inbound edge; returns True if it is now stored (§3.1).
+        """Persist one inbound edge interval; True once it is stored (§3.1).
 
-        Idempotent on the relationship ``id`` (the primary key): re-pushing the
-        same edge updates that row rather than inserting a duplicate. Unlike
-        entities, relationships are not versioned — the row itself carries the
-        endpoint versions, so an edge that follows its endpoints onto a new
-        entity version is the same row with new ``*_entity_version`` values.
+        ADR-004 §1/§6: an edge is an immutable interval row keyed on
+        ``(id, valid_from)``. ``id`` is the logical edge; ``valid_from`` picks
+        the interval. Three inbound shapes, all idempotent:
+
+        * **assert** (``valid_to`` null) — the edge is true from ``valid_from``
+          onward. Opens a new interval, ending the predecessor at the same
+          instant if the content actually changed.
+        * **end-event** (``valid_to`` set) — the edge stopped being true. Closes
+          the matching row. This is how a client deletes or moves an edge, and
+          it is an ordinary change, not a special message type.
+        * **backfill** — a closed interval for a row we have never seen. Stored
+          as-is, so a replica that missed the live window still converges on the
+          same history.
+
+        ADR-004 §2: ``valid_from``/``valid_to`` are **client edit time**, stored
+        verbatim. Server time is only the fallback for a peer that sends
+        neither, and ``server_seq`` (the replication axis) is never consulted
+        here.
         """
         try:
             rel_type = RelationshipType(relationship.relationship_type)
@@ -622,9 +788,14 @@ class SyncHandler:
 
         now = datetime.now(timezone.utc)
         properties = dict(relationship.properties or {})
+        # The client's own interval is the truth about when the edit happened
+        # (ADR-004 §2). Only a peer that sends nothing falls back to server time.
+        incoming_from = _to_utc(relationship.valid_from) or now
+        incoming_to = _to_utc(relationship.valid_to)
 
         # The open interval for this logical edge, if any: the row that is
-        # currently true. Ended rows are history and are never touched again.
+        # currently true. Ended rows are history and are never touched again,
+        # with the single exception below of closing the row this change ends.
         current = await self.db_session.scalar(
             select(EntityRelationship).where(
                 EntityRelationship.id == relationship.id,
@@ -632,8 +803,17 @@ class SyncHandler:
             )
         )
 
+        if incoming_to is not None:
+            return await self._end_edge_interval(
+                relationship, rel_type, properties, user_id,
+                current=current, incoming_from=incoming_from,
+                incoming_to=incoming_to, now=now,
+            )
+
         if current is not None:
-            if not self._edge_content_differs_impl(current, relationship, rel_type, properties):
+            if not self._edge_content_differs_impl(
+                current, relationship, rel_type, properties, user_id
+            ):
                 # Idempotent re-push of an unchanged edge. Returning True without
                 # writing keeps the ack contract (the change was processed) while
                 # avoiding a spurious interval boundary — otherwise every retried
@@ -643,11 +823,73 @@ class SyncHandler:
             # ADR-004 §1: end the old row, never mutate it. This is the line that
             # makes prior topology recoverable — the previous implementation
             # assigned over these same fields and the old placement was gone.
-            current.valid_to = now
+            #
+            # The boundary is one instant shared by both rows: the predecessor's
+            # `valid_to` and the successor's `valid_from`. Because the interval
+            # is half-open (§1), that yields exactly one edge current at the
+            # handover. Clamped forward past the predecessor's own start so a
+            # client with a lagging clock cannot mint a negative-length row.
+            incoming_from = max(incoming_from, _as_aware(current.valid_from))
+            current.valid_to = incoming_from
+
+        return await self._insert_edge_interval(
+            relationship, rel_type, properties, user_id,
+            valid_from=incoming_from, valid_to=None, now=now,
+        )
+
+    async def _end_edge_interval(self, relationship, rel_type, properties, user_id,
+                                 *, current, incoming_from, incoming_to, now) -> bool:
+        """Apply an inbound change whose ``valid_to`` is set (ADR-004 §6).
+
+        "This edge stopped being true at T" travels as an ordinary change. It
+        closes a row; it never opens one, which is what distinguishes it from
+        the assert path and what makes an edge delete expressible on the wire
+        at all.
+        """
+        if current is not None:
+            # Clamp forward: an end can never precede its own start.
+            current.valid_to = max(incoming_to, _as_aware(current.valid_from))
+            await self.db_session.flush()
+            return True
+
+        # No open row. Either this end-event already landed (a retry), or we
+        # never saw the interval it closes.
+        existing = await self.db_session.get(
+            EntityRelationship, (relationship.id, incoming_from)
+        )
+        if existing is not None:
+            # Retry of an end we already applied. Idempotent: the row is
+            # immutable once closed, so nothing is rewritten.
+            return True
+
+        # Backfill: store the closed interval verbatim so a replica that missed
+        # the live window still converges on the same history.
+        return await self._insert_edge_interval(
+            relationship, rel_type, properties, user_id,
+            valid_from=incoming_from,
+            valid_to=max(incoming_to, incoming_from),
+            now=now,
+        )
+
+    async def _insert_edge_interval(self, relationship, rel_type, properties, user_id,
+                                    *, valid_from, valid_to, now) -> bool:
+        """Insert one interval row, tolerating a re-pushed identical key.
+
+        ``(id, valid_from)`` is the primary key, so a client replaying a change
+        it already sent would otherwise raise IntegrityError and fail the whole
+        batch transaction (ADR-011 §3). Rows are immutable, so an existing row
+        at that key already *is* the change: acknowledge and move on.
+        """
+        existing = await self.db_session.get(
+            EntityRelationship, (relationship.id, valid_from)
+        )
+        if existing is not None:
+            return True
 
         self.db_session.add(EntityRelationship(
             id=relationship.id,
-            valid_from=now,
+            valid_from=valid_from,
+            valid_to=valid_to,
             from_entity_id=relationship.from_entity_id,
             to_entity_id=relationship.to_entity_id,
             relationship_type=rel_type,

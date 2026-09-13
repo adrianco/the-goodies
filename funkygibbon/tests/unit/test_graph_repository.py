@@ -348,3 +348,48 @@ class TestGraphRepository:
             entity_types=[EntityType.DEVICE]
         )
         assert all(r.entity_type == EntityType.DEVICE for r in device_results)
+
+    async def test_a_tombstoned_entity_is_not_served_as_current(self, db_session: AsyncSession):
+        """PROTOCOL.md §8: a deleted entity is not part of the house.
+
+        A tombstone is `is_latest` for its id, so it comes back from the
+        latest-version query like any other current row. GraphIndex filtered it
+        out on its own, which is why traversal and /graph/statistics were right
+        while GET /graph/entities and find_similar served deleted entities as
+        though they still existed — two readers of the same table disagreeing
+        about what the house contains.
+
+        Found by the Martinez fixture the moment it grew its first tombstone:
+        with no deleted entity anywhere in the seed, there was nothing for the
+        end-to-end suite to disagree about.
+        """
+        repo = GraphRepository(db_session)
+        entity_id = str(uuid4())
+
+        live = Entity(
+            id=entity_id,
+            version=Entity.create_version("user"),
+            entity_type=EntityType.DEVICE,
+            name="Hallway Motion Sensor",
+            content={"type": "sensor"},
+            source_type=SourceType.MANUAL,
+            user_id="user",
+            parent_versions=[],
+        )
+        await repo.store_entity(live)
+        await db_session.commit()
+
+        assert [e.name for e in await repo.get_entities_by_type(EntityType.DEVICE)] \
+            == ["Hallway Motion Sensor"]
+
+        tombstone = live.create_new_version("user", {"content": {"deleted": True}})
+        await repo.store_entity(tombstone)
+        await db_session.commit()
+
+        assert await repo.get_entities_by_type(EntityType.DEVICE) == []
+
+        # ...but the row is still there, which is what makes a delete converge
+        # like any other edit rather than leaving a hole.
+        history = await repo.get_entities_by_type(EntityType.DEVICE, include_deleted=True)
+        assert [e.name for e in history] == ["Hallway Motion Sensor"]
+        assert history[0].is_tombstone

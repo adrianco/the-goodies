@@ -13,7 +13,6 @@ from typing import Dict, List, Any, Optional
 from sqlalchemy import (
     Boolean, Column, Index, Integer, JSON, String, DateTime, text
 )
-from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
 
@@ -166,6 +165,18 @@ class Entity(Base, InbetweeniesTimestampMixin):
             "created_at": self.created_at.isoformat() if hasattr(self.created_at, "isoformat") else self.created_at,
             "updated_at": self.updated_at.isoformat() if hasattr(self.updated_at, "isoformat") else self.updated_at
         }
+
+    @property
+    def is_tombstone(self) -> bool:
+        """Is this version a delete tombstone? (PROTOCOL.md §8)
+
+        Lives on the model rather than in ``funkygibbon.graph`` because the
+        repositories need it and cannot import from there — ``graph.index``
+        imports ``repositories.graph``, so the dependency only runs one way.
+        Putting it here also makes it available to the client, which has to
+        answer the same question about the same rows.
+        """
+        return bool((self.content or {}).get("deleted"))
 
     @classmethod
     def create_version(cls, user_id: str) -> str:

@@ -8,12 +8,12 @@ graph operations using SQLAlchemy for database access.
 from typing import List, Optional, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from sqlalchemy.orm import selectinload
 
 from inbetweenies.graph import GraphOperations, GraphSearch
 from inbetweenies.mcp import MCPTools
 from inbetweenies.models import Entity, EntityType, EntityRelationship, RelationshipType, SourceType
 from inbetweenies.models.blob import Blob, BlobStatus
+from .graph import apply_write_invariants
 
 
 class SQLGraphOperations(MCPTools):
@@ -75,7 +75,26 @@ class SQLGraphOperations(MCPTools):
         return blob.to_dict(include_data=include_data) if blob else None
 
     async def store_entity(self, entity: Entity) -> Entity:
-        """Store an entity in the database"""
+        """Store an entity, maintaining is_latest and server_seq (ADR-002 §1-2).
+
+        This is the MCP tools' write path — `create_entity`, `update_entity`
+        and attachment creation all land here — and it used to be a bare
+        `add()`. Two consequences, both live:
+
+        * `update_entity` left the superseded version marked `is_latest`
+          alongside its successor, so two rows claimed to be current.
+          `GraphRepository.get_entity` resolves with `where is_latest limit 1`,
+          which then returned whichever row the database happened to yield —
+          meaning REST and MCP could report different current versions of the
+          same entity.
+        * No `server_seq`, so the row was invisible to every cursor-based delta
+          (`NULL > n` is NULL) and could never replicate to a client.
+
+        Shared with GraphRepository rather than reimplemented, because two
+        implementations of an invariant is how they drifted apart the first
+        time.
+        """
+        await apply_write_invariants(self.db, entity)
         self.db.add(entity)
         await self.db.flush()
         return entity
@@ -96,8 +115,14 @@ class SQLGraphOperations(MCPTools):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_entities_by_type(self, entity_type: EntityType) -> List[Entity]:
-        """Get all entities of a specific type (latest versions only)"""
+    async def get_entities_by_type(self, entity_type: EntityType,
+                                   include_deleted: bool = False) -> List[Entity]:
+        """Get all entities of a specific type (latest versions only).
+
+        ``include_deleted`` admits tombstones (PROTOCOL.md §8); the default
+        excludes them, matching GraphRepository so the two backends cannot
+        answer "what is in this house?" differently.
+        """
         # Subquery to get latest version for each entity ID
         subquery = (
             select(Entity.id, Entity.version, Entity.created_at)
@@ -140,7 +165,13 @@ class SQLGraphOperations(MCPTools):
         )
 
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        # PROTOCOL.md §8: a tombstone is `is_latest` for its id, so it arrives
+        # here like any other current row and must not be served as live. See
+        # the longer note in GraphRepository.get_entities_by_type.
+        entities = list(result.scalars().all())
+        if include_deleted:
+            return entities
+        return [entity for entity in entities if not entity.is_tombstone]
 
     async def store_relationship(self, relationship: EntityRelationship) -> EntityRelationship:
         """Store a relationship in the database"""
@@ -158,9 +189,14 @@ class SQLGraphOperations(MCPTools):
         self,
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
-        rel_type: Optional[RelationshipType] = None
+        rel_type: Optional[RelationshipType] = None,
+        include_all_versions: bool = False
     ) -> List[EntityRelationship]:
-        """Get relationships with optional filters"""
+        """Get relationships with optional filters.
+
+        ``include_all_versions=True`` returns retired intervals as well as the
+        current ones — history, not state. Default is the current graph.
+        """
         conditions = []
 
         if from_id:
@@ -175,38 +211,27 @@ class SQLGraphOperations(MCPTools):
         if conditions:
             stmt = stmt.where(and_(*conditions))
 
+        # ADR-004 §1: "current" is a property of the edge's own interval, not
+        # of whether its pins happen to match the endpoints' latest versions.
+        # The old test was a proxy that broke on every endpoint version bump —
+        # an edge whose endpoint gained a version silently stopped being
+        # "latest" even though nothing about the edge had changed.
+        #
+        # The filter is unconditional. It used to be gated on
+        # `not hasattr(self, "_include_all_versions") and (from_id or to_id)`:
+        # an attribute nothing ever set (so the first half was always true) and
+        # an endpoint filter that has no bearing on currency (so the second half
+        # let every unfiltered query return retired intervals as live edges).
+        if not include_all_versions:
+            stmt = stmt.where(EntityRelationship.valid_to.is_(None))
+
         # ADR-004 §1: endpoints are no longer joinable from the edge row — the
         # pin that made from_entity/to_entity possible is gone, and an as-of
         # graph has no single endpoint version to eager-load. Callers resolve
         # endpoints by id (+ T) instead.
 
         result = await self.db.execute(stmt)
-        relationships = list(result.scalars().all())
-
-        # Filter to latest versions only if entity IDs are specified
-        if not hasattr(self, '_include_all_versions') and (from_id or to_id):
-            # Get latest versions of the entities
-            latest_versions = {}
-
-            for rel in relationships:
-                if rel.from_entity_id not in latest_versions:
-                    latest_from = await self.get_entity(rel.from_entity_id)
-                    if latest_from:
-                        latest_versions[rel.from_entity_id] = latest_from.version
-
-                if rel.to_entity_id not in latest_versions:
-                    latest_to = await self.get_entity(rel.to_entity_id)
-                    if latest_to:
-                        latest_versions[rel.to_entity_id] = latest_to.version
-
-            # ADR-004 §1: "current" is a property of the edge's interval, not of
-            # whether its pins happen to match the endpoints' latest versions.
-            # The old test was a proxy that broke on every endpoint version bump
-            # — an edge whose endpoint gained a version silently stopped being
-            # "latest" even though nothing about the edge had changed.
-            relationships = [rel for rel in relationships if rel.valid_to is None]
-
-        return relationships
+        return list(result.scalars().all())
 
     async def _fts_search(
         self,

@@ -11,10 +11,49 @@ from uuid import uuid4
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from ..models import Entity, EntityType, EntityRelationship, RelationshipType
 from .base import BaseRepository
+
+
+async def apply_write_invariants(db: AsyncSession, entity: Entity) -> Entity:
+    """Maintain `is_latest` and `server_seq` for one entity row (ADR-002 §1-2).
+
+    Extracted so that EVERY write path shares one implementation. It previously
+    lived only inside ``GraphRepository.store_entity``, whose own docstring
+    warned that "a column that only one writer maintains is worse than no
+    column: readers trust it, and the paths that skip it leave two rows claiming
+    to be current with nothing to say which is right." That is precisely what
+    ``SQLGraphOperations.store_entity`` — the MCP tools' write path — did: an
+    entity updated through `update_entity` left the old and the new version both
+    marked `is_latest`, both unstamped. `GraphRepository.get_entity` resolves
+    the current row with `where is_latest limit 1`, so REST and MCP could
+    disagree about which version of an entity is current, and a delta cursor
+    skipped the row entirely because `NULL > n` is NULL.
+
+    Idempotent, and safe to call on a row that already carries a stamp.
+    """
+    # `is not False`, not a truth test: a freshly constructed Entity has
+    # is_latest=None until flush, because the column default is applied by
+    # the INSERT rather than by __init__. A plain `if entity.is_latest:`
+    # therefore skips the demotion for exactly the common case — a new
+    # version — and leaves two rows marked current.
+    if entity.is_latest is not False:
+        entity.is_latest = True
+        # Demote the incumbent in the same transaction as the insert.
+        await db.execute(
+            update(Entity)
+            .where(Entity.id == entity.id,
+                   Entity.version != entity.version,
+                   Entity.is_latest.is_(True))
+            .values(is_latest=False)
+        )
+
+    if entity.server_seq is None:
+        next_seq = (await db.execute(select(func.max(Entity.server_seq)))).scalar()
+        entity.server_seq = (next_seq or 0) + 1
+
+    return entity
 
 
 class GraphRepository(BaseRepository[Entity]):
@@ -43,25 +82,7 @@ class GraphRepository(BaseRepository[Entity]):
         Returns:
             Stored entity
         """
-        # `is not False`, not a truth test: a freshly constructed Entity has
-        # is_latest=None until flush, because the column default is applied by
-        # the INSERT rather than by __init__. A plain `if entity.is_latest:`
-        # therefore skips the demotion for exactly the common case — a new
-        # version — and leaves two rows marked current.
-        if entity.is_latest is not False:
-            entity.is_latest = True
-            # Demote the incumbent in the same transaction as the insert.
-            await self.db.execute(
-                update(Entity)
-                .where(Entity.id == entity.id,
-                       Entity.version != entity.version,
-                       Entity.is_latest.is_(True))
-                .values(is_latest=False)
-            )
-        if entity.server_seq is None:
-            next_seq = (await self.db.execute(select(func.max(Entity.server_seq)))).scalar()
-            entity.server_seq = (next_seq or 0) + 1
-
+        await apply_write_invariants(self.db, entity)
         self.db.add(entity)
         await self.db.flush()
         return entity
@@ -96,12 +117,32 @@ class GraphRepository(BaseRepository[Entity]):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_entities_by_type(self, entity_type: EntityType) -> List[Entity]:
+    async def get_entities_by_ids(self, entity_ids) -> Dict[str, Entity]:
+        """Current row for each of ``entity_ids``, keyed by id.
+
+        The batched form of :meth:`get_entity`, and it reads the same recorded
+        answer (``is_latest``, ADR-002 §1) so the two can never disagree. Ids
+        with no current row are simply absent from the result — the caller
+        decides whether that is a dangling edge or a not-yet-synced entity.
+        """
+        ids = list(entity_ids)
+        if not ids:
+            return {}
+
+        result = await self.db.execute(
+            select(Entity).where(Entity.id.in_(ids), Entity.is_latest.is_(True))
+        )
+        return {entity.id: entity for entity in result.scalars().all()}
+
+    async def get_entities_by_type(self, entity_type: EntityType,
+                                   include_deleted: bool = False) -> List[Entity]:
         """
         Get all entities of a specific type (latest versions only).
 
         Args:
             entity_type: Type of entities to retrieve
+            include_deleted: include tombstone versions (PROTOCOL.md §8).
+                Default False -- a deleted entity is not part of the house.
 
         Returns:
             List of entities
@@ -123,7 +164,21 @@ class GraphRepository(BaseRepository[Entity]):
         )
 
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        # PROTOCOL.md §8: a tombstone is a version, so it is `is_latest` for
+        # its id and comes back from the query above like any other current
+        # row. It must not be served as a live entity.
+        #
+        # GraphIndex.load_from_storage already skipped tombstones on its own,
+        # which is why traversal and /graph/statistics were right while
+        # GET /graph/entities and find_similar served deleted entities as
+        # though they still existed -- two readers of the same table
+        # disagreeing about what the house contains. Filtering here makes the
+        # default correct for every caller and leaves the index's own check as
+        # belt and braces.
+        entities = list(result.scalars().all())
+        if include_deleted:
+            return entities
+        return [entity for entity in entities if not entity.is_tombstone]
 
     async def get_entity_versions(self, entity_id: str) -> List[Entity]:
         """
@@ -195,35 +250,28 @@ class GraphRepository(BaseRepository[Entity]):
         if conditions:
             stmt = stmt.where(and_(*conditions))
 
+        # ADR-004 §1: currency is the edge's OWN interval, and the filter is
+        # unconditional — not gated on whether an endpoint filter was supplied.
+        #
+        # The gate used to read `if not include_all_versions and (from_id or
+        # to_id)`, so any query without an endpoint filter silently returned
+        # ended intervals as though they were current. That is the path
+        # GraphIndex.load_from_storage takes (no from_id, no to_id), so a device
+        # that moved rooms stayed in both rooms for the life of the index.
+        #
+        # Pushed into SQL rather than applied in Python: `ix_rel_current` exists
+        # for exactly this predicate, and history is unbounded by design (§5) —
+        # loading every retired interval just to discard it is the one query
+        # here that gets worse as the house accumulates edits.
+        if not include_all_versions:
+            stmt = stmt.where(EntityRelationship.valid_to.is_(None))
+
         # ADR-004 §1: endpoints are no longer joinable from the edge row — the
         # pin that made from_entity/to_entity possible is gone. get_connected()
         # resolves them by id instead.
 
         result = await self.db.execute(stmt)
-        relationships = list(result.scalars().all())
-
-        # Filter to latest versions only if requested
-        if not include_all_versions and (from_id or to_id):
-            # Get latest versions of the entities
-            latest_versions = {}
-
-            for rel in relationships:
-                if rel.from_entity_id not in latest_versions:
-                    latest_from = await self.get_entity(rel.from_entity_id)
-                    if latest_from:
-                        latest_versions[rel.from_entity_id] = latest_from.version
-
-                if rel.to_entity_id not in latest_versions:
-                    latest_to = await self.get_entity(rel.to_entity_id)
-                    if latest_to:
-                        latest_versions[rel.to_entity_id] = latest_to.version
-
-            # ADR-004 §1: currency is the edge's own interval, not a comparison
-            # against its endpoints' latest versions. See graph_impl.py for the
-            # same change and the reason the old proxy was wrong.
-            relationships = [rel for rel in relationships if rel.valid_to is None]
-
-        return relationships
+        return list(result.scalars().all())
 
     async def search_entities(
         self,
@@ -293,20 +341,39 @@ class GraphRepository(BaseRepository[Entity]):
         Returns:
             List of connected entities with relationship info
         """
-        connected = []
-
+        outgoing = incoming = []
         if direction in ("outgoing", "both"):
             outgoing = await self.get_relationships(
                 from_id=entity_id,
                 rel_type=rel_type
             )
+        if direction in ("incoming", "both"):
+            incoming = await self.get_relationships(
+                to_id=entity_id,
+                rel_type=rel_type
+            )
 
+        # ADR-004 §1: the endpoints used to arrive free, eager-loaded through
+        # the version-pinned join that the interval model removed. Resolving
+        # them one `get_entity()` at a time inside the loops below replaced one
+        # query with one per edge — invisible on a test fixture, O(degree) round
+        # trips on a hub entity like a room. One batched read instead, which is
+        # what the eager load was doing anyway.
+        endpoint_ids = (
+            {rel.to_entity_id for rel in outgoing}
+            | {rel.from_entity_id for rel in incoming}
+        )
+        endpoints = await self.get_entities_by_ids(endpoint_ids)
+
+        connected = []
+
+        if direction in ("outgoing", "both"):
             for rel in outgoing:
                 # ADR-004 §1: resolve the endpoint by id rather than reading a
-                # pinned join. get_entity() returns the latest version, which is
-                # the right answer for `at = now`; the `at` parameter threads
-                # through here when snapshot() lands (ADR-004 §3.4).
-                target = await self.get_entity(rel.to_entity_id)
+                # pinned join. The latest version is the right answer for
+                # `at = now`; the `at` parameter threads through here when
+                # snapshot() lands (ADR-004 §3.4).
+                target = endpoints.get(rel.to_entity_id)
                 if target:
                     connected.append({
                         "entity": target,
@@ -315,13 +382,8 @@ class GraphRepository(BaseRepository[Entity]):
                     })
 
         if direction in ("incoming", "both"):
-            incoming = await self.get_relationships(
-                to_id=entity_id,
-                rel_type=rel_type
-            )
-
             for rel in incoming:
-                source = await self.get_entity(rel.from_entity_id)
+                source = endpoints.get(rel.from_entity_id)
                 if source:
                     connected.append({
                         "entity": source,

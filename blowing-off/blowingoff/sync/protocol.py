@@ -70,7 +70,7 @@ import httpx
 from inbetweenies.models import Entity
 from inbetweenies.sync import Change, Conflict, SyncOperation
 from inbetweenies.sync import (
-    VectorClock, EntityChange, RelationshipChange, SyncChange,
+    EntityChange, RelationshipChange, SyncChange,
     SyncFilters, SyncRequest, SyncResponse
 )
 
@@ -108,7 +108,6 @@ class InbetweeniesProtocol:
             device_id=self.client_id,
             user_id="client-user",  # TODO: get from auth
             sync_type="delta" if last_sync else "full",
-            vector_clock=VectorClock(),
             changes=[],
             filters=filters
         )
@@ -156,7 +155,15 @@ class InbetweeniesProtocol:
                         from_entity_id=relationship["from_entity_id"],
                         to_entity_id=relationship["to_entity_id"],
                         relationship_type=relationship["relationship_type"],
-                        properties=relationship.get("properties") or {}
+                        properties=relationship.get("properties") or {},
+                        # ADR-004 §2/§6: the interval is the payload. Without
+                        # these the server had no way to learn that an edge had
+                        # ended — a local delete or a move looked identical to
+                        # an unchanged re-push and was discarded as idempotent —
+                        # and it stamped its own clock as the edit time, which
+                        # is the replication axis, not the query axis.
+                        valid_from=relationship.get("valid_from"),
+                        valid_to=relationship.get("valid_to"),
                     )
                     for relationship in change.relationships
                 ]
@@ -169,7 +176,6 @@ class InbetweeniesProtocol:
             device_id=self.client_id,
             user_id="client-user",  # TODO: get from auth
             sync_type="delta",
-            vector_clock=VectorClock(),
             changes=sync_changes
         )
 
@@ -199,6 +205,15 @@ class InbetweeniesProtocol:
 
         # Parse changes from response
         for sync_change in sync_response.changes:
+            # ADR-005 §3: edges now arrive on the pull as well as the push, so
+            # they are carried onto the Change rather than dropped. They used to
+            # be discarded here silently -- the server never sent any, so the
+            # omission cost nothing and was invisible.
+            relationships = [
+                relationship.model_dump(mode="json")
+                for relationship in sync_change.relationships
+            ]
+
             if sync_change.entity:
                 # Convert to internal Change format
                 # Derive updated_at from the version (the wire EntityChange has no
@@ -213,9 +228,25 @@ class InbetweeniesProtocol:
                     data=sync_change.entity.model_dump(),
                     updated_at=updated_at,
                     sync_id=sync_change.entity.version,
-                    client_sync_id=None  # Server changes don't have client sync ID
+                    client_sync_id=None,  # Server changes don't have client sync ID
+                    relationships=relationships,
                 )
                 changes.append(change)
+            elif relationships:
+                # An entity-less change: edges whose source entity is not in
+                # this page, because it was synced earlier and only the edge
+                # changed. Mirrors the shape the client uses to push an orphan
+                # edge (PROTOCOL.md §3.1).
+                changes.append(Change(
+                    entity_type="",
+                    entity_id="",
+                    operation=SyncOperation.UPDATE,
+                    data={},
+                    updated_at=datetime.now(timezone.utc),
+                    sync_id="",
+                    client_sync_id=None,
+                    relationships=relationships,
+                ))
 
         # Parse conflicts from response
         for conflict_info in sync_response.conflicts:

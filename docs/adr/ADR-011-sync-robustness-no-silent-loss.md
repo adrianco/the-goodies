@@ -1,6 +1,6 @@
 # ADR-011: Sync robustness — no write is ever silently lost
 
-**Status:** Proposed · 2026-08-01 · Companion to ADR-005 (the ladder decides *who wins*; this ADR guarantees *nobody vanishes*). Carries the salvage from the deleted sync stack (ADR-008) and one live bug.
+**Status:** Partially implemented · proposed 2026-08-01 · §1/§2/§3/§4 landed (§4 extended 2026-08-22 to cover topology) · Companion to ADR-005 (the ladder decides *who wins*; this ADR guarantees *nobody vanishes*). Carries the salvage from the deleted sync stack (ADR-008) and one live bug.
 
 ## Context
 

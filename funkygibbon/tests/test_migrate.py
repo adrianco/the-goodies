@@ -12,7 +12,7 @@ import sqlite3
 
 import pytest
 
-from funkygibbon.migrate import run_migration, fix_version
+from funkygibbon.migrate import run_migration, fix_version, verify_db
 
 OLD = "2026-05-08T07:57:54.734914+00:00Z-000000-agent"      # doubled-Z
 CANON = "2026-05-08T07:57:54.734914+00:00-000000-agent"     # expected fix
@@ -42,6 +42,11 @@ def _schema(conn):
             summary TEXT, created_at TEXT, updated_at TEXT, sync_id TEXT);
         """
     )
+
+
+def _has_column(conn, table: str, column: str) -> bool:
+    return any(row[1] == column
+               for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall())
 
 
 def _seed(conn):
@@ -97,16 +102,27 @@ def test_migration_fixes_versions_and_extracts_all_photo_shapes(conn):
     assert len(proc["images"]) == 2
     assert all("data_b64" not in img and img["blob_id"] for img in proc["images"])
 
-    # Relationship versions were rewritten to the canonical form.
-    rel = conn.execute("SELECT from_entity_version, to_entity_version FROM entity_relationships").fetchone()
-    assert rel == (CANON, CANON)
+    # The doubled-Z repair reached the relationship version references too --
+    # observable only in the stats, because ADR-004 drops the pin columns at the
+    # end of the same migration. Asserted via `relationship_versions_fixed`
+    # above; the columns themselves are gone by now:
+    assert not _has_column(conn, "entity_relationships", "from_entity_version")
+    assert not _has_column(conn, "entity_relationships", "to_entity_version")
 
-    # Referential integrity holds.
+    # Referential integrity holds -- by ID now, not by (id, version). The pin
+    # was what the old form of this check followed, and following it was the
+    # defect: it asked whether an edge still pointed at a version that existed,
+    # which stopped being the right question once edges gained intervals.
     dangling = conn.execute(
         "SELECT COUNT(*) FROM entity_relationships r WHERE NOT EXISTS "
-        "(SELECT 1 FROM entities e WHERE e.id=r.from_entity_id AND e.version=r.from_entity_version)"
+        "(SELECT 1 FROM entities e WHERE e.id = r.from_entity_id)"
     ).fetchone()[0]
     assert dangling == 0
+
+    # Every surviving edge came through with a well-formed open interval.
+    intervals = conn.execute(
+        "SELECT valid_from, valid_to FROM entity_relationships").fetchall()
+    assert intervals and all(vf is not None and vt is None for vf, vt in intervals)
 
     # A blob row is well-formed.
     size, dlen = conn.execute("SELECT size, length(data) FROM blobs LIMIT 1").fetchone()
@@ -305,9 +321,14 @@ def test_check_removal_preserves_rows_indexes_and_foreign_keys(constrained_conn)
     assert conn.execute(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ix_entities_entity_type'"
     ).fetchone()[0] == 1
-    # ...nor quietly repoint the FK at the temporary table it was rebuilt through.
+    # ...nor quietly repoint any FK at a temporary table it was rebuilt through.
+    # entity_relationships has no foreign keys at all after ADR-004 §1: they
+    # were the composite pins onto (entities.id, entities.version), and an
+    # interval edge references entity IDs, resolving versions by time instead.
+    # `set()` here is the assertion, not an absence of one -- a stray FK naming
+    # a `__old` table is exactly the rebuild bug this test exists to catch.
     assert {row[2] for row in conn.execute("PRAGMA foreign_key_list(entity_relationships)")} \
-        == {"entities"}
+        == set()
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
@@ -511,3 +532,126 @@ def test_correctly_directed_documentation_is_left_alone(conn):
         "SELECT from_entity_id, to_entity_id FROM entity_relationships WHERE id='ok1'"
     ).fetchone() == ("dev1", "textnote")
     assert stats["documentation_edges_flipped"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# #87 -- the v0.4.0 upgrade path that broke the Corfe install
+# --------------------------------------------------------------------------- #
+#
+# v0.4.0's migrate.py added is_latest/server_seq to `entities` and normalised
+# the vocabulary, but never touched `entity_relationships`: the model had
+# gained valid_from/valid_to and the table had not. `--verify` checked
+# vocabulary only and said PASS; the server then 500'd on every data endpoint.
+#
+# Corfe's database is therefore in a specific shape, and it is the shape the
+# rebuild must be proven against: entities fully v0.4.0-migrated, the edge
+# table still exactly v0.2.2 (pins, FKs, single-column PK, NO interval columns).
+
+def _schema_corfe_after_v040_migrate(conn):
+    conn.executescript(
+        """
+        CREATE TABLE entities (
+            id VARCHAR(36) NOT NULL, version VARCHAR(255) NOT NULL,
+            entity_type VARCHAR NOT NULL, name VARCHAR(255) NOT NULL, content JSON,
+            source_type VARCHAR NOT NULL, user_id VARCHAR(36), parent_versions JSON,
+            created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, sync_id VARCHAR(36),
+            is_latest BOOLEAN NOT NULL DEFAULT 1, server_seq INTEGER,
+            PRIMARY KEY (id, version));
+        CREATE TABLE entity_relationships (
+            id VARCHAR(36) NOT NULL,
+            from_entity_id VARCHAR(36) NOT NULL, from_entity_version VARCHAR(255) NOT NULL,
+            to_entity_id VARCHAR(36) NOT NULL,   to_entity_version VARCHAR(255) NOT NULL,
+            relationship_type VARCHAR NOT NULL, properties JSON, user_id VARCHAR(36),
+            created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, sync_id VARCHAR(36),
+            PRIMARY KEY (id),
+            CONSTRAINT fk_from_entity FOREIGN KEY(from_entity_id, from_entity_version)
+                REFERENCES entities (id, version),
+            CONSTRAINT fk_to_entity FOREIGN KEY(to_entity_id, to_entity_version)
+                REFERENCES entities (id, version));
+        CREATE INDEX ix_entity_relationships_relationship_type
+            ON entity_relationships (relationship_type);
+        CREATE TABLE blobs (
+            id TEXT PRIMARY KEY, name TEXT, blob_type TEXT, mime_type TEXT,
+            size INTEGER, data BLOB, blob_metadata JSON, checksum TEXT,
+            sync_status TEXT, server_url TEXT, last_sync_at TEXT, user_id TEXT,
+            summary TEXT, created_at TEXT, updated_at TEXT, sync_id TEXT);
+        """
+    )
+    now = "2026-09-01T10:00:00+00:00"
+    for eid, etype, name in (("dev1", "device", "Lamp"), ("room1", "room", "Kitchen")):
+        conn.execute(
+            "INSERT INTO entities (id, version, entity_type, name, content, source_type, "
+            "user_id, parent_versions, created_at, updated_at, is_latest, server_seq) "
+            "VALUES (?,?,?,?,'{}','manual','alice','[]',?,?,1,?)",
+            (eid, CANON, etype, name, now, now, 1 if eid == "dev1" else 2),
+        )
+    conn.execute(
+        "INSERT INTO entity_relationships (id, from_entity_id, from_entity_version, "
+        "to_entity_id, to_entity_version, relationship_type, properties, user_id, "
+        "created_at, updated_at) VALUES ('rel1','dev1',?,'room1',?,'located_in','{}','alice',?,?)",
+        (CANON, CANON, "2026-03-01T12:00:00+00:00", now),
+    )
+    conn.commit()
+
+
+@pytest.fixture
+def corfe_db(tmp_path):
+    """On disk, because --verify takes a path."""
+    path = tmp_path / "corfe.db"
+    c = sqlite3.connect(path)
+    _schema_corfe_after_v040_migrate(c)
+    yield path, c
+    c.close()
+
+
+def _rel_columns(conn):
+    return [row[1] for row in conn.execute("PRAGMA table_info(entity_relationships)")]
+
+
+def test_verify_refuses_the_corfe_shape_instead_of_passing_it(corfe_db):
+    """The exact false PASS from #87: vocabulary fine, schema unservable."""
+    path, _ = corfe_db
+    assert verify_db(path, "domains.house.manifest:HOUSE") == 1
+
+
+def test_the_rebuild_takes_corfe_from_v040_to_v3(corfe_db):
+    path, conn = corfe_db
+    assert "valid_from" not in _rel_columns(conn), "precondition: v0.4.0 never added it"
+
+    stats = run_migration(conn, apply=True)
+    assert stats["edges_migrated"] == 1
+
+    cols = _rel_columns(conn)
+    assert "valid_from" in cols and "valid_to" in cols
+    assert "from_entity_version" not in cols and "to_entity_version" not in cols
+    # (id, valid_from) is the key now, and nothing references entity versions.
+    pk = [r[1] for r in conn.execute("PRAGMA table_info(entity_relationships)") if r[5]]
+    assert sorted(pk) == ["id", "valid_from"]
+    assert conn.execute("PRAGMA foreign_key_list(entity_relationships)").fetchall() == []
+
+    # The edge survived with an open interval that starts when it was recorded,
+    # not when the migration ran.
+    vf, vt = conn.execute(
+        "SELECT valid_from, valid_to FROM entity_relationships").fetchone()
+    assert vf.startswith("2026-03-01"), vf
+    assert vt is None
+
+
+def test_verify_passes_once_the_rebuild_has_run(corfe_db):
+    """And the schema check is what flips it, not the vocabulary check."""
+    path, conn = corfe_db
+    run_migration(conn, apply=True)
+    conn.commit()
+    assert verify_db(path, "domains.house.manifest:HOUSE") == 0
+
+
+def test_verify_fails_on_any_model_column_the_database_lacks(corfe_db):
+    """Generic form of #87: a future model column with no migration must fail
+    --verify, not pass it and 500 in production."""
+    path, conn = corfe_db
+    run_migration(conn, apply=True)
+    conn.commit()
+    # Simulate the drift: drop a mapped column the way SQLite allows.
+    conn.execute("ALTER TABLE blobs DROP COLUMN summary")
+    conn.commit()
+    assert verify_db(path, "domains.house.manifest:HOUSE") == 1

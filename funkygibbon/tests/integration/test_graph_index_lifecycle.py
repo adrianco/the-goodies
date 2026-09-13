@@ -410,3 +410,118 @@ async def test_sync_applied_entity_is_immediately_traversable(
         "the index must be maintained by the sync write-through, not repaired "
         "afterwards by the drift detector"
     )
+
+
+# ======================================================================
+# ADR-004 §1 — the index caches `at = now`, so it holds CURRENT edges only.
+#
+# The index is the one reader that queries edges with no endpoint filter,
+# which is exactly the shape the currency gate used to skip. That made
+# these the cheapest bugs in the temporal work to ship and the hardest to
+# see: every unit test filtered by an endpoint and passed.
+# ======================================================================
+
+async def _retire_edge(session, relationship_id, at=None):
+    """End an edge's open interval directly in storage.
+
+    There is no REST delete-relationship endpoint yet, and going through the
+    session has a second benefit: it bypasses write-through, so the read that
+    follows exercises the drift-detection rebuild — which is the code path that
+    loads every edge with no endpoint filter.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+    from funkygibbon.models import EntityRelationship
+
+    row = await session.scalar(
+        select(EntityRelationship).where(
+            EntityRelationship.id == relationship_id,
+            EntityRelationship.valid_to.is_(None),
+        )
+    )
+    assert row is not None, "no open interval to retire"
+    row.valid_to = at or datetime.now(timezone.utc)
+    await session.commit()
+    return row
+
+
+@pytest.mark.asyncio
+async def test_a_retired_edge_does_not_come_back_on_rebuild(
+    async_client, auth, warm_index, test_session
+):
+    """A full load must not resurrect history as state.
+
+    `load_from_storage` calls `get_relationships()` with no endpoint filter, and
+    the currency filter was gated on one being supplied — so every retired
+    interval came back as a live edge. A device that had ever been in the
+    kitchen stayed connected to it forever, from the first rebuild onward.
+    """
+    hub = await _create_entity(async_client, auth, "Retire Hub")
+    lamp = await _create_entity(async_client, auth, "Retire Lamp")
+    rel = await _create_relationship(async_client, auth, hub, lamp)
+
+    connected = await async_client.get(
+        f"{API}/graph/entities/{hub['id']}/connected", headers=auth
+    )
+    assert connected.json()["count"] == 1, "precondition: the edge starts live"
+
+    await _retire_edge(test_session, rel["id"])
+
+    # Drift detection notices the bypassed write and rebuilds from storage.
+    connected = await async_client.get(
+        f"{API}/graph/entities/{hub['id']}/connected", headers=auth
+    )
+    assert connected.status_code == 200, connected.text
+    assert connected.json()["count"] == 0, "a retired edge came back as a live one"
+
+    stats = await async_client.get(f"{API}/graph/statistics", headers=auth)
+    assert stats.json()["total_relationships"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_moved_edge_leaves_the_index_holding_only_the_new_placement(
+    async_client, auth, warm_index, test_session
+):
+    """One logical edge, two intervals: the index must hold the open one.
+
+    `apply_external_writes` re-read edges by id alone. With `(id, valid_from)`
+    as the primary key that returns every interval, and since the index keys on
+    `rel.id`, whichever row the database yielded last won — a coin flip between
+    the live placement and a retired one, on the sync-apply path.
+    """
+    import uuid
+    from datetime import datetime, timedelta, timezone
+    from funkygibbon.models import EntityRelationship, RelationshipType
+    from funkygibbon.graph.index_service import write_through_applied_changes
+
+    lamp = await _create_entity(async_client, auth, "Move Lamp")
+    kitchen = await _create_entity(async_client, auth, "Move Kitchen", entity_type="room")
+    hall = await _create_entity(async_client, auth, "Move Hall", entity_type="room")
+
+    edge_id = str(uuid.uuid4())
+    march = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+    june = march + timedelta(days=92)
+
+    # Two intervals of one edge, written straight to storage as sync would.
+    test_session.add(EntityRelationship(
+        id=edge_id, valid_from=march, valid_to=june,
+        from_entity_id=lamp["id"], to_entity_id=kitchen["id"],
+        relationship_type=RelationshipType.LOCATED_IN, properties={}, user_id=USER,
+    ))
+    test_session.add(EntityRelationship(
+        id=edge_id, valid_from=june, valid_to=None,
+        from_entity_id=lamp["id"], to_entity_id=hall["id"],
+        relationship_type=RelationshipType.LOCATED_IN, properties={}, user_id=USER,
+    ))
+    await test_session.commit()
+
+    await write_through_applied_changes(
+        test_session, entity_ids=[], relationship_ids=[edge_id]
+    )
+
+    connected = await async_client.get(
+        f"{API}/graph/entities/{lamp['id']}/connected", headers=auth
+    )
+    assert connected.status_code == 200, connected.text
+    rooms = [c["entity"]["id"] for c in connected.json()["connected"]]
+    assert rooms == [hall["id"]], f"index holds the wrong interval: {rooms}"

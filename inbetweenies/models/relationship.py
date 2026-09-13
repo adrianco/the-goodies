@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from sqlalchemy import Column, DateTime, Index, String, JSON
-from sqlalchemy.orm import relationship
 
 from .base import Base, InbetweeniesTimestampMixin
 
@@ -65,7 +64,8 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
 
     This model supports:
     - Typed relationships via RelationshipType enum
-    - Versioned relationships (tracks entity versions)
+    - Interval rows: each edge is true over [valid_from, valid_to) and is never
+      updated in place, so prior topology stays recoverable (ADR-004 §1)
     - Additional properties stored as JSON
     - User tracking for audit
     """
@@ -121,7 +121,11 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
     # valid_from is a primary-key column, declared above. valid_to stays
     # nullable, and null is not "unknown" — it is the open interval, meaning
     # this edge is still true.
-    valid_to = Column(DateTime(timezone=True), nullable=True, index=True)
+    #
+    # No `index=True`: that would emit ix_entity_relationships_valid_to
+    # alongside the explicit ix_rel_current below, two indexes over the same
+    # single column, both maintained on every write for one lookup's benefit.
+    valid_to = Column(DateTime(timezone=True), nullable=True)
 
     # ADR-004 §1: the composite version-pin columns and their FKs are GONE.
     #
@@ -178,11 +182,18 @@ class EntityRelationship(Base, InbetweeniesTimestampMixin):
         current edge, never zero and never two — which is the whole point of
         end-and-insert.
 
-        A null ``valid_from`` reads as "has always been true" so that rows
-        written before the ADR-004 migration remain visible rather than
-        silently dropping out of every snapshot.
+        A null ``valid_from`` reads as "has always been true". Persisted rows
+        cannot be null — it is half the primary key — so this covers the
+        in-memory case: an edge constructed but not yet flushed has no start
+        stamped on it, and reading that as "not yet valid" would make a
+        freshly-created edge invisible to the code that just created it.
         """
-        moment = at or datetime.now(UTC)
+        # `at` gets the same normalisation the bounds do. It arrives from a
+        # query string, from JSON, or from a value that itself round-tripped
+        # through SQLite, so it is naive about as often as it is aware — and
+        # normalising only one side of the comparison raises TypeError on
+        # exactly the mixed case the helper exists to absorb.
+        moment = _as_aware(at) if at is not None else datetime.now(UTC)
         if self.valid_from is not None and _as_aware(self.valid_from) > moment:
             return False
         if self.valid_to is not None and _as_aware(self.valid_to) <= moment:

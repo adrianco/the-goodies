@@ -294,9 +294,23 @@ class GraphIndexService:
 
         if relationship_ids:
             wanted = set(_unique(relationship_ids))
+            # ADR-004 §1: one logical edge id now owns MANY rows — the primary
+            # key is (id, valid_from) and every re-point leaves its predecessor
+            # behind as history. Selecting by id alone returned all of them, and
+            # since the index keys on `rel.id`, whichever row the database
+            # happened to yield last won. That is a coin flip between the live
+            # interval and a retired one, on the sync-apply path.
+            #
+            # The index caches `at = now`, so the row it wants is the open one.
+            # An id with no open row has been ended: it falls through to the
+            # `wanted` remainder below and is removed, which is exactly right —
+            # an ended edge is not part of the current graph.
             found = (
                 await db.execute(
-                    select(EntityRelationship).where(EntityRelationship.id.in_(wanted))
+                    select(EntityRelationship).where(
+                        EntityRelationship.id.in_(wanted),
+                        EntityRelationship.valid_to.is_(None),
+                    )
                 )
             ).scalars().all()
             for rel in found:

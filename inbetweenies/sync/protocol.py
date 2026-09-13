@@ -10,9 +10,14 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-class VectorClock(BaseModel):
-    """Vector clock for tracking sync state"""
-    clocks: Dict[str, str] = Field(default_factory=dict)
+# ADR-005 §3 / PROTOCOL.md §9: VectorClock is GONE in v3.
+#
+# It was declared, defaulted, echoed back unchanged and never read by anything —
+# no causal tracking exists in this protocol and none is planned (§7.4 records
+# the trigger that would bring HLC in). A reserved field that every port has to
+# round-trip for nothing is worse than an absent one: it advertises a capability
+# the server does not have, and the one thing a port could reasonably infer from
+# its presence — that concurrent edits are ordered causally — is false.
 
 
 class EntityChange(BaseModel):
@@ -108,7 +113,6 @@ class SyncRequest(BaseModel):
     device_id: str
     user_id: str
     sync_type: str = Field(..., pattern="^(full|delta|entities|relationships)$")
-    vector_clock: VectorClock = Field(default_factory=VectorClock)
     changes: List[SyncChange] = Field(default_factory=list)
     cursor: Optional[str] = None
     filters: Optional[SyncFilters] = None
@@ -137,7 +141,6 @@ class SyncResponse(BaseModel):
     sync_type: str
     changes: List[SyncChange] = Field(default_factory=list)
     conflicts: List[ConflictInfo] = Field(default_factory=list)
-    vector_clock: VectorClock = Field(default_factory=VectorClock)
     # Pagination watermark: the highest server_seq included in `changes`. Send
     # it back as SyncRequest.cursor to resume. Null means the stream is drained
     # — that is the signal to stop looping, not an empty `changes` list, since a

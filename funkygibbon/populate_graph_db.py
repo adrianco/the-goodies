@@ -8,6 +8,47 @@ Creates a realistic smart home knowledge graph with:
 - Procedures and manuals for devices
 - Automations and schedules
 - Notes and documentation
+- **A recorded past** (see "The house has a history" below)
+
+This is the fixture the live-server end-to-end suite runs against
+(``conftest.py`` seeds it before starting a real ``funkygibbon`` process), so
+what it does NOT contain is a hole in that suite's coverage rather than a
+missing demo nicety.
+
+The house has a history (ADR-004)
+---------------------------------
+Until this section existed, every entity here was v1 and every edge was a
+single open interval whose ``valid_from`` came from the column default — so all
+47 edges were stamped within about 23 microseconds of the seed's own run
+instant. The whole house sprang into existence "now", which meant the fixture
+could not exercise one line of the temporal model: no edge was ever moved or
+ended, no entity was ever revised or deleted, and ``snapshot(any past T)`` was
+either empty or identical to the present. Every v3 code path was unreachable
+from end to end, and the one case the fixture did cover — a house with no past —
+is precisely the case the pre-v3 code already got right.
+
+Four episodes are now recorded, each isolating one mechanism:
+
+===========================  ==========================================
+what                         which v3 feature it makes observable
+===========================  ==========================================
+the blower moved rooms       interval edges: two tiling intervals on one
+                             logical edge id, so snapshot(2024) and
+                             snapshot(now) disagree about where it is
+HomeKit stopped managing     a retired edge: ``valid_to`` set, the row
+the oven                     kept rather than deleted
+the thermostat was renamed   entity version history: a second version row
+                             with ``parent_versions`` and ``is_latest``
+                             moved onto it
+the motion sensor was        a tombstone, plus the edge ending that goes
+removed                      with it
+===========================  ==========================================
+
+**The dates are fixed constants, not offsets from today.** A fixture whose
+timeline drifts with the wall clock cannot be asserted against: the test that
+wants "the blower was in the office on 2024-06-01" has to recompute the
+expected answer using the same arithmetic as the code under test, which is how
+a test ends up agreeing with a bug. See ``TIMELINE`` below.
 """
 
 import asyncio
@@ -16,6 +57,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from itertools import count
 from uuid import uuid4
 
 # Add project root to path
@@ -40,6 +82,55 @@ def _demo_bytes(tag: str) -> str:
 
 
 
+# --------------------------------------------------------------------------- #
+# The recorded timeline (ADR-004 §2 — the valid-time axis)
+#
+# Fixed dates, deliberately. These are the instants a test asserts against
+# ("the blower was in the office on 2024-06-01"), and a fixture that computes
+# them from `now` forces every test to redo the same arithmetic as the code
+# under test — which is how a test ends up agreeing with a bug rather than
+# catching it. All of them are safely in the past, and they stay that way.
+#
+# They are also *client edit times*, not server apply times: this is the axis
+# an as-of query runs on, and the whole point is that it is independent of when
+# this script happens to run.
+# --------------------------------------------------------------------------- #
+def _utc(year, month, day, hour=12):
+    return datetime(year, month, day, hour, 0, tzinfo=timezone.utc)
+
+
+TIMELINE = {
+    # The earliest fact the graph records. Everything the seed creates without
+    # an explicit date is "current" and carries the run instant instead.
+    "history_begins": _utc(2024, 1, 15),
+    # The PVFY air handler: installed upstairs, later relocated to the garage.
+    # This pair is the headline ADR-004 case — one logical edge, two intervals.
+    "blower_installed": _utc(2024, 3, 10),
+    "blower_moved": _utc(2025, 6, 1),
+    # HomeKit stopped managing the oven when it moved to the vendor app.
+    "oven_left_homekit": _utc(2025, 9, 15),
+    # The Nest was renamed when a second thermostat arrived and "Thermostat"
+    # stopped being unambiguous.
+    "thermostat_renamed": _utc(2025, 11, 20),
+    # The hallway motion sensor failed and was removed.
+    "sensor_removed": _utc(2026, 2, 5),
+}
+
+
+def _version_at(moment: datetime, user_id: str, counter: int) -> str:
+    """A version string stamped at `moment` rather than at now.
+
+    ``Entity.create_version`` reads the wall clock, which is right for a live
+    edit and wrong for seeded history: a 2024 revision carrying a 2026 version
+    string would sort as the newest edit of its entity, so `is_latest` (and
+    anything that re-derives it, such as the migration's backfill) would name
+    the wrong row as current. The format is PROTOCOL.md §2's exactly —
+    ``{utc-iso8601}-{counter:06d}-{user_id}`` — because lexical order equals
+    chronological order only while the timestamp prefix is fixed-width UTC.
+    """
+    return f"{moment.isoformat()}-{counter:06d}-{user_id}"
+
+
 # Default database URL - can be overridden by environment variable
 # Use 'or' to handle empty string case
 DATABASE_URL = os.environ.get("DATABASE_URL") or "sqlite+aiosqlite:///./funkygibbon.db"
@@ -53,6 +144,12 @@ class GraphPopulator:
         self.engine = create_async_engine(db_url, echo=False)
         self.session_maker = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
         self.entities = {}  # Store created entities by key for relationships
+        # Disambiguates two revisions stamped at the same instant (PROTOCOL.md
+        # §2's counter field). Per-populator so a re-run is reproducible.
+        self._revision_counter = count(1)
+        # ADR-002 §2's replication axis. Dense and monotonic in write order,
+        # which for this script IS apply order: one transaction, one writer.
+        self._seq_counter = count(1)
 
     async def setup_database(self):
         """Create tables and clear existing data"""
@@ -70,17 +167,47 @@ class GraphPopulator:
             print("✅ Database ready for population")
 
     async def create_entity(self, session: AsyncSession, entity_type: EntityType,
-                          name: str, content: dict, key: str = None) -> Entity:
-        """Create and store an entity"""
+                          name: str, content: dict, key: str = None,
+                          at: datetime = None) -> Entity:
+        """Create and store an entity.
+
+        ``at`` backdates the version string and timestamps to when the entity
+        actually came into existence. It matters for anything that is later
+        revised: version strings sort lexically by their UTC prefix
+        (PROTOCOL.md §2), so a 2024 device stamped with today's clock and then
+        tombstoned in the past produces a *tombstone that sorts older than the
+        creation it supersedes*. `is_latest` would still be written correctly
+        here, but everything that re-derives it — the migration's backfill, and
+        conflict resolution comparing version strings — would name the wrong
+        row as current.
+
+        Omitted means "created when the seed ran", which is right for the
+        present-tense bulk of this fixture.
+        """
         entity = Entity(
             id=str(uuid4()),
-            version=Entity.create_version("populate-script"),
+            version=(_version_at(at, "populate-script", next(self._revision_counter))
+                     if at is not None else Entity.create_version("populate-script")),
             entity_type=entity_type,
             name=name,
             content=content,
             source_type=SourceType.GENERATED,
             user_id="populate-script",
-            parent_versions=[]
+            parent_versions=[],
+            # ADR-002 §2: stamp the replication axis. The seed writes rows
+            # straight to the session rather than through GraphRepository, so
+            # nothing else assigns this — and an unstamped row is INVISIBLE to
+            # every cursor-based delta, because `server_seq > :cursor` is NULL
+            # for a NULL. A client that used the cursor path therefore synced
+            # the entire house and received none of it, silently: no error, no
+            # warning, just an empty page.
+            #
+            # A plain counter is the right allocator here. The seed writes in a
+            # defined order in a single transaction, so "apply order" is exactly
+            # its own sequence, and a fixed sequence keeps the fixture
+            # reproducible run to run.
+            server_seq=next(self._seq_counter),
+            **({"created_at": at, "updated_at": at} if at is not None else {}),
         )
         session.add(entity)
 
@@ -92,18 +219,127 @@ class GraphPopulator:
     async def create_relationship(self, session: AsyncSession,
                                 from_entity: Entity, to_entity: Entity,
                                 rel_type: RelationshipType,
-                                properties: dict = None) -> EntityRelationship:
-        """Create a relationship between entities"""
+                                properties: dict = None,
+                                edge_id: str = None,
+                                valid_from: datetime = None,
+                                valid_to: datetime = None) -> EntityRelationship:
+        """Create one edge interval (ADR-004 §1).
+
+        ``edge_id`` is what makes history expressible. The row's primary key is
+        ``(id, valid_from)``: ``id`` is the LOGICAL edge, stable across every
+        interval of its life, and ``valid_from`` picks the interval. Minting a
+        fresh uuid per call — which is all this used to do — makes two intervals
+        of the same edge look like two unrelated edges, so "the blower moved"
+        becomes "the blower is in two rooms", which is the exact wrong answer
+        the interval model exists to prevent.
+
+        ``valid_from`` omitted means "true since the seed ran", which is right
+        for the present-tense bulk of this fixture. Pass it to date a fact to
+        when it actually happened.
+        """
         relationship = EntityRelationship(
-            id=str(uuid4()),
+            id=edge_id or str(uuid4()),
             from_entity_id=from_entity.id,
             to_entity_id=to_entity.id,
             relationship_type=rel_type,
             properties=properties or {},
-            user_id="populate-script"
+            user_id="populate-script",
+            valid_from=valid_from or datetime.now(timezone.utc),
+            valid_to=valid_to,
         )
         session.add(relationship)
         return relationship
+
+    async def retire_relationship(self, session: AsyncSession,
+                                  relationship: EntityRelationship,
+                                  at: datetime) -> EntityRelationship:
+        """End an edge's open interval at `at` (ADR-004 §1).
+
+        Ending is not deleting. The row stays, and every question about the
+        period it covered still answers correctly — which is the difference
+        between "the oven is not managed by HomeKit" and "the oven was never
+        managed by HomeKit".
+        """
+        relationship.valid_to = at
+        return relationship
+
+    async def revise_entity(self, session: AsyncSession, entity: Entity, *,
+                            at: datetime, name: str = None,
+                            content: dict = None, deleted: bool = False) -> Entity:
+        """Append a new version of `entity`, dated `at` (PROTOCOL.md §2/§8).
+
+        Entities are immutable: an edit is a new row, never an update. Two
+        bookkeeping details this fixture has to get right by hand, because it
+        writes to storage rather than going through the sync path that normally
+        maintains them:
+
+        * ``parent_versions`` carries the superseded version, so the DAG is
+          walkable and a three-way merge could find a common ancestor.
+        * ``is_latest`` moves to the new row. It is a stored fact rather than a
+          derived one precisely so three different call sites cannot disagree
+          about which version won — but that means a writer has to move it.
+
+        ``deleted=True`` writes a tombstone: a version whose content carries
+        ``deleted: true`` (§8), which is how a delete converges like any other
+        edit instead of leaving a hole.
+        """
+        entity.is_latest = False
+
+        new_content = dict(content if content is not None else (entity.content or {}))
+        if deleted:
+            new_content["deleted"] = True
+
+        revision = Entity(
+            id=entity.id,
+            version=_version_at(at, "populate-script", next(self._revision_counter)),
+            entity_type=entity.entity_type,
+            name=name if name is not None else entity.name,
+            content=new_content,
+            source_type=entity.source_type,
+            user_id="populate-script",
+            parent_versions=[entity.version],
+            is_latest=True,
+            server_seq=next(self._seq_counter),
+            created_at=at,
+            updated_at=at,
+        )
+        session.add(revision)
+        return revision
+
+    async def backdate_predecessor(self, session: AsyncSession, entity: Entity, *,
+                                   at: datetime, name: str = None,
+                                   content: dict = None) -> Entity:
+        """Give `entity` an older version it descends from.
+
+        The inverse of :meth:`revise_entity`, and the safer direction for this
+        fixture. Revising forward would change the entity's CURRENT name or
+        content, and the current graph is what the rest of the suite —
+        and `oook`, and the README's worked examples — already expect. Adding an
+        ancestor instead leaves every present-tense answer byte-identical and
+        gives the version DAG something to walk.
+
+        The predecessor is written non-latest, and the existing row's
+        ``parent_versions`` is pointed at it. Version strings sort lexically by
+        their UTC prefix (PROTOCOL.md §2), so a backdated version is correctly
+        ordered as the older one without anything having to re-derive it.
+        """
+        predecessor = Entity(
+            id=entity.id,
+            version=_version_at(at, "populate-script", next(self._revision_counter)),
+            entity_type=entity.entity_type,
+            name=name if name is not None else entity.name,
+            content=dict(content if content is not None else (entity.content or {})),
+            source_type=entity.source_type,
+            user_id="populate-script",
+            parent_versions=[],
+            is_latest=False,
+            server_seq=next(self._seq_counter),
+            created_at=at,
+            updated_at=at,
+        )
+        session.add(predecessor)
+        entity.parent_versions = [predecessor.version]
+        return predecessor
 
     async def populate(self):
         """Populate the database with comprehensive test data"""
@@ -361,8 +597,31 @@ class GraphPopulator:
                                          {"location": "front_entrance"})
             await self.create_relationship(session, mitsubishi_thermostat, kitchen, RelationshipType.LOCATED_IN,
                                          {"position": "wall", "height": "5ft"})
-            await self.create_relationship(session, pvfy_blower, garage, RelationshipType.LOCATED_IN,
-                                         {"position": "closet"})
+            # ---- Episode 1: the blower moved rooms (ADR-004 §1) ----------
+            #
+            # ONE logical edge, TWO intervals, sharing an id and a boundary
+            # instant. This is the case the whole temporal model is built for,
+            # and the fixture could not express it before `create_relationship`
+            # took an `edge_id`: two calls meant two edges, and the blower
+            # showed up in the office and the garage simultaneously.
+            #
+            # The intervals are half-open — [installed, moved) then [moved, ∞) —
+            # so exactly one is current at the handover instant itself, never
+            # zero and never two.
+            blower_location_edge = str(uuid4())
+            await self.create_relationship(
+                session, pvfy_blower, office, RelationshipType.LOCATED_IN,
+                {"position": "closet", "note": "original install, upstairs"},
+                edge_id=blower_location_edge,
+                valid_from=TIMELINE["blower_installed"],
+                valid_to=TIMELINE["blower_moved"],
+            )
+            await self.create_relationship(
+                session, pvfy_blower, garage, RelationshipType.LOCATED_IN,
+                {"position": "closet"},
+                edge_id=blower_location_edge,
+                valid_from=TIMELINE["blower_moved"],
+            )
 
             # Control relationship between thermostat and blower
             await self.create_relationship(session, mitsubishi_thermostat, pvfy_blower, RelationshipType.CONTROLS,
@@ -507,7 +766,7 @@ class GraphPopulator:
                     "content": "Network: MartinezHome5G\nPassword: Sm@rtH0me2025!\nGuest Network: MartinezGuest\nGuest Password: Welcome123",
                     "category": "network",
                     "private": True,
-                    "created": datetime.now(timezone.utc).isoformat()
+                    "created": TIMELINE["history_begins"].isoformat()
                 },
                 key="wifi_note"
             )
@@ -519,7 +778,7 @@ class GraphPopulator:
                     "content": "Last filter change: July 1, 2025\nNext service due: October 1, 2025\nTechnician: Bob from ComfortPro (555-0123)",
                     "category": "maintenance",
                     "reminder_date": "2025-10-01",
-                    "created": datetime.now(timezone.utc).isoformat()
+                    "created": TIMELINE["history_begins"].isoformat()
                 },
                 key="maintenance_note"
             )
@@ -577,7 +836,7 @@ class GraphPopulator:
                     "content": "This thermostat is in the kitchen, it controls the air blower that heats and cools the kitchen, dining room, living room, bar and kitchen bathroom. The air blower is in a closet in the garage. The thermostat can be remotely controlled using the Mitsubishi Comfort app on iPhone or iPad.",
                     "category": "user_provided",
                     "device_references": ["mitsubishi_thermostat", "pvfy_blower"],
-                    "created": datetime.now(timezone.utc).isoformat()
+                    "created": TIMELINE["history_begins"].isoformat()
                 },
                 key="mitsubishi_user_note"
             )
@@ -661,6 +920,78 @@ class GraphPopulator:
             await self.create_relationship(session, pvfy_blower, blower_serial_photo,
                                            RelationshipType.HAS_PHOTO, {})
 
+            # ==========================================================
+            # Episodes 2-4: the rest of the recorded past (ADR-004)
+            #
+            # These are additive. Every one of them leaves the CURRENT graph
+            # exactly as it was — same entities, same live edges, same answers
+            # to every present-tense question — and adds only rows that
+            # describe periods that have ended. That is the property that makes
+            # them safe to put in the shared fixture rather than behind a flag:
+            # a test that does not ask about the past cannot notice they exist.
+            # ==========================================================
+            print("\n🕰️  Recording the house's history...")
+
+            # ---- Episode 2: HomeKit stopped managing the oven ------------
+            #
+            # A retired edge: `valid_to` set, the row kept. The distinction it
+            # demonstrates is between "the oven is not managed by HomeKit"
+            # (true now) and "the oven was never managed by HomeKit" (false) —
+            # which a delete would have made indistinguishable.
+            await self.create_relationship(
+                session, homekit_app, oven, RelationshipType.MANAGES,
+                {"integration": "homekit", "retired_reason": "moved to vendor app"},
+                valid_from=TIMELINE["history_begins"],
+                valid_to=TIMELINE["oven_left_homekit"],
+            )
+
+            # ---- Episode 3: the thermostat was renamed -------------------
+            #
+            # Entity version history. The Nest was plain "Thermostat" until a
+            # second thermostat arrived and the name stopped being unambiguous.
+            # Added as an ANCESTOR rather than a revision, so the current name
+            # is untouched and only the DAG grows (see backdate_predecessor).
+            await self.backdate_predecessor(
+                session, thermostat,
+                at=TIMELINE["thermostat_renamed"],
+                name="Thermostat",
+            )
+
+            # ---- Episode 4: the hallway motion sensor was removed --------
+            #
+            # A tombstone (PROTOCOL.md §8) and the edge ending that goes with
+            # it. Both halves matter: tombstoning the entity without ending its
+            # edge leaves the graph asserting that a device which no longer
+            # exists is still located somewhere, and the integrity warning in
+            # ADR-004 §3.4 exists to catch exactly that shape.
+            motion_sensor = await self.create_entity(
+                session, EntityType.DEVICE,
+                "Hallway Motion Sensor",
+                {
+                    "manufacturer": "Aqara",
+                    "model": "RTCGQ11LM",
+                    "type": "sensor",
+                    "capabilities": ["motion", "lux"],
+                    "network": "zigbee",
+                    "hub": "philips_hue_bridge",
+                },
+                key="motion_sensor",
+                at=TIMELINE["history_begins"],
+            )
+            sensor_location = await self.create_relationship(
+                session, motion_sensor, living_room, RelationshipType.LOCATED_IN,
+                {"position": "hallway_entrance"},
+                valid_from=TIMELINE["history_begins"],
+            )
+            await self.retire_relationship(
+                session, sensor_location, at=TIMELINE["sensor_removed"]
+            )
+            await self.revise_entity(
+                session, motion_sensor,
+                at=TIMELINE["sensor_removed"],
+                deleted=True,
+            )
+
             # Commit all changes
             await session.commit()
 
@@ -679,6 +1010,15 @@ class GraphPopulator:
             print(f"  • 6 Notes (including UGC notes and photo documentation)")
             print(f"  • 2 Apps (HomeKit & Mitsubishi Comfort)")
             print(f"  • ~45+ Relationships")
+            print("\n🕰️  Recorded history (ADR-004):")
+            print(f"  • Blower relocated office → garage on "
+                  f"{TIMELINE['blower_moved'].date()} (one edge, two intervals)")
+            print(f"  • HomeKit stopped managing the oven on "
+                  f"{TIMELINE['oven_left_homekit'].date()} (retired edge)")
+            print(f"  • Thermostat renamed on "
+                  f"{TIMELINE['thermostat_renamed'].date()} (2 versions)")
+            print(f"  • Hallway motion sensor removed on "
+                  f"{TIMELINE['sensor_removed'].date()} (tombstone + edge end)")
 
             return True
 

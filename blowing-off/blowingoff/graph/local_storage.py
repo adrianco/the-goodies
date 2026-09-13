@@ -7,11 +7,36 @@ entities and relationships that can be used offline.
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any
-from datetime import datetime
+from datetime import UTC, datetime
 
 from inbetweenies.models import Entity, EntityRelationship, EntityType, RelationshipType
+
+
+def _as_aware(value: Optional[datetime]) -> Optional[datetime]:
+    """Treat a naive datetime as UTC (None passes through).
+
+    Bounds reach this store from three places — the wire (aware), JSON on disk
+    (whatever was written), and local writes (aware) — and comparing an aware
+    against a naive one raises. Storage is UTC throughout, so reattaching it is
+    a restatement of the invariant rather than a guess.
+    """
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _same_instant(a: Optional[datetime], b: Optional[datetime]) -> bool:
+    """Do two interval starts name the same row? (ADR-004 §1)
+
+    Row identity is ``(id, valid_from)``, so this is an equality test that has
+    to survive the naive/aware round trip through JSON. Two unset starts count
+    as the same row: an edge created locally before it has ever been stamped is
+    still one edge, not a new interval on every save.
+    """
+    return _as_aware(a) == _as_aware(b)
 
 
 class LocalGraphStorage:
@@ -40,6 +65,10 @@ class LocalGraphStorage:
             "by_room": {},  # room_id -> set of device_ids
         }
 
+        # Set by batch_writes(): suppresses per-row persistence so a pulled
+        # batch costs one store rewrite rather than one per row.
+        self._defer_save = False
+
         # Dirty tracking for the sync push path. Maps id -> "create" | "update".
         # Persisted so that writes made while offline survive a restart and are
         # still pushed on the next successful sync.
@@ -64,7 +93,7 @@ class LocalGraphStorage:
             with open(self.relationships_file, 'r') as f:
                 data = json.load(f)
                 self._relationships = [
-                    EntityRelationship(**r) for r in data
+                    EntityRelationship(**self._relationship_from_dict(r)) for r in data
                 ]
 
         # Load pending (unpushed) local changes
@@ -85,6 +114,36 @@ class LocalGraphStorage:
                     self._index = loaded_index
         else:
             self._rebuild_index()
+
+    @contextmanager
+    def batch_writes(self):
+        """Suspend per-row persistence, flushing once on exit.
+
+        Every ``store_entity``/``store_relationship`` call ends in
+        ``_save_data()``, which rewrites four JSON files and fsyncs each one.
+        That is the right default for an interactive local edit — the write is
+        durable the moment it returns — and completely wrong for applying a
+        pulled batch, where it makes the cost of a sync O(rows) full-store
+        rewrites.
+
+        It became load-bearing when the server started sending edge intervals
+        on the pull (ADR-005 §3): a sync went from ~35 rows to ~85, so a first
+        sync of a house-scale graph did ~340 fsyncs and took long enough to trip
+        the client's own 5-second request timeout. The rows were correct; the
+        persistence strategy was not.
+
+        Durability is unchanged for the batch as a whole: nothing is visible to
+        a reader until the atomic rename in ``_write_json``, and a crash
+        mid-batch loses the batch rather than corrupting the store — which is
+        the same outcome as a crash before the first row was written, since the
+        server will re-send everything past the client's watermark.
+        """
+        previous, self._defer_save = self._defer_save, True
+        try:
+            yield self
+        finally:
+            self._defer_save = previous
+        self._save_data()
 
     def _write_json(self, path: Path, payload, **dump_kwargs):
         """Write JSON so a concurrent reader never sees a partial file.
@@ -109,7 +168,9 @@ class LocalGraphStorage:
             raise
 
     def _save_data(self):
-        """Save data to disk"""
+        """Save data to disk, unless a batch_writes() block is in progress."""
+        if self._defer_save:
+            return
         # Save entities
         entities_data = {}
         for entity_id, versions in self._entities.items():
@@ -186,6 +247,11 @@ class LocalGraphStorage:
             else:
                 created_at = str(rel.created_at)
 
+        def _iso(value):
+            if value is None:
+                return None
+            return value.isoformat() if isinstance(value, datetime) else str(value)
+
         return {
             "id": rel.id,
             "from_entity_id": rel.from_entity_id,
@@ -193,8 +259,57 @@ class LocalGraphStorage:
             "relationship_type": rel_type_value,
             "properties": rel.properties,
             "user_id": rel.user_id,
-            "created_at": created_at
+            "created_at": created_at,
+            # ADR-004 §1 / ADR-009: the interval IS the row. Dropping these two
+            # fields on the way to disk meant every edge came back from a
+            # restart with no bounds, which `is_current_at` reads as "always
+            # true" — so the client silently flattened its whole history into a
+            # present tense, and a retired edge reappeared as a live one.
+            "valid_from": _iso(rel.valid_from),
+            "valid_to": _iso(rel.valid_to),
         }
+
+    @staticmethod
+    def _relationship_from_dict(raw: dict) -> dict:
+        """Rehydrate one persisted edge row into EntityRelationship kwargs.
+
+        JSON has no datetime, so the interval bounds come back as strings and
+        would land on the model as strings — where every comparison in
+        ``is_current_at`` silently does the wrong thing rather than raising.
+        Parsed here, at the one boundary they cross.
+        """
+        row = dict(raw)
+        for field in ("valid_from", "valid_to"):
+            value = row.get(field)
+            if isinstance(value, str):
+                try:
+                    row[field] = _as_aware(datetime.fromisoformat(value))
+                except ValueError:
+                    # An unparseable bound is worse than an absent one: absent
+                    # reads as an open interval, garbage reads as whatever the
+                    # comparison happens to do with it.
+                    row[field] = None
+        return row
+
+    def _reindex_rooms(self) -> None:
+        """Rebuild ``by_room`` from the CURRENT edges only (ADR-004 §1).
+
+        This was an append-only list maintained incrementally, with no removal
+        path: a device that moved from the kitchen to the hall was listed in
+        both, permanently, and no amount of syncing corrected it. Recomputing
+        from the interval rows is O(edges) on a house-scale graph and cannot
+        drift, which is worth more here than the incremental update it replaces.
+        """
+        by_room: Dict[str, List[str]] = {}
+        for rel in self._relationships:
+            if rel.relationship_type != RelationshipType.LOCATED_IN:
+                continue
+            if not rel.is_current_at():
+                continue
+            devices = by_room.setdefault(rel.to_entity_id, [])
+            if rel.from_entity_id not in devices:
+                devices.append(rel.from_entity_id)
+        self._index["by_room"] = by_room
 
     def _rebuild_index(self):
         """Rebuild the index from entities and relationships"""
@@ -212,14 +327,10 @@ class LocalGraphStorage:
                     self._index["by_type"][type_key] = []
                 self._index["by_type"][type_key].append(entity_id)
 
-        # Index devices by room
-        for rel in self._relationships:
-            if rel.relationship_type == RelationshipType.LOCATED_IN:
-                room_id = rel.to_entity_id
-                device_id = rel.from_entity_id
-                if room_id not in self._index["by_room"]:
-                    self._index["by_room"][room_id] = []
-                self._index["by_room"][room_id].append(device_id)
+        # Index devices by room. One implementation, shared with the write
+        # path, so a full rebuild and an incremental update cannot disagree
+        # about what "in this room" means.
+        self._reindex_rooms()
 
     def store_entity(self, entity: Entity, mark_dirty: bool = True) -> Entity:
         """Store an entity version.
@@ -306,23 +417,42 @@ class LocalGraphStorage:
             mark_dirty: see :meth:`store_entity`. False when applying a
                 server-originated relationship during sync.
         """
-        is_new = not any(r.id == relationship.id for r in self._relationships)
-        if is_new:
-            self._relationships.append(relationship)
-        else:
-            self._relationships = [
-                relationship if r.id == relationship.id else r
-                for r in self._relationships
-            ]
+        # ADR-004 §1 / ADR-009: end-and-insert, never mutate.
+        #
+        # This used to replace the row carrying the same id, which is precisely
+        # the destruction the interval model exists to stop: a device moved from
+        # the kitchen to the hall lost the fact that it was ever in the kitchen,
+        # and the client — the replica that is supposed to answer as-of queries
+        # locally — could no longer agree with the server about the past.
+        #
+        # `id` is the logical edge; `(id, valid_from)` is the row. A re-push of
+        # a row we already hold is idempotent; a genuinely new interval ends the
+        # open predecessor at the successor's start, so the half-open intervals
+        # tile without gap or overlap.
+        open_row = next(
+            (r for r in self._relationships
+             if r.id == relationship.id and r.valid_to is None),
+            None,
+        )
+        same_row = next(
+            (r for r in self._relationships
+             if r.id == relationship.id
+             and _same_instant(r.valid_from, relationship.valid_from)),
+            None,
+        )
+        is_new = open_row is None and same_row is None
 
-        # Update room index if it's a LOCATED_IN relationship
-        if relationship.relationship_type == RelationshipType.LOCATED_IN:
-            room_id = relationship.to_entity_id
-            device_id = relationship.from_entity_id
-            if room_id not in self._index["by_room"]:
-                self._index["by_room"][room_id] = []
-            if device_id not in self._index["by_room"][room_id]:
-                self._index["by_room"][room_id].append(device_id)
+        if same_row is not None:
+            # The row itself, re-delivered. Only its end can have moved.
+            if same_row.valid_to is None and relationship.valid_to is not None:
+                same_row.valid_to = relationship.valid_to
+            relationship = same_row
+        else:
+            if open_row is not None and relationship.valid_to is None:
+                open_row.valid_to = relationship.valid_from or datetime.now(UTC)
+            self._relationships.append(relationship)
+
+        self._reindex_rooms()
 
         if mark_dirty and relationship.id:
             # Guarded on id: an unidentified relationship would be tracked under
@@ -339,9 +469,17 @@ class LocalGraphStorage:
         self,
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
-        rel_type: Optional[RelationshipType] = None
+        rel_type: Optional[RelationshipType] = None,
+        include_all_versions: bool = False,
+        at: Optional[datetime] = None
     ) -> List[EntityRelationship]:
-        """Get relationships with optional filters"""
+        """Get relationships with optional filters.
+
+        ADR-004 §1/§3: the store holds intervals, so a read needs a stance on
+        time. ``at`` picks the instant (omitted = now); ``include_all_versions``
+        returns every interval regardless, which is history rather than state
+        and is what the sync push path wants.
+        """
         results = []
 
         for rel in self._relationships:
@@ -350,6 +488,8 @@ class LocalGraphStorage:
             if to_id and rel.to_entity_id != to_id:
                 continue
             if rel_type and rel.relationship_type != rel_type:
+                continue
+            if not include_all_versions and not rel.is_current_at(at):
                 continue
 
             results.append(rel)

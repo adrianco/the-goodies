@@ -2,6 +2,8 @@
 
 **Status:** Proposed · 2026-08-01
 
+*Scale and platform re-examined against measurement and prior art in [ADR-014](ADR-014-temporal-prior-art-and-platform.md): SQLite and Python confirmed, with the triggers that would overturn either written down.*
+
 ## Context
 
 Entities live in SQLite (WAL) as immutable `(id, version)` rows. Live scale: 423 entities / 510 version rows / 5.7 MB. Honest worst-case for the larger use cases: ~20k entities, ~150k edges, ~365k version rows over years — 3–5 orders of magnitude below any engine's limits. Deployment is one server process per home on a Mac mini via launchd; backup is file copy (already built and running). Two installs, both controlled; migration is cheap *whenever* a reason exists.

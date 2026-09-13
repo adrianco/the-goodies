@@ -27,7 +27,8 @@ class GraphOperations(ABC):
         pass
 
     @abstractmethod
-    async def get_entities_by_type(self, entity_type: EntityType) -> List[Entity]:
+    async def get_entities_by_type(self, entity_type: EntityType,
+                                   include_deleted: bool = False) -> List[Entity]:
         """Get all entities of a specific type"""
         pass
 
@@ -79,9 +80,18 @@ class GraphOperations(ABC):
         self,
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
-        rel_type: Optional[RelationshipType] = None
+        rel_type: Optional[RelationshipType] = None,
+        include_all_versions: bool = False
     ) -> List[EntityRelationship]:
-        """Get relationships with optional filters"""
+        """Get relationships with optional filters.
+
+        ADR-004 §1: edges are interval rows, so "which edges?" needs a stance on
+        time. The default is the current graph (``valid_to IS NULL``);
+        ``include_all_versions=True`` adds retired intervals. It is part of the
+        abstract signature so every backend — SQL, in-memory, client cache —
+        answers the same question, which is what lets the conformance suite hold
+        them to one contract.
+        """
         pass
 
     async def update_entity(self, entity_id: str, changes: Dict[str, Any], user_id: str) -> Entity:

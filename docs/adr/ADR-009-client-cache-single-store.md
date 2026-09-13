@@ -1,6 +1,10 @@
 # ADR-009: The client is a temporal replica — one query interface, time is always a parameter
 
-**Status:** Proposed (v2 — rewritten 2026-08-01; supersedes the latest-only cache draft after the client-side as-of requirement landed)
+**Status:** Partially implemented · proposed 2026-08-01 (v2 — rewritten; supersedes the latest-only cache draft after the client-side as-of requirement landed) · temporal storage landed 2026-08-22 on `feat/v3-temporal`.
+
+**What is done:** the Python client (blowing-off) stores edges as intervals rather than mutating them in place, persists `valid_from`/`valid_to` across restarts, keeps retired intervals as history, derives its room index from current edges only, takes an `at` argument on local edge reads, and now *receives* edge intervals on the pull (ADR-005 §3) rather than only sending them — with the pull-guard extended to edges, so a pending local edit is not overwritten before it has been adjudicated. Before this it flattened its whole history on every save/load cycle and destroyed prior topology on every move — so it could not have agreed with the server about the past even in principle.
+
+**What is NOT done:** the uniform `at` parameter across *every* client read (§2) — only edge reads take it; entity reads still answer `at = now`. Single store per domain (§3) is unchanged. KittenKong, the maintained TypeScript client, has not had the equivalent change and is tracked separately.
 
 ## Context
 

@@ -1,6 +1,6 @@
-# Inbetweenies v2 — Sync Protocol Specification
+# Inbetweenies v3 — Sync Protocol Specification
 
-> **Status:** this is the authoritative spec for the `inbetweenies-v2` sync
+> **Status:** this is the authoritative spec for the `inbetweenies-v3` sync
 > protocol used between the **FunkyGibbon** server and clients. The maintained
 > clients are **Blowing-Off** (Python, this repo) and **KittenKong** (the
 > TypeScript port, `rolandcanyon-cmd/the-goodies-typescript`) — KittenKong is the
@@ -9,6 +9,20 @@
 > supersedes `inbetweenies/README.md`, which describes an **obsolete** model
 > (Home/Room/Accessory/Service/Characteristic). The real model is a generic
 > **Entity / Relationship knowledge graph**.
+>
+> **What changed in v3** (ADR-004, ADR-005 §3). Entities are unchanged; edges
+> are not:
+>
+> - **Edges are immutable interval rows.** `valid_from` / `valid_to` replace
+>   in-place edge mutation. An edge that changes is *ended* and a successor is
+>   inserted, so prior topology stays recoverable (§1, §3.1).
+> - **The version pins are gone from the wire.** `from_entity_version` and
+>   `to_entity_version` no longer exist. An edge references entity **ids**; the
+>   time axis resolves which version each endpoint had.
+> - **`vector_clock` is removed**, not reserved. It was never read.
+> - **A v2 request is rejected with `400`.** The server compares
+>   `protocol_version` exactly; there is no compatibility window. Both installs
+>   are controlled, so the cutover is a hard one.
 >
 > Earlier revisions carried **⚠ REFERENCE DEVIATES** notes marking where the
 > Python reference lagged the spec. Those are resolved: relationship sync, the
@@ -43,16 +57,37 @@ new "edit" is a *new row* with a new `version` and the prior version(s) in
 | `created_at`,`updated_at` | timestamp | UTC, see §6 |
 
 ### EntityRelationship (an edge)
+Immutable **interval** rows, with the same discipline entities have. The primary
+key is the composite **`(id, valid_from)`**: `id` is the logical edge, stable
+across every interval of its life; `valid_from` picks the interval.
+
 | field | type | notes |
 |---|---|---|
-| `id` | string (UUIDv4) | |
-| `from_entity_id` + `from_entity_version` | string | references a specific Entity version |
-| `to_entity_id` + `to_entity_version` | string | references a specific Entity version |
+| `id` | string (UUIDv4) | the logical edge; stable across intervals |
+| `valid_from` | timestamp | when this interval became true; half the primary key |
+| `valid_to` | timestamp \| null | when it stopped; **null = still true** |
+| `from_entity_id` | string | references an Entity **id**, not a version |
+| `to_entity_id` | string | references an Entity **id**, not a version |
 | `relationship_type` | string | e.g. `located_in`, `controls`, `documented_by` |
 | `properties` | object (JSON) | |
 
-Relationships have a **foreign-key dependency on the referenced Entity
-versions**, which constrains apply ordering (§5).
+An edge is current at `T` iff `valid_from <= T < coalesce(valid_to, ∞)` —
+**half-open**, so ending one interval and starting its successor at the same
+instant yields exactly one current edge, never zero and never two. The current
+graph is `valid_to IS NULL`.
+
+**Both bounds are on the valid-time axis: the client's edit time**, stored
+verbatim by the server. An edit made offline at 14:00 and synced at 18:00
+carries 14:00. Server apply order is a separate axis used only for replication
+(the `since` watermark, §4); queries never consult it and sync never consults
+client time.
+
+Endpoints are referenced by **id**. `from_entity_version` / `to_entity_version`
+were removed in v3: a pin recorded where an edge pointed when it was created and
+said nothing about when it stopped being true, and it forced an edge rewrite on
+every endpoint version bump. There is consequently **no foreign key on entity
+versions** any more; apply ordering (§5) still requires the endpoint entity to
+exist, but at any version.
 
 ## 2. Identity & versioning
 
@@ -78,12 +113,12 @@ versions**, which constrains apply ordering (§5).
 ## 3. Wire protocol
 
 **Endpoint:** `POST /api/v1/sync/` → `200` with a `SyncResponse`.
-**Content-Type:** `application/json`. **`protocol_version`: `"inbetweenies-v2"`.**
+**Content-Type:** `application/json`. **`protocol_version`: `"inbetweenies-v3"`.** A mismatch is a `400`.
 
 ### Request (`SyncRequest`)
 ```jsonc
 {
-  "protocol_version": "inbetweenies-v2",
+  "protocol_version": "inbetweenies-v3",
   "device_id": "string",        // stable per client device
   "user_id": "string",          // acting user
   "sync_type": "full|delta|entities|relationships",
@@ -93,7 +128,6 @@ versions**, which constrains apply ordering (§5).
     "since": "<utc-iso8601>" | null, // see §4
     "modified_by": ["user_id", ...] | null
   },
-  "vector_clock": { "clocks": {} },  // RESERVED — see §7
   "cursor": null                      // RESERVED — see §7
 }
 ```
@@ -121,22 +155,44 @@ versions**, which constrains apply ordering (§5).
 ```jsonc
 {
   "id": "uuid",
-  "from_entity_id": "uuid", "from_entity_version": "string",
-  "to_entity_id": "uuid",   "to_entity_version": "string",
-  "relationship_type": "string", "properties": { ... }
+  "from_entity_id": "uuid",
+  "to_entity_id": "uuid",
+  "relationship_type": "string", "properties": { ... },
+  "valid_from": "<utc-iso8601>|null",  // omitted/null = "now", server-stamped
+  "valid_to":   "<utc-iso8601>|null"   // null = still true; set = an END EVENT
 }
 ```
+
+Three inbound shapes, all idempotent on `(id, valid_from)`:
+
+| `valid_to` | meaning | server behaviour |
+|---|---|---|
+| absent / `null` | *this edge is true from `valid_from` onward* | opens an interval; ends the predecessor at the same instant **if the content differs** |
+| set | *this edge stopped being true at `valid_to`* | closes the matching interval; **never opens one** |
+| set, and the edge is unknown | backfill of history the replica missed | stores the closed interval verbatim |
+
+**Ending an edge is how a client deletes or moves one**, and it is an ordinary
+change — there is no separate message type (contrast §8, where entity deletes
+use `change_type: "delete"` and a tombstone version).
+
+Two rules a porter must not skip:
+
+- **Send `valid_from`.** Omitting it makes the server stamp its own clock, which
+  puts the edit on the replication axis instead of the query axis and silently
+  dates every historical answer by the sync lag.
+- **Re-pushing an unchanged edge must be safe.** The server compares content
+  (endpoints, type, properties, `user_id`) and writes nothing when it matches,
+  so a retried sync does not shred one continuous fact into adjacent slivers.
 
 ### Response (`SyncResponse`)
 ```jsonc
 {
-  "protocol_version": "inbetweenies-v2",
+  "protocol_version": "inbetweenies-v3",
   "sync_type": "full|delta|...",
   "changes": [ SyncChange, ... ],   // server→client changes to apply
   "conflicts": [ ConflictInfo, ... ],
   "sync_stats": { "entities_synced": 0, "relationships_synced": 0,
                   "conflicts_resolved": 0, "duration_ms": 0 },
-  "vector_clock": {...},            // RESERVED
   "cursor": null,                   // RESERVED
   "server_time": "<utc-iso8601>",   // REQUIRED — the client's next `since`, see §4
   "applied": ["<entity-id>", ...],           // REQUIRED — see §3.2
@@ -185,10 +241,20 @@ pulls the winner over its own edit, and the losing content is gone everywhere.
 
 ## 4. Sync flows & the `since` watermark
 
-- **`full`**: server returns all current (latest-version) entities/relationships.
+- **`full`**: server returns all current (latest-version) entities, and **every
+  edge interval — retired ones included**. Edges are not projected to
+  latest-per-id: a replica that received only open intervals could answer
+  "where is it now?" and nothing else, which is the whole capability §1's
+  interval model exists to provide. The rows are immutable, so shipping history
+  is idempotent.
 - **`delta`**: server returns only changes with `updated_at` **strictly greater
   than** `filters.since` (exclusive lower bound, compared against `updated_at`,
-  UTC).
+  UTC). Edges use the same bound. A **cursor**-paginated request has no
+  wall-clock bound of its own, so edges fall back to the oldest `updated_at` in
+  the page — `server_seq` is an entity-table column and edges do not carry one.
+- Edges ride the change for their **source** entity (§3.1), which is what makes
+  §5's "entities before relationships" satisfiable inside one batch. An edge
+  whose source is not in the page rides an entity-less change instead.
 - The client's watermark for the next delta is the **`server_time`** returned in
   the response — NOT the client's local clock. Persist `server_time` and send it
   back as the next `since`.
@@ -214,23 +280,64 @@ window). Clients MUST NOT send naive/local times.
 
 ## 7. Conflict resolution (canonical)
 
-When the same `id` is edited on both sides, resolve deterministically:
-1. Normalize both `updated_at` to UTC.
-2. If `abs(remote.updated_at − local.updated_at) < 1000 ms` → **tiebreak by
-   `version`**: the lexically greater `version` wins (stable, since version
-   encodes UTC time + counter + user). *(The reference uses a separate `sync_id`
-   field that doesn't exist on the wire model — porters should tiebreak on
-   `version`; the reference will be unified to match.)*
-3. Otherwise the **newer `updated_at` wins** (last-write-wins).
-The winner's full version is kept and the decision is reported in `conflicts[]`.
-The **loser is also kept**, as a non-latest version row, so a write can lose
-prominence but never existence — see §3.2.
-
 There is exactly **one** canonical algorithm and it runs **server-side**. A
 client does not resolve conflicts: it pushes, and the server tells it what won.
 A port therefore implements only version strings, parent tracking,
 push-until-acked, and pull-apply — deliberately the cheapest possible client
-contract.
+contract. This section is normative for the server and informative for a port;
+it is written out in full so a client implementation needs no access to server
+code (ADR-005 §4).
+
+### 7.1 The ordering rule
+
+Last-write-wins **by client edit time**, clamped by the server for ordering
+only:
+
+- The client's timestamp is **preserved verbatim in storage** — it is the
+  valid-time query axis (§1).
+- For the *resolution comparison only*, a timestamp later than
+  `server_now + 5 minutes` is clamped to that bound. A skewed or lying clock can
+  therefore never win "from the future", which is the one real LWW failure mode
+  this topology has. A clamped edit keeps its claimed time in history and is
+  flagged.
+- Ties break on the `version` string, which is already unique (§2: UTC time +
+  counter + writer id). The lexically greater `version` wins.
+
+### 7.2 The resolution ladder
+
+Applied in order; every rung is deterministic.
+
+| # | rung | when it applies |
+|---|---|---|
+| 1 | **Fast-forward** | the client edited from the server's current version → apply, no conflict |
+| 2 | **Per-entity-type rule** | the domain manifest supplies a deterministic merge for this entity type (e.g. union device capabilities, prefer-enabled automations). Produces a merge version with **both** parents in `parent_versions` |
+| 3 | **Three-way field merge** | a common ancestor is reachable via `parent_versions`. Keys changed on one side take that side; keys changed on **both** fall through to rung 4 *for that key set only*. Three-way is deletion-safe — the base distinguishes "deleted" from "never existed" |
+| 4 | **Clamped LWW** | §7.1, on whatever remains |
+| 5 | **Loser preserved** | the losing version is stored as a non-latest version row, **acknowledged**, and reported in `conflicts[]` |
+
+Rung 5 is not optional and not merely archival. **A losing change MUST be
+acknowledged** in `applied` (§3.2). A client that guards pull-apply for pending
+ids — which §10 requires — will otherwise keep its pending mark forever, keep
+blocking the winner it needs to converge on, and re-push the same loser on every
+sync. The acknowledgement is what ends the ambiguity between "lost" and "not
+received", and without it the guard livelocks.
+
+An entity type may be flagged `manual`: instead of rung 4, the conflict lands in
+a persisted review queue.
+
+### 7.3 Edges
+
+Concurrent edge edits resolve through the same ladder. Both clients end the same
+predecessor interval; the ladder picks which successor is current, and the
+loser's interval stays in history — so the no-silent-loss invariant covers
+topology as well as content.
+
+### 7.4 Clocks
+
+HLC (hybrid logical clocks) is **explicitly deferred**, with its trigger written
+down: adopt it only if a second write authority ever appears — multi-server,
+peer-to-peer, or client-to-client sync. None is on the roadmap, and a single
+server means client edit time plus a clamp is sufficient.
 
 ## 8. Deletes & tombstones
 
@@ -249,9 +356,13 @@ retrying it.
 
 These appear in the schema but are **not implemented**; a porter should
 round-trip them but not depend on them, and we will mark them reserved:
-- `vector_clock` — always empty, never read (no causal tracking exists).
 - `cursor` (request & response) — pagination is not implemented; large syncs are
   returned whole. ADR-002 implements it; until then a port must tolerate `null`.
+
+**Removed in v3:** `vector_clock` is no longer part of the schema. It was always
+empty and never read (no causal tracking exists — see §7.4), and a reserved
+field that every port had to round-trip for nothing is worse than an absent one.
+`from_entity_version` / `to_entity_version` are removed for the reasons in §1.
 
 **No longer reserved:** acknowledgement is now a real, required part of the
 protocol — see §3.2. An earlier revision of this document stated "there is no
@@ -265,6 +376,20 @@ A correct port must: use the §2 version format; speak the §3 JSON exactly;
 `server_time` watermark; obey §5 apply ordering atomically; send/expect §6 UTC
 timestamps; expect the server to apply the single §7 conflict rule; implement §8
 tombstone deletes; and ignore §9 reserved fields.
+
+**New in v3**, and each of these is a way a v2-shaped port silently loses data
+rather than failing loudly:
+
+- Send `protocol_version: "inbetweenies-v3"`. A v2 value is rejected with `400`.
+- Store edges as **interval rows keyed on `(id, valid_from)`**, never mutating
+  one in place. A client that overwrites the row carrying an edge's id destroys
+  its own history and can no longer agree with the server about the past.
+- **Send `valid_from` and `valid_to`** on every `RelationshipChange` (§3). An
+  edge delete or move is expressed *only* by `valid_to`; omit it and the change
+  is indistinguishable from an unchanged re-push and is discarded as idempotent.
+- Read edges **current-only by default**. A retired interval is history, not
+  state; returning both leaves a moved device in two rooms at once.
+- Drop `vector_clock` and the endpoint version pins from anything you send.
 
 One client-side rule is not visible in the wire format but is required:
 **a pending local change must block pull-apply for that id.** Without it, a

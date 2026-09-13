@@ -54,7 +54,6 @@ class TestSyncDiagnostics:
                 "device_id": "test-diagnostic",
                 "user_id": "test-user",
                 "sync_type": "full",
-                "vector_clock": {},
                 "changes": []
             }
 
@@ -73,7 +72,7 @@ class TestSyncDiagnostics:
             data = response.json()
             print(f"Response keys: {data.keys()}")
             assert "changes" in data
-            assert "vector_clock" in data
+            assert "vector_clock" not in data  # removed in v3 (ADR-005 §3)
 
     @pytest.mark.asyncio
     async def test_single_client_operations(self, server_url, auth_token, private_db_path):

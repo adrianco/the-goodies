@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FunkyGibbon - data migration to the canonical inbetweenies-v2 shape.
+FunkyGibbon - data migration to the canonical inbetweenies-v3 shape.
 
 Run as:  python -m funkygibbon.migrate [--db PATH] [--apply]
 
@@ -13,7 +13,14 @@ Brings an existing knowledge-graph database into line with PROTOCOL.md:
   2. Inline photos: entity content carrying a base64 ``data_b64`` blob is moved
      into the ``blobs`` table (decoded, sized, SHA-256 checksummed) and the
      content is rewritten to reference the blob by id instead of inlining it.
-  3. Domain-vocabulary columns (ADR-012 §1): ``entity_type``, ``source_type``,
+  3. Interval edges (ADR-004 §1): ``entity_relationships`` is rebuilt with a
+     ``(id, valid_from)`` primary key, a nullable ``valid_to``, and without the
+     ``from_entity_version`` / ``to_entity_version`` pins or their foreign keys.
+     This one is not optional and not cosmetic: ``Base.metadata.create_all`` is
+     a no-op on a table that already exists, so a v3 server pointed at a v2
+     database fails the NOT NULL check on ``from_entity_version`` the first time
+     it stores an edge. See ``_migrate_edges_to_intervals``.
+  4. Domain-vocabulary columns (ADR-012 §1): ``entity_type``, ``source_type``,
      ``relationship_type`` and ``blob_type`` stopped being ``SQLEnum`` columns
      and became plain strings. This *does* need a data migration, contrary to
      the obvious guess: SQLAlchemy's ``Enum`` persists a PEP-435 member's
@@ -156,6 +163,7 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
     stats = {
         "entities": 0, "versions_fixed": 0, "photos_extracted": 0,
         "blobs_created": 0, "relationship_versions_fixed": 0,
+        "edges_migrated": 0,
     }
 
     entities_before = cur.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
@@ -194,18 +202,23 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
                 stats["versions_fixed"] += 1
 
     # --- relationships: fix the version references ------------------------- #
-    rel_rows = cur.execute(
-        "SELECT id, from_entity_version, to_entity_version FROM entity_relationships"
-    ).fetchall()
-    for rid, from_v, to_v in rel_rows:
-        new_from, new_to = fix_version(from_v), fix_version(to_v)
-        if new_from != from_v or new_to != to_v:
-            cur.execute(
-                "UPDATE entity_relationships SET from_entity_version = ?, "
-                "to_entity_version = ? WHERE id = ?",
-                (new_from, new_to, rid),
-            )
-            stats["relationship_versions_fixed"] += 1
+    #
+    # Guarded on the column's existence: the interval migration at the end of
+    # this function drops the pin columns, so on an already-migrated database
+    # this step has nothing to repair and would otherwise raise.
+    if _table_has_column(cur, "entity_relationships", "from_entity_version"):
+        rel_rows = cur.execute(
+            "SELECT id, from_entity_version, to_entity_version FROM entity_relationships"
+        ).fetchall()
+        for rid, from_v, to_v in rel_rows:
+            new_from, new_to = fix_version(from_v), fix_version(to_v)
+            if new_from != from_v or new_to != to_v:
+                cur.execute(
+                    "UPDATE entity_relationships SET from_entity_version = ?, "
+                    "to_entity_version = ? WHERE id = ?",
+                    (new_from, new_to, rid),
+                )
+                stats["relationship_versions_fixed"] += 1
 
     # --- verify invariants before committing ------------------------------- #
     entities_after = cur.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
@@ -241,6 +254,15 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
     stats.update(_converge_blob_linking(cur))
     stats.update(_retire_controlled_by_app(cur))
     _assert_types_normalised(cur)
+
+    # --- relationships: v2 rows -> ADR-004 interval rows -------------------- #
+    #
+    # LAST, and the ordering is load-bearing. This drops from_entity_version /
+    # to_entity_version, and several steps above still read them —
+    # _retire_controlled_by_app swaps the pair when it flips an edge's
+    # direction, and the doubled-Z repair rewrites both. Run any of them after
+    # this and they fail on a column that no longer exists.
+    stats.update(_migrate_edges_to_intervals(cur))
 
     if apply:
         conn.commit()
@@ -445,6 +467,137 @@ def _rebuild_without(cur, table: str, new_sql: str) -> None:
         cur.execute(sql)
 
 
+def _edges_need_interval_migration(cur) -> bool:
+    """Is `entity_relationships` still the v2 shape? (ADR-004 §1)
+
+    The tell is the pin columns. A v3 table has no ``from_entity_version``;
+    a v2 one has it NOT NULL, which is what makes the upgrade urgent rather
+    than cosmetic — the ORM stopped writing that column, so the very first
+    edge a v3 server tries to store on a v2 table fails the NOT NULL check.
+    """
+    return _table_has_column(cur, "entity_relationships", "from_entity_version")
+
+
+def _migrate_edges_to_intervals(cur) -> Dict[str, int]:
+    """Rebuild `entity_relationships` in the ADR-004 §1 interval shape.
+
+    Four changes at once, because SQLite makes them one operation:
+
+    * primary key ``(id)`` -> ``(id, valid_from)`` — ``id`` stays the logical
+      edge, ``valid_from`` picks the interval. Without the composite key an edge
+      had nowhere to put its successor, which is why the old code mutated rows
+      in place and destroyed prior topology (review finding C4).
+    * ``valid_from`` NOT NULL, backfilled from the existing column where the
+      v2.5 schema already had one, else from ``created_at``. It is half the
+      primary key now, so it cannot stay nullable.
+    * ``valid_to`` added (or preserved) — null means the edge is still true.
+    * ``from_entity_version`` / ``to_entity_version`` and their foreign keys
+      dropped. A pin records where an edge pointed when it was created and says
+      nothing about when it stopped being true; the time axis does that job now.
+
+    Not expressible as ALTER TABLE: SQLite can neither drop a foreign key nor
+    change a primary key, so this is the documented rebuild dance. The table
+    definition is generated from the ORM metadata rather than written out here
+    on purpose — a hand-copied CREATE TABLE is a second source of truth that
+    drifts the first time someone adds a column to the model.
+
+    Idempotent: a v3 table is left untouched.
+    """
+    stats = {"edges_migrated": 0}
+    if not _edges_need_interval_migration(cur):
+        return stats
+
+    from sqlalchemy.dialects import sqlite as sqlite_dialect
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    from inbetweenies.models.relationship import EntityRelationship
+
+    table = EntityRelationship.__table__
+    dialect = sqlite_dialect.dialect()
+    create_sql = str(CreateTable(table).compile(dialect=dialect))
+    index_sql = [
+        str(CreateIndex(index).compile(dialect=dialect)) for index in table.indexes
+    ]
+
+    have = {row[1] for row in cur.execute(
+        'PRAGMA table_info("entity_relationships")').fetchall()}
+
+    # Read each target column from the source only if the source has it. Three
+    # schema generations reach this function — the original v2 table, the v2.5
+    # one that added nullable interval columns (a22f99b), and the minimal
+    # tables test fixtures build — and hardcoding the column list makes the
+    # migration fail on any of them that is missing a column it never used.
+    def source(column: str, fallback: str) -> str:
+        return column if column in have else fallback
+
+    now_literal = "'" + datetime.now(timezone.utc).isoformat() + "'"
+
+    if "valid_from" in have and "created_at" in have:
+        # v2.5: the column exists but is nullable. created_at is the honest
+        # backfill — an edge was true from when it was recorded.
+        valid_from_expr = f"COALESCE(valid_from, created_at, {now_literal})"
+    elif "created_at" in have:
+        valid_from_expr = f"COALESCE(created_at, {now_literal})"
+    else:
+        # No timestamp anywhere in the source. There is no information about
+        # when these edges became true, so they become true now — stated here
+        # rather than hidden, because it is a real (if minor) loss of history
+        # and only a pre-timestamp schema can hit it.
+        valid_from_expr = now_literal
+
+    valid_to_expr = source("valid_to", "NULL")
+
+    stats["edges_migrated"] = cur.execute(
+        "SELECT COUNT(*) FROM entity_relationships").fetchone()[0]
+
+    tmp = "entity_relationships__adr004_old"
+    # legacy_alter_table for the same reason _rebuild_without needs it: modern
+    # SQLite rewrites other tables' foreign keys to follow a rename, and here
+    # that would repoint them at the temporary table we are about to drop.
+    cur.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        cur.execute(f'ALTER TABLE "entity_relationships" RENAME TO "{tmp}"')
+        cur.execute(create_sql)
+        cur.execute(f"""
+            INSERT INTO entity_relationships (
+                id, valid_from, valid_to, from_entity_id, to_entity_id,
+                relationship_type, properties, user_id,
+                created_at, updated_at, sync_id
+            )
+            SELECT
+                id,
+                {valid_from_expr},
+                {valid_to_expr},
+                from_entity_id,
+                to_entity_id,
+                relationship_type,
+                {source("properties", "NULL")},
+                {source("user_id", "NULL")},
+                {source("created_at", now_literal)},
+                {source("updated_at", now_literal)},
+                {source("sync_id", "NULL")}
+            FROM "{tmp}"
+        """)
+        cur.execute(f'DROP TABLE "{tmp}"')
+    finally:
+        cur.execute("PRAGMA legacy_alter_table = OFF")
+
+    for sql in index_sql:
+        cur.execute(sql)
+
+    # valid_from is half the primary key, so a row that arrives here with a null
+    # created_at would have been rejected by the INSERT above. Assert the
+    # invariant anyway: this runs once per install, against data nobody can
+    # reproduce afterwards, and a silent partial backfill is unrecoverable.
+    nulls = cur.execute(
+        "SELECT COUNT(*) FROM entity_relationships WHERE valid_from IS NULL"
+    ).fetchone()[0]
+    if nulls:
+        raise RuntimeError(f"{nulls} edges have no valid_from after backfill")
+
+    return stats
+
+
 def _relax_type_column_constraints(cur) -> Dict[str, int]:
     """Drop CHECK constraints pinning the domain-vocabulary columns (ADR-012 §1).
 
@@ -574,6 +727,28 @@ def _normalise_domain_type_values(cur) -> Dict[str, int]:
     return stats
 
 
+def _columns_missing_from_schema(cur) -> Dict[str, set]:
+    """{table: {column, ...}} for every mapped column absent from the live DB.
+
+    Read from the ORM metadata so the check cannot drift from the models the
+    server actually runs. Tables the database does not have at all are skipped:
+    ``create_all`` at startup creates missing *tables* (and only tables --
+    which is exactly why a missing *column* is the dangerous case).
+    """
+    from inbetweenies.models import Base
+
+    missing: Dict[str, set] = {}
+    for table in Base.metadata.sorted_tables:
+        present = {row[1] for row in cur.execute(
+            f'PRAGMA table_info("{table.name}")').fetchall()}
+        if not present:
+            continue
+        absent = {c.name for c in table.columns} - present
+        if absent:
+            missing[table.name] = absent
+    return missing
+
+
 def _table_has_column(cur, table: str, column: str) -> bool:
     """True if `table` exists on this file and carries `column`."""
     return any(row[1] == column
@@ -629,6 +804,16 @@ def verify_db(db_path: Path, domain: str) -> int:
             print(f"Database: {db_path}")
             print("  NOT MIGRATED -- no is_latest column. Run without --verify first.")
             return 1
+        if _edges_need_interval_migration(cur):
+            # #87: v0.4.0's migrate left the edge table in its v2 shape and
+            # --verify said PASS, because it only checked vocabulary. The server
+            # then 500'd on every data endpoint. A pins-carrying table is the
+            # signature of that state; name it instead of passing it.
+            print(f"Database: {db_path}")
+            print("  NOT MIGRATED -- entity_relationships still has from_entity_version/"
+                  "to_entity_version (ADR-004 interval migration has not run). "
+                  "Run without --verify first.")
+            return 1
 
         print(f"Database: {db_path}")
 
@@ -649,12 +834,19 @@ def verify_db(db_path: Path, domain: str) -> int:
         else:
             print("  ok    every entity type is declared")
 
+        # ADR-004 §1: audit the CURRENT graph, not every interval ever written.
+        # `r.valid_to IS NULL` is the whole of the filter — without it a device
+        # that moved rooms was checked in both its old and new placement, and a
+        # vocabulary term retired by ADR-013 made every historical edge that
+        # used it fail forever. History is not required to satisfy today's
+        # rules; it is required to be recoverable.
         bad_edges = Counter()
         for rtype, from_type, to_type in cur.execute(
             """SELECT r.relationship_type, fe.entity_type, te.entity_type
                  FROM entity_relationships r
                  JOIN entities fe ON fe.id = r.from_entity_id AND fe.is_latest = 1
-                 JOIN entities te ON te.id = r.to_entity_id   AND te.is_latest = 1"""
+                 JOIN entities te ON te.id = r.to_entity_id   AND te.is_latest = 1
+                WHERE r.valid_to IS NULL"""
         ):
             rule = manifest.relationship_rules.get(rtype)
             if rule is None or not rule.permits(from_type, to_type):
@@ -702,6 +894,20 @@ def verify_db(db_path: Path, domain: str) -> int:
             problems += sum(stale.values())
         else:
             print("  ok    no retired blob conventions remain")
+
+        # Schema vs the mapped models (#87). Every column the ORM will SELECT
+        # must exist, or the server passes --verify and then raises
+        # OperationalError on its first query. This is the check that would
+        # have caught the v0.4.0 upgrade: "migration applied + verify PASS +
+        # /health 200" described a server that could not serve one entity.
+        missing = _columns_missing_from_schema(cur)
+        if missing:
+            print("  FAIL  columns the models expect but the database lacks:")
+            for table, cols in sorted(missing.items()):
+                print(f"          {table}: {', '.join(sorted(cols))}")
+            problems += sum(len(c) for c in missing.values())
+        else:
+            print("  ok    schema has every column the models map")
 
         print("  PASS" if not problems else f"  {problems} problem(s) found")
         return 0 if not problems else 1

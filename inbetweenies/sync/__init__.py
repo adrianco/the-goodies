@@ -8,7 +8,7 @@ shared between server (FunkyGibbon) and client (Blowing-Off) implementations.
 from .conflict import ConflictResolver, ConflictResolution
 from .types import SyncOperation, Change, Conflict, SyncState, SyncResult
 from .protocol import (
-    VectorClock, BlobChange, EntityChange, RelationshipChange, SyncChange,
+    BlobChange, EntityChange, RelationshipChange, SyncChange,
     SyncFilters, SyncRequest, ConflictInfo, SyncStats, SyncResponse
 )
 
@@ -21,7 +21,6 @@ __all__ = [
     'SyncState',
     'SyncResult',
     # Protocol models
-    'VectorClock',
     'EntityChange',
     'RelationshipChange',
     'SyncChange',

@@ -94,3 +94,21 @@ class TestSerialization:
         """None distinguishes "still true" from a peer that lacks the field."""
         d = _edge(valid_from=T0).to_dict()
         assert "valid_to" in d and d["valid_to"] is None
+
+
+class TestNaiveAtArgument:
+    """The `at` argument is normalised too, not just the row's own bounds.
+
+    Bounds round-trip through SQLite as naive and `at` reaches callers from
+    query strings and JSON, so a mixed comparison is the common case rather
+    than the exotic one. Normalising a single side raises TypeError on exactly
+    the pairing the helper exists to absorb — a 500 on an as-of query.
+    """
+
+    def test_naive_at_against_aware_bounds(self):
+        edge = _edge(valid_from=T0, valid_to=T2)
+        assert edge.is_current_at(datetime(2026, 6, 1, 12, 0))
+
+    def test_naive_at_outside_aware_bounds(self):
+        edge = _edge(valid_from=T0, valid_to=T1)
+        assert edge.is_current_at(datetime(2026, 9, 1, 12, 0)) is False

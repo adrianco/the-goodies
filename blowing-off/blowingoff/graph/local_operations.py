@@ -228,6 +228,15 @@ class LocalGraphOperations(MCPTools):
         """Return {entity_id: operation} for locally-changed, unpushed entities."""
         return self.storage.get_pending_entities()
 
+    def batch_writes(self):
+        """Apply many rows with ONE store rewrite (see LocalGraphStorage).
+
+        Exposed here rather than letting callers reach through to `.storage`:
+        the sync engine talks to this object, and a caller that has to know the
+        storage layout to batch its writes has been handed the wrong seam.
+        """
+        return self.storage.batch_writes()
+
     def get_pending_relationships(self) -> dict:
         """Return {relationship_id: operation} for locally-changed, unpushed relationships."""
         return self.storage.get_pending_relationships()
@@ -244,10 +253,18 @@ class LocalGraphOperations(MCPTools):
         self,
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
-        rel_type: Optional[RelationshipType] = None
+        rel_type: Optional[RelationshipType] = None,
+        include_all_versions: bool = False
     ) -> List[EntityRelationship]:
-        """Get relationships with optional filters"""
-        return self.storage.get_relationships(from_id, to_id, rel_type)
+        """Get relationships with optional filters.
+
+        ADR-004 §1: current edges by default; ``include_all_versions=True``
+        adds retired intervals, which the sync push path needs and ordinary
+        graph reads must not see.
+        """
+        return self.storage.get_relationships(
+            from_id, to_id, rel_type, include_all_versions=include_all_versions
+        )
 
     async def search_entities(
         self,

@@ -36,7 +36,6 @@ async def test_sync_api():
         "device_id": "test-device",
         "user_id": "test-user",
         "sync_type": "full",
-        "vector_clock": {"clocks": {}},
         "changes": []
     }
 
@@ -92,7 +91,6 @@ async def test_sync_api():
         "device_id": "test-device",
         "user_id": "test-user",
         "sync_type": "delta",
-        "vector_clock": {"clocks": {"test-device": "v1"}},
         "changes": changes
     }
 
@@ -113,7 +111,6 @@ async def test_sync_api():
         "device_id": "device-1",
         "user_id": "user-1",
         "sync_type": "delta",
-        "vector_clock": {"clocks": {}},
         "changes": [{
             "change_type": "update",
             "entity": {
@@ -135,7 +132,6 @@ async def test_sync_api():
         "device_id": "device-2",
         "user_id": "user-2",
         "sync_type": "delta",
-        "vector_clock": {"clocks": {}},
         "changes": [{
             "change_type": "update",
             "entity": {

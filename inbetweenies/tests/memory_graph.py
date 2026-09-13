@@ -150,11 +150,16 @@ class InMemoryGraph(MCPTools, GraphTraversal):
                 return candidate
         return None
 
-    async def get_entities_by_type(self, entity_type: EntityType) -> List[Entity]:
+    async def get_entities_by_type(self, entity_type: EntityType,
+                                   include_deleted: bool = False) -> List[Entity]:
+        # The fake honours the tombstone rule too. A double that returned
+        # deleted entities as live ones would let a bug pass here and fail
+        # against SQL, which is the one thing a double must never do.
         return [
             versions[-1]
             for versions in self._versions.values()
             if versions and versions[-1].entity_type == entity_type
+            and (include_deleted or not versions[-1].is_tombstone)
         ]
 
     async def store_relationship(
@@ -167,6 +172,7 @@ class InMemoryGraph(MCPTools, GraphTraversal):
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
         rel_type: Optional[RelationshipType] = None,
+        include_all_versions: bool = False,
     ) -> List[EntityRelationship]:
         matches = []
         for rel in self._relationships:
@@ -175,6 +181,12 @@ class InMemoryGraph(MCPTools, GraphTraversal):
             if to_id is not None and rel.to_entity_id != to_id:
                 continue
             if rel_type is not None and rel.relationship_type != rel_type:
+                continue
+            # ADR-004 §1: the fake honours currency too. A double that returned
+            # retired intervals as live edges would let a traversal bug pass
+            # here and fail against SQL — the fake's whole job is to be wrong in
+            # the same ways the real backend is, and in no others.
+            if not include_all_versions and rel.valid_to is not None:
                 continue
             matches.append(rel)
         return matches

@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 import json
 from datetime import datetime, timedelta, UTC
+from contextlib import nullcontext
 from unittest.mock import Mock, AsyncMock, patch
 import uuid
 import httpx
@@ -29,6 +30,9 @@ def make_mock_graph_ops(**overrides):
     mock = Mock()
     mock.store_entity = AsyncMock()
     mock.store_relationship = AsyncMock()
+    # The pull-apply path batches its writes (one store rewrite per sync, not
+    # one per row), so the double has to stand in for that too.
+    mock.batch_writes = Mock(return_value=nullcontext())
     mock.get_entities_by_type = AsyncMock(return_value=[])
     mock.get_entity = AsyncMock(return_value=None)
     mock.get_relationships = AsyncMock(return_value=[])

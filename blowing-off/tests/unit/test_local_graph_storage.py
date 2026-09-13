@@ -249,3 +249,122 @@ class TestLocalGraphStorage:
         retrieved = storage2.get_entity(sample_entity.id)
         assert retrieved is not None
         assert retrieved.name == sample_entity.name
+
+
+# ======================================================================
+# ADR-004 §1 / ADR-009 — the client is a temporal replica.
+#
+# "Clients hold the whole graph" is only true if the client holds the
+# whole graph, history included. These pin the three ways it did not.
+# ======================================================================
+
+def _edge(storage_id="rel-1", to_id="room-1", valid_from=None, valid_to=None):
+    return EntityRelationship(
+        id=storage_id,
+        from_entity_id="device-1",
+        to_entity_id=to_id,
+        relationship_type=RelationshipType.LOCATED_IN,
+        properties={},
+        user_id="test-user",
+        valid_from=valid_from,
+        valid_to=valid_to,
+    )
+
+
+MARCH = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+JUNE = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+
+class TestIntervalsSurviveDisk:
+    def test_interval_bounds_round_trip_through_json(self, temp_storage_dir):
+        """The bounds were dropped on the way out and never came back.
+
+        `_relationship_to_dict` omitted valid_from/valid_to entirely, so every
+        edge reloaded with no interval — which `is_current_at` reads as "always
+        true". A restart silently flattened the client's whole history into a
+        present tense and republished retired edges as live ones.
+        """
+        storage = LocalGraphStorage(storage_dir=temp_storage_dir)
+        storage.store_relationship(_edge(valid_from=MARCH, valid_to=JUNE))
+
+        reloaded = LocalGraphStorage(storage_dir=temp_storage_dir)
+        rows = reloaded.get_relationships(include_all_versions=True)
+        assert len(rows) == 1
+        assert rows[0].valid_from == MARCH
+        assert rows[0].valid_to == JUNE
+
+    def test_a_retired_edge_stays_retired_across_a_restart(self, temp_storage_dir):
+        storage = LocalGraphStorage(storage_dir=temp_storage_dir)
+        storage.store_relationship(_edge(valid_from=MARCH, valid_to=JUNE))
+
+        reloaded = LocalGraphStorage(storage_dir=temp_storage_dir)
+        assert reloaded.get_relationships() == []
+        assert len(reloaded.get_relationships(include_all_versions=True)) == 1
+
+
+class TestClientEndAndInsert:
+    def test_a_move_appends_an_interval_rather_than_overwriting(self, storage):
+        """`store_relationship` replaced the row carrying the same id — the
+        exact mutation ADR-004 §1 forbids, performed by the replica that is
+        supposed to answer as-of queries locally."""
+        storage.store_relationship(_edge(to_id="room-1", valid_from=MARCH))
+        storage.store_relationship(_edge(to_id="room-2", valid_from=JUNE))
+
+        history = storage.get_relationships(include_all_versions=True)
+        assert len(history) == 2, "the move destroyed the earlier placement"
+
+        current = storage.get_relationships()
+        assert [r.to_entity_id for r in current] == ["room-2"]
+
+    def test_the_superseded_row_is_closed_at_the_successors_start(self, storage):
+        storage.store_relationship(_edge(to_id="room-1", valid_from=MARCH))
+        storage.store_relationship(_edge(to_id="room-2", valid_from=JUNE))
+
+        old = next(r for r in storage.get_relationships(include_all_versions=True)
+                   if r.to_entity_id == "room-1")
+        assert old.valid_to == JUNE
+
+    def test_the_prior_placement_is_answerable_at_a_past_instant(self, storage):
+        storage.store_relationship(_edge(to_id="room-1", valid_from=MARCH))
+        storage.store_relationship(_edge(to_id="room-2", valid_from=JUNE))
+
+        in_april = storage.get_relationships(at=datetime(2026, 4, 1, tzinfo=UTC))
+        assert [r.to_entity_id for r in in_april] == ["room-1"]
+
+    def test_redelivering_the_same_row_is_idempotent(self, storage):
+        """Row identity is (id, valid_from). A re-pushed row must not append."""
+        for _ in range(3):
+            storage.store_relationship(_edge(to_id="room-1", valid_from=MARCH))
+
+        assert len(storage.get_relationships(include_all_versions=True)) == 1
+
+    def test_an_end_event_closes_the_row_it_names(self, storage):
+        storage.store_relationship(_edge(to_id="room-1", valid_from=MARCH))
+        storage.store_relationship(_edge(to_id="room-1", valid_from=MARCH, valid_to=JUNE))
+
+        rows = storage.get_relationships(include_all_versions=True)
+        assert len(rows) == 1
+        assert rows[0].valid_to == JUNE
+        assert storage.get_relationships() == []
+
+
+class TestRoomIndexFollowsTheMove:
+    def test_a_moved_device_leaves_its_old_room(self, storage):
+        """`by_room` was append-only with no removal path, so a device that
+        moved was listed in both rooms permanently and no amount of syncing
+        corrected it."""
+        storage.store_relationship(_edge(to_id="room-1", valid_from=MARCH))
+        storage.store_relationship(_edge(to_id="room-2", valid_from=JUNE))
+
+        by_room = storage._index["by_room"]
+        assert by_room.get("room-1", []) == [], "the device never left the old room"
+        assert by_room.get("room-2") == ["device-1"]
+
+    def test_the_room_index_survives_a_restart_unchanged(self, temp_storage_dir):
+        storage = LocalGraphStorage(storage_dir=temp_storage_dir)
+        storage.store_relationship(_edge(to_id="room-1", valid_from=MARCH))
+        storage.store_relationship(_edge(to_id="room-2", valid_from=JUNE))
+
+        reloaded = LocalGraphStorage(storage_dir=temp_storage_dir)
+        assert reloaded._index["by_room"].get("room-1", []) == []
+        assert reloaded._index["by_room"].get("room-2") == ["device-1"]
