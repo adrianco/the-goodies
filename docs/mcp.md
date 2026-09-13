@@ -64,6 +64,7 @@ not the body.
 
 | Tool | Arguments |
 |---|---|
+| *house domain tools* — a vehicles server has its own instead ([domains/vehicles](../domains/vehicles/README.md)) | |
 | `get_devices_in_room` | `room_id` |
 | `get_room_connections` | `room_id` |
 | `find_device_controls` | `device_id` |
@@ -215,6 +216,16 @@ reader must know to sort by.
 
 **The test:** if removing an item would change what the remaining items mean, it
 is a sequence — keep it inline. Otherwise it is an entity.
+
+### Which domain am I talking to?
+
+A server serves exactly one domain (ADR-012), named by its `DOMAIN_MANIFEST`
+setting; the house is the default. `GET /api/v1/mcp/tools` is the truth: the
+18 engine tools plus that domain's own, with `create_entity` and
+`create_relationship` listing that domain's vocabulary in their `enum`s. A
+house tool called on a vehicles server is an unknown tool (400), and house
+vocabulary in `create_entity` or a sync push is refused with a 400 naming the
+declared types. A replica (blowing-off) picks its domain the same way.
 
 ### The vocabulary
 

@@ -130,6 +130,19 @@ it is a sequence — keep it inline. Otherwise it is an entity.
 The cost, named honestly: those blobs are reachable only by the nested path, so
 `carries_blob()` and any integrity sweep must know both shapes. See ADR-013 §3.
 
+## Tools
+
+The house declares five tools in `manifest.py` (ADR-012 §2); the engine
+renders and dispatches them. `get_devices_in_room` is a declared walk — anchor
+on a room, follow `located_in` backwards, keep devices — and the other four
+(`find_device_controls`, `get_room_connections`, `get_procedures_for_device`,
+`get_automations_in_room`) are handlers in `tools.py` because each needs more
+than a walk. They used to be methods on the engine's `MCPTools`; nothing
+house-specific lives there now.
+
+The house names no skills yet: the room walk exists as a skill outside this
+repo. When it moves in, `skills={"room-walk": ...}` in the manifest is the hook.
+
 ## Two installs, different halves of the vocabulary
 
 Counts above are Roland. Corfe is the second install — Home Assistant plus

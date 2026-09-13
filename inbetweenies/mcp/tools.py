@@ -11,9 +11,10 @@ from abc import ABC
 
 from datetime import datetime, timezone
 
-from ..models import Entity, EntityType, EntityRelationship, RelationshipType, SourceType
+from ..models import Entity, EntityRelationship, SourceType
 from ..graph.operations import GraphOperations
 from ..graph.search import GraphSearch
+from ..domain import DomainManifest, load_manifest
 
 
 def _parse_at(value: Optional[str]) -> Optional[datetime]:
@@ -74,120 +75,21 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
     """
     MCP tools implementation.
 
-    This class provides all the MCP tool methods that work with
-    the abstract GraphOperations interface.
+    This class provides all the ENGINE's MCP tool methods that work with
+    the abstract GraphOperations interface. A domain's own tools are declared
+    in its manifest and run by :mod:`inbetweenies.mcp.domain_tools` against
+    the same interface; nothing here knows what a room or a car is.
     """
 
-    async def get_devices_in_room(self, room_id: str, at: Optional[str] = None) -> ToolResult:
-        """Get all devices located in a specific room"""
-        try:
-            moment = _parse_at(at)
-            # Get the room to verify it exists
-            room = await self.get_entity(room_id, at=moment)
-            if not room or room.entity_type != EntityType.ROOM:
-                return ToolResult(False, None, f"Room {room_id} not found")
+    #: The vocabulary this store enforces (ADR-012 §1). Set it explicitly, or
+    #: it is resolved from ``$DOMAIN_MANIFEST`` on first use.
+    manifest: Optional[DomainManifest] = None
 
-            # Get all devices in this room
-            relationships = await self.get_relationships(at=moment, to_id=room_id,
-                rel_type=RelationshipType.LOCATED_IN
-            )
-
-            devices = []
-            for rel in relationships:
-                device = await self.get_entity(rel.from_entity_id, at=moment)
-                if device and device.entity_type == EntityType.DEVICE:
-                    devices.append(device)
-
-            return ToolResult(True, {
-                "room_id": room_id,
-                "devices": [d.to_dict() for d in devices],
-                "count": len(devices)
-            })
-
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
-    async def find_device_controls(self, device_id: str, at: Optional[str] = None) -> ToolResult:
-        """Get available controls and services for a device"""
-        try:
-            moment = _parse_at(at)
-            device = await self.get_entity(device_id, at=moment)
-            if not device or device.entity_type != EntityType.DEVICE:
-                return ToolResult(False, None, f"Device {device_id} not found")
-
-            # Get capabilities from device content
-            capabilities = device.content.get("capabilities", []) if device.content else []
-
-            # Get devices this device controls
-            controls_relationships = await self.get_relationships(at=moment, from_id=device_id,
-                rel_type=RelationshipType.CONTROLS
-            )
-
-            controlled_devices = []
-            for rel in controls_relationships:
-                controlled = await self.get_entity(rel.to_entity_id, at=moment)
-                if controlled:
-                    controlled_devices.append({
-                        "id": controlled.id,
-                        "name": controlled.name,
-                        "type": getattr(controlled.entity_type, "value", controlled.entity_type)
-                    })
-
-            return ToolResult(True, {
-                "device_id": device_id,
-                "device_name": device.name,
-                "capabilities": capabilities,
-                "controlled_devices": controlled_devices,
-                "services": device.content.get("services", []) if device.content else []
-            })
-
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
-    async def get_room_connections(self, room_id: str, at: Optional[str] = None) -> ToolResult:
-        """Find all rooms connected to a given room"""
-        try:
-            moment = _parse_at(at)
-            room = await self.get_entity(room_id, at=moment)
-            if not room or room.entity_type != EntityType.ROOM:
-                return ToolResult(False, None, f"Room {room_id} not found")
-
-            # Get connections via CONNECTS_TO relationships
-            connections = []
-
-            # Outgoing connections
-            outgoing = await self.get_relationships(at=moment, from_id=room_id,
-                rel_type=RelationshipType.CONNECTS_TO
-            )
-
-            # Incoming connections
-            incoming = await self.get_relationships(at=moment, to_id=room_id,
-                rel_type=RelationshipType.CONNECTS_TO
-            )
-
-            connected_rooms = {}
-
-            for rel in outgoing + incoming:
-                other_id = rel.to_entity_id if rel.from_entity_id == room_id else rel.from_entity_id
-
-                if other_id not in connected_rooms:
-                    other_room = await self.get_entity(other_id, at=moment)
-                    if other_room and other_room.entity_type == EntityType.ROOM:
-                        connected_rooms[other_id] = {
-                            "id": other_room.id,
-                            "name": other_room.name,
-                            "connection_type": rel.properties.get("via", "direct") if rel.properties else "direct"
-                        }
-
-            return ToolResult(True, {
-                "room_id": room_id,
-                "room_name": room.name,
-                "connections": list(connected_rooms.values()),
-                "connection_count": len(connected_rooms)
-            })
-
-        except Exception as e:
-            return ToolResult(False, None, str(e))
+    @property
+    def domain(self) -> DomainManifest:
+        if self.manifest is None:
+            self.manifest = load_manifest()
+        return self.manifest
 
     async def search_entities_tool(
         self,
@@ -197,10 +99,11 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
     ) -> ToolResult:
         """Full-text search across entities"""
         try:
-            # Convert string types to EntityType enums
             type_filter = None
             if entity_types:
-                type_filter = [EntityType(et) for et in entity_types]
+                for et in entity_types:
+                    self.domain.check_entity_type(et)
+                type_filter = list(entity_types)
 
             # Use the search functionality
             results = await self.search_entities(query, type_filter, limit)
@@ -225,10 +128,11 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         try:
             from uuid import uuid4
 
+            self.domain.check_entity_type(entity_type)
             entity = Entity(
                 id=str(uuid4()),
                 version=Entity.create_version(user_id),
-                entity_type=EntityType(entity_type),
+                entity_type=entity_type,
                 name=name,
                 content=content,
                 source_type=SourceType.MANUAL,
@@ -267,25 +171,25 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
 
             from uuid import uuid4
 
+            # ADR-012 §1: the domain manifest, not a table inside the model,
+            # says which endpoints an edge may join.
+            try:
+                self.domain.check_relationship(
+                    relationship_type,
+                    getattr(from_entity.entity_type, "value", from_entity.entity_type),
+                    getattr(to_entity.entity_type, "value", to_entity.entity_type),
+                )
+            except ValueError as exc:
+                return ToolResult(False, None, f"Invalid relationship: {exc}")
+
             relationship = EntityRelationship(
                 id=str(uuid4()),
                 from_entity_id=from_entity_id,
                 to_entity_id=to_entity_id,
-                relationship_type=RelationshipType(relationship_type),
+                relationship_type=relationship_type,
                 properties=properties or {},
                 user_id=user_id
             )
-
-            # Validate relationship
-            if not relationship.is_valid_for_entities(from_entity, to_entity):
-                return ToolResult(
-                    False,
-                    None,
-                    f"Invalid relationship: "
-                    f"{getattr(from_entity.entity_type, 'value', from_entity.entity_type)} "
-                    f"cannot have {relationship_type} relationship to "
-                    f"{getattr(to_entity.entity_type, 'value', to_entity.entity_type)}"
-                )
 
             stored = await self.store_relationship(relationship)
 
@@ -392,112 +296,6 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                 "reference_entity_id": entity_id,
                 "similar_entities": [r.to_dict() for r in similar],
                 "count": len(similar)
-            })
-
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
-    async def get_procedures_for_device_tool(self, device_id: str, at: Optional[str] = None) -> ToolResult:
-        """Get procedures and manuals for a device"""
-        try:
-            moment = _parse_at(at)
-            device = await self.get_entity(device_id, at=moment)
-            if not device or device.entity_type != EntityType.DEVICE:
-                return ToolResult(False, None, f"Device {device_id} not found")
-
-            procedures = []
-            manuals = []
-
-            # Get procedures
-            proc_relationships = await self.get_relationships(at=moment, to_id=device_id,
-                rel_type=RelationshipType.PROCEDURE_FOR
-            )
-
-            for rel in proc_relationships:
-                proc = await self.get_entity(rel.from_entity_id, at=moment)
-                if proc and proc.entity_type == EntityType.PROCEDURE:
-                    procedures.append({
-                        "id": proc.id,
-                        "name": proc.name,
-                        "content": proc.content
-                    })
-
-            # Get manuals
-            manual_relationships = await self.get_relationships(at=moment, from_id=device_id,
-                rel_type=RelationshipType.DOCUMENTED_BY
-            )
-
-            for rel in manual_relationships:
-                manual = await self.get_entity(rel.to_entity_id, at=moment)
-                if manual and manual.entity_type == EntityType.MANUAL:
-                    manuals.append({
-                        "id": manual.id,
-                        "name": manual.name,
-                        "content": manual.content
-                    })
-
-            return ToolResult(True, {
-                "device_id": device_id,
-                "device_name": device.name,
-                "procedures": procedures,
-                "manuals": manuals,
-                "total_documentation": len(procedures) + len(manuals)
-            })
-
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
-    async def get_automations_in_room_tool(self, room_id: str, at: Optional[str] = None) -> ToolResult:
-        """Find all automations affecting a room"""
-        try:
-            moment = _parse_at(at)
-            room = await self.get_entity(room_id, at=moment)
-            if not room or room.entity_type != EntityType.ROOM:
-                return ToolResult(False, None, f"Room {room_id} not found")
-
-            # Get devices in room
-            device_rels = await self.get_relationships(at=moment, to_id=room_id,
-                rel_type=RelationshipType.LOCATED_IN
-            )
-
-            device_ids = {rel.from_entity_id for rel in device_rels}
-
-            # Find automations that control these devices
-            automations = []
-            seen_automations = set()
-
-            for device_id in device_ids:
-                auto_rels = await self.get_relationships(at=moment, to_id=device_id,
-                    rel_type=RelationshipType.AUTOMATES
-                )
-
-                for rel in auto_rels:
-                    if rel.from_entity_id not in seen_automations:
-                        automation = await self.get_entity(rel.from_entity_id, at=moment)
-                        if automation and automation.entity_type == EntityType.AUTOMATION:
-                            automations.append({
-                                "id": automation.id,
-                                "name": automation.name,
-                                "content": automation.content,
-                                "affects_devices": []
-                            })
-                            seen_automations.add(automation.id)
-
-                # Track which devices are affected
-                for auto in automations:
-                    if auto["id"] in [r.from_entity_id for r in auto_rels]:
-                        device = await self.get_entity(device_id, at=moment)
-                        if device:
-                            auto["affects_devices"].append({
-                                "id": device.id,
-                                "name": device.name
-                            })
-
-            return ToolResult(True, {
-                "room_id": room_id,
-                "room_name": room.name,
-                "automations": automations,
-                "automation_count": len(automations)
             })
 
         except Exception as e:
@@ -779,7 +577,9 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
     ) -> ToolResult:
         """Enumerate edges, current by default, as of ``at``, or with history."""
         try:
-            rel_type = RelationshipType(relationship_type) if relationship_type else None
+            if relationship_type:
+                self.domain.check_relationship_type(relationship_type)
+            rel_type = relationship_type or None
             rows = await self.get_relationships(
                 from_id=from_entity_id, to_id=to_entity_id, rel_type=rel_type,
                 include_all_versions=include_history, at=_parse_at(at),
@@ -808,7 +608,9 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             entity = await self.get_entity(entity_id, at=moment)
             if not entity:
                 return ToolResult(False, None, f"Entity {entity_id} not found")
-            rel_type = RelationshipType(relationship_type) if relationship_type else None
+            if relationship_type:
+                self.domain.check_relationship_type(relationship_type)
+            rel_type = relationship_type or None
 
             connected = []
             if direction in ("outgoing", "both"):
@@ -891,7 +693,7 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
 
             lo, hi = Entity.version_key_at(t1), Entity.version_key_at(t2)
             changed = []
-            for entity_type in EntityType:
+            for entity_type in sorted(self.domain.entity_types):
                 for current in await self.get_entities_by_type(entity_type, include_deleted=True):
                     versions = (await self.get_entity_versions(current.id)
                                 if hasattr(self, "get_entity_versions") else [current])
@@ -932,7 +734,11 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         """
         try:
             moment = _parse_at(at)
-            types = [EntityType(entity_type)] if entity_type else list(EntityType)
+            if entity_type:
+                self.domain.check_entity_type(entity_type)
+                types = [entity_type]
+            else:
+                types = sorted(self.domain.entity_types)
             found = []
             for et in types:
                 for current in await self.get_entities_by_type(et, include_deleted=moment is not None):

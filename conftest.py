@@ -198,12 +198,28 @@ def funkygibbon_admin_password() -> str:
     return TEST_ADMIN_PASSWORD
 
 
-@pytest.fixture(scope="session")
-def funkygibbon_server(funkygibbon_admin_password):
-    """Start a FunkyGibbon server on a private ephemeral port.
+class RunningServer:
+    """A FunkyGibbon subprocess this harness started, and how to reach it."""
 
-    Yields ``(base_url, admin_token)``. Prefer the ``server_url`` /
-    ``auth_token`` fixtures in tests.
+    def __init__(self, base_url, token, process, log_handle, work_dir):
+        self.base_url, self.token = base_url, token
+        self._process, self._log_handle, self._work_dir = process, log_handle, work_dir
+
+    def stop(self) -> None:
+        _stop(self._process)
+        self._log_handle.close()
+        shutil.rmtree(self._work_dir, ignore_errors=True)
+
+
+def start_funkygibbon(admin_password: str, *, seed: "list[str] | None" = None,
+                      env_extra: "dict[str, str] | None" = None) -> RunningServer:
+    """Seed a fresh database and start a FunkyGibbon on a private port.
+
+    ``seed`` is the argv of the script that populates the database (default:
+    the house seed); ``env_extra`` is merged into the server's environment --
+    a vehicles server passes ``DOMAIN_MANIFEST``. Shared by the session
+    fixture below and by any test that needs a server of another domain
+    (ADR-012: the same engine, a different manifest, a different database).
     """
     from funkygibbon.auth import PasswordManager
 
@@ -223,29 +239,25 @@ def funkygibbon_server(funkygibbon_admin_password):
     # Real auth, not a bypass: an Argon2 hash of a known password plus a real
     # signing secret. FUNKYGIBBON_TEST_MODE stays off so the production code
     # path (hash verification) is what the tests exercise.
-    env["ADMIN_PASSWORD_HASH"] = PasswordManager().hash_password(funkygibbon_admin_password)
+    env["ADMIN_PASSWORD_HASH"] = PasswordManager().hash_password(admin_password)
     env["JWT_SECRET"] = TEST_JWT_SECRET
     env.pop("FUNKYGIBBON_TEST_MODE", None)
     env.pop("FUNKYGIBBON_TEST_PASSWORD", None)
     env.pop("SECRET_KEY", None)
     # Don't let the scheduled-backup thread write files during the test run.
     env["BACKUP_SCHEDULE_ENABLED"] = "false"
+    env.update(env_extra or {})
 
     # Seed the database *before* the server opens it: population truncates and
     # rewrites the graph tables, which is safer without a live writer attached.
     # A failure here is fatal -- silently running the integration suite against
     # an empty graph is how "passing" tests stop meaning anything.
-    populate = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "funkygibbon" / "populate_graph_db.py")],
-        cwd=work_dir,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    seed_argv = seed or [sys.executable, str(REPO_ROOT / "funkygibbon" / "populate_graph_db.py")]
+    populate = subprocess.run(seed_argv, cwd=work_dir, env=env, capture_output=True, text=True)
     if populate.returncode != 0:
         shutil.rmtree(work_dir, ignore_errors=True)
         pytest.fail(
-            "funkygibbon/populate_graph_db.py failed to seed the test database "
+            f"{' '.join(seed_argv)} failed to seed the test database "
             f"(exit {populate.returncode}).\n"
             f"--- stdout ---\n{populate.stdout}\n--- stderr ---\n{populate.stderr}"
         )
@@ -277,7 +289,7 @@ def funkygibbon_server(funkygibbon_admin_password):
 
     try:
         _await_health(process, base_url, log_path)
-        token = _login(base_url, funkygibbon_admin_password)
+        token = _login(base_url, admin_password)
     except _ServerStartupError as exc:
         _stop(process)
         detail = _drain(process, log_path)
@@ -285,15 +297,23 @@ def funkygibbon_server(funkygibbon_admin_password):
         shutil.rmtree(work_dir, ignore_errors=True)
         pytest.fail(f"{exc}\n{detail}")
 
-    print(f"\n✅ FunkyGibbon test server ready at {base_url} (pid {process.pid})")
+    return RunningServer(base_url, token, process, log_handle, work_dir)
 
+
+@pytest.fixture(scope="session")
+def funkygibbon_server(funkygibbon_admin_password):
+    """Start a FunkyGibbon server on a private ephemeral port.
+
+    Yields ``(base_url, admin_token)``. Prefer the ``server_url`` /
+    ``auth_token`` fixtures in tests.
+    """
+    server = start_funkygibbon(funkygibbon_admin_password)
+    print(f"\n✅ FunkyGibbon test server ready at {server.base_url}")
     try:
-        yield base_url, token
+        yield server.base_url, server.token
     finally:
-        _stop(process)
-        log_handle.close()
-        shutil.rmtree(work_dir, ignore_errors=True)
-        print(f"\n✅ FunkyGibbon test server on {base_url} stopped")
+        server.stop()
+        print(f"\n✅ FunkyGibbon test server on {server.base_url} stopped")
 
 
 @pytest.fixture(scope="session")

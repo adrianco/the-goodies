@@ -20,7 +20,9 @@ The two changes worth knowing when reading this:
   was genuinely redundant, it is gone.
 """
 
-from inbetweenies.domain import RelationshipRule, build_manifest
+from inbetweenies.domain import DomainTool, RelationshipRule, Walk, build_manifest
+
+from . import tools as house_tools
 
 # --- Entity types ---------------------------------------------------------
 # Live counts from the 2026-08-03 production backup are in README.md. The
@@ -249,6 +251,51 @@ MERGE_RULES = {
     "automation": merge_automation,
 }
 
+# --------------------------------------------------------------------------- #
+# Tools (ADR-012 §2)
+#
+# These were methods on the engine's MCPTools -- the last place the engine
+# knew what a room was. `get_devices_in_room` is the walk the declarative form
+# exists for: anchor on a room, follow located_in backwards, keep devices. The
+# other four need logic beyond a walk and are handlers in tools.py. Either way
+# the engine renders the schema and dispatches by name; a vehicles server never
+# sees these, and a house server never sees vehicles'.
+# --------------------------------------------------------------------------- #
+
+TOOLS = (
+    DomainTool(
+        name="get_devices_in_room",
+        description="Get all devices located in a specific room",
+        anchor="room_id", anchor_types=("room",),
+        walk=(Walk("located_in", "incoming", ("device",)),),
+        result_key="devices",
+    ),
+    DomainTool(
+        name="find_device_controls",
+        description="Get available controls and services for a device",
+        anchor="device_id", anchor_types=("device",),
+        handler=house_tools.find_device_controls,
+    ),
+    DomainTool(
+        name="get_room_connections",
+        description="Find doors, windows, and passages between rooms",
+        anchor="room_id", anchor_types=("room",),
+        handler=house_tools.get_room_connections,
+    ),
+    DomainTool(
+        name="get_procedures_for_device",
+        description="Get all procedures and manuals for a specific device",
+        anchor="device_id", anchor_types=("device",),
+        handler=house_tools.get_procedures_for_device,
+    ),
+    DomainTool(
+        name="get_automations_in_room",
+        description="Get all automations that affect devices in a room",
+        anchor="room_id", anchor_types=("room",),
+        handler=house_tools.get_automations_in_room,
+    ),
+)
+
 HOUSE = build_manifest(
     name="house",
     entity_types=ENTITY_TYPES,
@@ -259,4 +306,5 @@ HOUSE = build_manifest(
     # listing `manual` here is what tells the engine so.
     attachment_types=("manual",),
     merge_rules=MERGE_RULES,
+    tools=TOOLS,
 )

@@ -10,9 +10,8 @@ from dataclasses import dataclass
 import uuid
 from datetime import datetime, UTC
 
-from inbetweenies.graph import GraphOperations, GraphSearch
 from inbetweenies.mcp import MCPTools, ToolResult
-from inbetweenies.models import Entity, EntityType, EntityRelationship, RelationshipType
+from inbetweenies.models import Entity, EntityType, EntityRelationship
 
 from .local_storage import LocalGraphStorage
 
@@ -74,103 +73,6 @@ class LocalGraphOperations(MCPTools):
         self.storage = storage or LocalGraphStorage()
 
     # Inherited MCP tool methods from MCPTools
-    async def get_devices_in_room(self, room_id: str) -> ToolResult:
-        """Get all devices located in a specific room"""
-        try:
-            room = await self.get_entity(room_id)
-            if not room or room.entity_type != EntityType.ROOM:
-                return ToolResult(False, None, f"Room {room_id} not found")
-
-            relationships = await self.get_relationships(
-                to_id=room_id,
-                rel_type=RelationshipType.LOCATED_IN
-            )
-
-            devices = []
-            for rel in relationships:
-                device = await self.get_entity(rel.from_entity_id)
-                if device and device.entity_type == EntityType.DEVICE:
-                    devices.append(device)
-
-            return ToolResult(True, {
-                "room_id": room_id,
-                "devices": [d.to_dict() if hasattr(d, 'to_dict') else d.__dict__ for d in devices],
-                "count": len(devices)
-            })
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
-    async def find_device_controls(self, device_id: str) -> ToolResult:
-        """Get available controls and services for a device"""
-        try:
-            device = await self.get_entity(device_id)
-            if not device or device.entity_type != EntityType.DEVICE:
-                return ToolResult(False, None, f"Device {device_id} not found")
-
-            capabilities = device.content.get("capabilities", []) if device.content else []
-
-            controls_relationships = await self.get_relationships(
-                from_id=device_id,
-                rel_type=RelationshipType.CONTROLS
-            )
-
-            controlled_devices = []
-            for rel in controls_relationships:
-                controlled = await self.get_entity(rel.to_entity_id)
-                if controlled:
-                    controlled_devices.append({
-                        "id": controlled.id,
-                        "name": controlled.name,
-                        "type": controlled.entity_type.value if hasattr(controlled.entity_type, 'value') else str(controlled.entity_type)
-                    })
-
-            return ToolResult(True, {
-                "device_id": device_id,
-                "device_name": device.name,
-                "capabilities": capabilities,
-                "controlled_devices": controlled_devices,
-                "services": device.content.get("services", []) if device.content else []
-            })
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
-    async def get_room_connections(self, room_id: str) -> ToolResult:
-        """Find all rooms connected to a given room"""
-        try:
-            room = await self.get_entity(room_id)
-            if not room or room.entity_type != EntityType.ROOM:
-                return ToolResult(False, None, f"Room {room_id} not found")
-
-            # Find direct connections
-            from_connections = await self.get_relationships(
-                from_id=room_id,
-                rel_type=RelationshipType.CONNECTS_TO
-            )
-            to_connections = await self.get_relationships(
-                to_id=room_id,
-                rel_type=RelationshipType.CONNECTS_TO
-            )
-
-            connected_rooms = []
-            for rel in from_connections:
-                connected = await self.get_entity(rel.to_entity_id)
-                if connected and connected.entity_type == EntityType.ROOM:
-                    connected_rooms.append(connected)
-
-            for rel in to_connections:
-                connected = await self.get_entity(rel.from_entity_id)
-                if connected and connected.entity_type == EntityType.ROOM:
-                    if connected.id not in [r.id for r in connected_rooms]:
-                        connected_rooms.append(connected)
-
-            return ToolResult(True, {
-                "room_id": room_id,
-                "connected_rooms": [r.to_dict() if hasattr(r, 'to_dict') else r.__dict__ for r in connected_rooms],
-                "count": len(connected_rooms)
-            })
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
     async def store_entity(self, entity: Entity, mark_dirty: bool = True) -> Entity:
         """Store an entity locally.
 
@@ -260,7 +162,7 @@ class LocalGraphOperations(MCPTools):
         self,
         from_id: Optional[str] = None,
         to_id: Optional[str] = None,
-        rel_type: Optional[RelationshipType] = None,
+        rel_type: Optional[str] = None,
         include_all_versions: bool = False,
         at: Optional[datetime] = None
     ) -> List[EntityRelationship]:
@@ -354,19 +256,11 @@ class LocalGraphOperations(MCPTools):
     ) -> ToolResult:
         """Full-text search across entities (MCP tool)"""
         try:
-            # Convert string types to EntityType enums if provided
+            # ADR-012 §1: the manifest says what is a type; unknown ones are
+            # skipped rather than guessed at.
             type_filter = None
             if entity_types:
-                type_filter = []
-                for et in entity_types:
-                    try:
-                        type_filter.append(EntityType(et))
-                    except ValueError:
-                        # Try uppercase
-                        try:
-                            type_filter.append(EntityType(et.upper()))
-                        except ValueError:
-                            pass  # Skip invalid types
+                type_filter = [et for et in entity_types if et in self.domain.entity_types]
 
             # Use the search functionality
             results = await self.search_entities(query, type_filter, limit)
@@ -389,16 +283,12 @@ class LocalGraphOperations(MCPTools):
     ) -> ToolResult:
         """Create a new entity (MCP tool)"""
         try:
-            # Convert string type to EntityType enum
-            try:
-                etype = EntityType(entity_type)
-            except ValueError:
-                etype = EntityType(entity_type.upper())
+            self.domain.check_entity_type(entity_type)
 
             # Create entity
             entity = Entity(
                 id=str(uuid.uuid4()),
-                entity_type=etype,
+                entity_type=entity_type,
                 name=name,
                 content=content or {},
                 version=f"{datetime.now(UTC).isoformat()}Z-{user_id}",
@@ -426,18 +316,14 @@ class LocalGraphOperations(MCPTools):
     ) -> ToolResult:
         """Create a relationship between entities (MCP tool)"""
         try:
-            # Convert string type to RelationshipType enum
-            try:
-                rtype = RelationshipType(relationship_type)
-            except ValueError:
-                rtype = RelationshipType(relationship_type.upper())
+            self.domain.check_relationship_type(relationship_type)
 
             # Create relationship
             relationship = EntityRelationship(
                 id=str(uuid.uuid4()),
                 from_entity_id=from_entity_id,
                 to_entity_id=to_entity_id,
-                relationship_type=rtype,
+                relationship_type=relationship_type,
                 properties=properties or {},
                 created_at=datetime.now(UTC),
                 user_id=user_id
@@ -504,60 +390,6 @@ class LocalGraphOperations(MCPTools):
                 "results": [s.to_dict() for s in similar],
                 "count": len(similar),
                 "reference_entity_id": entity_id
-            })
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
-    async def get_procedures_for_device_tool(self, device_id: str) -> ToolResult:
-        """Get procedures for a device (MCP tool)"""
-        try:
-            device = await self.get_entity(device_id)
-            if not device or device.entity_type != EntityType.DEVICE:
-                return ToolResult(False, None, f"Device {device_id} not found")
-
-            # Find procedures related to this device
-            relationships = await self.get_relationships(
-                from_id=device_id,
-                rel_type=RelationshipType.PROCEDURE_FOR
-            )
-
-            procedures = []
-            for rel in relationships:
-                proc = await self.get_entity(rel.to_entity_id)
-                if proc and proc.entity_type == EntityType.PROCEDURE:
-                    procedures.append(proc)
-
-            return ToolResult(True, {
-                "device_id": device_id,
-                "procedures": [p.to_dict() if hasattr(p, 'to_dict') else p.__dict__ for p in procedures],
-                "count": len(procedures)
-            })
-        except Exception as e:
-            return ToolResult(False, None, str(e))
-
-    async def get_automations_in_room_tool(self, room_id: str) -> ToolResult:
-        """Get automations in a room (MCP tool)"""
-        try:
-            room = await self.get_entity(room_id)
-            if not room or room.entity_type != EntityType.ROOM:
-                return ToolResult(False, None, f"Room {room_id} not found")
-
-            # Find automations related to this room
-            relationships = await self.get_relationships(
-                to_id=room_id,
-                rel_type=RelationshipType.AUTOMATES
-            )
-
-            automations = []
-            for rel in relationships:
-                auto = await self.get_entity(rel.from_entity_id)
-                if auto and auto.entity_type == EntityType.AUTOMATION:
-                    automations.append(auto)
-
-            return ToolResult(True, {
-                "room_id": room_id,
-                "automations": [a.to_dict() if hasattr(a, 'to_dict') else a.__dict__ for a in automations],
-                "count": len(automations)
             })
         except Exception as e:
             return ToolResult(False, None, str(e))

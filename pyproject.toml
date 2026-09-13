@@ -102,7 +102,7 @@ dependencies = [
 # subpackage needs adding in both places.
 # ---------------------------------------------------------------------------
 [tool.setuptools]
-package-dir = { "funkygibbon" = "funkygibbon", "inbetweenies" = "inbetweenies", "blowingoff" = "blowing-off/blowingoff", "oook" = "oook/oook" }
+package-dir = { "funkygibbon" = "funkygibbon", "inbetweenies" = "inbetweenies", "blowingoff" = "blowing-off/blowingoff", "oook" = "oook/oook", "domains" = "domains" }
 packages = [
     "funkygibbon",
     "funkygibbon.api",
@@ -128,6 +128,12 @@ packages = [
     "blowingoff.repositories",
     "blowingoff.sync",
     "oook",
+    # ADR-012: domain packages. The server imports the one DOMAIN_MANIFEST
+    # names at runtime (default domains.house.manifest:HOUSE), so they must
+    # be installed alongside the engine, not merely present in the checkout.
+    "domains",
+    "domains.house",
+    "domains.vehicles",
 ]
 
 [project.scripts]
@@ -142,6 +148,7 @@ members = [
     "inbetweenies",
     "blowing-off",
     "oook",
-    # ADR-012 domain packages land here as they are created:
-    # "domains/house", "domains/garage",
+    # ADR-012 domain packages are not separate workspace members: they are
+    # plain subpackages of this root project (see [tool.setuptools] above),
+    # because a domain is a manifest the engine loads, not a distributable.
 ]

@@ -20,8 +20,12 @@ joins — and the damage is only visible much later, in query results that are
 quietly incomplete. The manifest keeps writes honest while staying data.
 """
 
+import importlib
+import os
 from dataclasses import dataclass, field
-from typing import FrozenSet, Iterable, Mapping, Optional, Tuple, Callable, Dict, Any
+from functools import lru_cache
+from pathlib import Path
+from typing import FrozenSet, Iterable, Mapping, Optional, Tuple, Callable, Dict, Any, Union
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,71 @@ BASE_RELATIONSHIP_RULES: Tuple[RelationshipRule, ...] = (
 MergeRule = Callable[[Dict[str, Any], Dict[str, Any], Dict[str, Any]], Optional[Dict[str, Any]]]
 
 
+# --- Domain tools ------------------------------------------------------------
+# ADR-012 §2: a domain's query tools are declared, not coded. Most are a type
+# filter plus a relationship walk from one anchor entity, `at`-parameterised;
+# `get_devices_in_room` and `get_parts_on_vehicle` are the SAME engine query
+# with different constants. A tool that genuinely needs logic supplies a
+# handler instead; the declarative form is preferred because the engine runs
+# it against any GraphOperations -- server, replica, or test double -- for free.
+
+@dataclass(frozen=True)
+class Walk:
+    """One hop of a declarative tool.
+
+    From every entity reached so far, follow edges of type ``relationship``:
+    ``incoming`` means edges whose *target* is the current entity (yielding
+    their sources), ``outgoing`` the reverse, ``both`` either. Keep only
+    results whose entity type is in ``target_types`` (empty means any) and
+    whose ``content`` matches every ``where`` key by equality.
+    """
+
+    relationship: str
+    direction: str = "incoming"
+    target_types: Tuple[str, ...] = ()
+    where: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.direction not in ("incoming", "outgoing", "both"):
+            raise ValueError(f"Walk.direction must be incoming, outgoing or both, not {self.direction!r}")
+
+
+#: Escape hatch for a tool that is more than a walk: ``async (ops, **arguments) -> dict``.
+#: ``ops`` is whatever GraphOperations the caller runs against.
+ToolHandler = Callable[..., Any]
+
+
+@dataclass(frozen=True)
+class DomainTool:
+    """A domain's MCP tool, declared as data.
+
+    Exactly one of ``walk`` or ``handler`` gives it behaviour. Either way the
+    engine renders its schema into the catalog and dispatches calls to it; the
+    domain never touches a transport.
+
+    * ``anchor`` is the parameter naming the entity the query starts from, and
+      ``anchor_types`` what that entity must be (empty means any).
+    * A walk's result is ``{anchor: id, "anchor": {id, name, type},
+      result_key: [entity dicts], "count": n, "as_of": at}``.
+    * ``extra_params`` declares further JSON-schema properties (handlers need
+      them; a walk rarely does) and ``required`` which of those are mandatory.
+    """
+
+    name: str
+    description: str
+    anchor: str
+    anchor_types: Tuple[str, ...] = ()
+    walk: Tuple[Walk, ...] = ()
+    result_key: str = "results"
+    handler: Optional[ToolHandler] = None
+    extra_params: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    required: Tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if bool(self.walk) == (self.handler is not None):
+            raise ValueError(f"DomainTool {self.name!r} needs exactly one of walk= or handler=")
+
+
 @dataclass(frozen=True)
 class DomainManifest:
     """Everything the engine needs to know about a domain's vocabulary."""
@@ -131,10 +200,26 @@ class DomainManifest:
     #: entity type -> MergeRule (ADR-005 §2 rung 2). Empty means every
     #: concurrent edit goes straight to the generic three-way merge.
     merge_rules: Mapping[str, MergeRule] = field(default_factory=dict)
+    #: The domain's own MCP tools (ADR-012 §2), appended to the engine's.
+    tools: Tuple[DomainTool, ...] = ()
+    #: Agent skills the domain ships: skill name -> path of its SKILL.md. A
+    #: skill is a guided workflow over the tools (the house's room walk, the
+    #: vehicles' vehicle walk); the engine only knows where they are.
+    skills: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def relationship_types(self) -> FrozenSet[str]:
         return frozenset(self.relationship_rules)
+
+    @property
+    def tool_names(self) -> Tuple[str, ...]:
+        return tuple(t.name for t in self.tools)
+
+    def tool(self, name: str) -> DomainTool:
+        for t in self.tools:
+            if t.name == name:
+                return t
+        raise KeyError(f"domain {self.name!r} declares no tool {name!r}")
 
     def carries_blob(self, entity_type: str) -> bool:
         """True if this entity type is an attachment (ADR-013 §3).
@@ -196,6 +281,8 @@ def build_manifest(
     relationship_rules: Iterable[RelationshipRule],
     attachment_types: Iterable[str] = (),
     merge_rules: Mapping[str, MergeRule] = None,
+    tools: Iterable[DomainTool] = (),
+    skills: Mapping[str, Union[str, Path]] = None,
 ) -> DomainManifest:
     """Assemble a manifest, merging the base vocabulary into the domain's.
 
@@ -217,6 +304,15 @@ def build_manifest(
     rules = {str(rule.name): rule for rule in BASE_RELATIONSHIP_RULES}
     rules.update({str(rule.name): rule for rule in relationship_rules})
 
+    tools = tuple(tools)
+    names = [t.name for t in tools]
+    if len(set(names)) != len(names):
+        raise ValueError(f"domain {name!r} declares a tool twice: {names}")
+    for t in tools:
+        for hop in t.walk:
+            if hop.relationship not in rules:
+                raise ValueError(f"tool {t.name!r} walks undeclared relationship {hop.relationship!r}")
+
     return DomainManifest(
         name=name,
         entity_types=(
@@ -226,5 +322,33 @@ def build_manifest(
         ),
         source_types=frozenset(str(t) for t in source_types),
         relationship_rules=rules,
-        attachment_types=attachments,        merge_rules=dict(merge_rules or {}),
+        attachment_types=attachments,
+        merge_rules=dict(merge_rules or {}),
+        tools=tools,
+        skills={str(k): str(v) for k, v in (skills or {}).items()},
     )
+
+
+# --- Loading a manifest ------------------------------------------------------
+# The engine never imports a domain (tests/test_domain_isolation.py). It is
+# TOLD which one to serve, by name, in `package.module:ATTRIBUTE` form -- the
+# same string `migrate --verify --domain` and the server's DOMAIN_MANIFEST
+# setting take. The default is the house because that is what every existing
+# install runs; a vehicles server sets DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES.
+
+DEFAULT_MANIFEST_SPEC = "domains.house.manifest:HOUSE"
+MANIFEST_ENV = "DOMAIN_MANIFEST"
+
+
+@lru_cache(maxsize=8)
+def _import_manifest(spec: str) -> DomainManifest:
+    module_name, _, attr = spec.partition(":")
+    manifest = getattr(importlib.import_module(module_name), attr or "MANIFEST")
+    if not isinstance(manifest, DomainManifest):
+        raise TypeError(f"{spec} is not a DomainManifest")
+    return manifest
+
+
+def load_manifest(spec: Optional[str] = None) -> DomainManifest:
+    """The manifest named by ``spec``, else by ``$DOMAIN_MANIFEST``, else the house."""
+    return _import_manifest(spec or os.environ.get(MANIFEST_ENV) or DEFAULT_MANIFEST_SPEC)

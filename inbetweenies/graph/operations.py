@@ -6,9 +6,8 @@ implemented with different backends (SQL, in-memory, etc).
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any, Set, Tuple
+from typing import List, Optional, Dict, Any
 from datetime import datetime
-from uuid import uuid4
 
 from ..models import Entity, EntityType, EntityRelationship, RelationshipType
 
@@ -291,10 +290,15 @@ class GraphOperations(ABC):
         entity_counts = {}
         relationship_counts = {}
 
-        for entity_type in EntityType:
+        # ADR-012 §1: the vocabulary is the domain's. A store that knows its
+        # manifest counts what that domain declares; the legacy enum is only
+        # the fallback for a bare GraphOperations with no domain attached.
+        domain = getattr(self, "domain", None)
+        entity_types = sorted(domain.entity_types) if domain is not None else [t.value for t in EntityType]
+        for entity_type in entity_types:
             entities = await self.get_entities_by_type(entity_type)
             if entities:
-                entity_counts[entity_type.value] = len(entities)
+                entity_counts[entity_type] = len(entities)
 
         # Get all relationships and count by type
         all_relationships = await self.get_relationships()

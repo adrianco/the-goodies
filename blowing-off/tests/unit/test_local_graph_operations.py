@@ -5,6 +5,13 @@ Tests the local graph operations and MCP tool implementations.
 """
 
 import pytest
+
+from domains.house import HOUSE
+from inbetweenies.mcp.domain_tools import run_domain_tool
+
+
+async def house_tool(ops, name, **arguments):
+    return await run_domain_tool(ops, HOUSE.tool(name), arguments)
 import pytest_asyncio
 import tempfile
 import shutil
@@ -168,7 +175,7 @@ class TestMCPTools:
         await graph_ops.store_relationship(rel)
 
         # Get devices in room
-        result = await graph_ops.get_devices_in_room(sample_room.id)
+        result = await house_tool(graph_ops, "get_devices_in_room", room_id=sample_room.id)
         assert result.success
         assert result.result['count'] == 1
         assert len(result.result['devices']) == 1
@@ -177,7 +184,7 @@ class TestMCPTools:
     @pytest.mark.asyncio
     async def test_find_device_controls(self, graph_ops, sample_device):
         """Test getting device controls."""
-        result = await graph_ops.find_device_controls(sample_device.id)
+        result = await house_tool(graph_ops, "find_device_controls", device_id=sample_device.id)
         assert result.success
         assert result.result['device_id'] == sample_device.id
         assert result.result['device_name'] == sample_device.name
@@ -295,9 +302,9 @@ class TestMCPTools:
         await graph_ops.store_relationship(rel)
 
         # Get automations
-        result = await graph_ops.get_automations_in_room_tool(sample_room.id)
+        result = await house_tool(graph_ops, "get_automations_in_room", room_id=sample_room.id)
         assert result.success
-        assert result.result['count'] == 1
+        assert result.result['automation_count'] == 1
         assert result.result['automations'][0]['id'] == sample_automation.id
 
     @pytest.mark.asyncio

@@ -8,10 +8,14 @@ as tools for AI agents and external systems.
 from typing import Dict, Any, Optional, List
 import logging
 
+from inbetweenies.domain import DomainManifest, load_manifest
+from inbetweenies.mcp.catalog import rest_tools_for
+from inbetweenies.mcp.domain_tools import run_domain_tool
+
+from ..config import settings
 from ..graph.index import GraphIndex
 from ..graph.index_service import GraphIndexService
 from ..repositories.graph_impl import SQLGraphOperations
-from .tools import MCP_TOOLS
 
 
 logger = logging.getLogger(__name__)
@@ -21,20 +25,27 @@ class FunkyGibbonMCPServer:
     """MCP server exposing graph operations"""
 
     def __init__(self, graph_index: GraphIndex, graph_ops: SQLGraphOperations,
-                 index_service: Optional["GraphIndexService"] = None):
+                 index_service: Optional["GraphIndexService"] = None,
+                 manifest: Optional[DomainManifest] = None):
         self.graph = graph_index
         self.graph_ops = graph_ops
+        # ADR-012: the domain this server serves. Its tools are the engine's
+        # plus whatever the manifest declares; the store validates against it.
+        self.manifest = manifest or load_manifest(settings.domain_manifest)
+        self.graph_ops.manifest = self.manifest
         # ADR-003 decision 2: writes go through the service so the index is
         # patched AND its storage marker re-read. Patching `self.graph`
         # directly (the old way, still the fallback when no service is given)
         # left the marker behind, so the next read saw drift and rebuilt --
         # correct, but a full rebuild on every MCP edge write.
         self.index_service = index_service
-        self.tools = {tool["name"]: tool for tool in MCP_TOOLS}
+        self._catalog = rest_tools_for(self.manifest)
+        self.tools = {tool["name"]: tool for tool in self._catalog}
+        self._domain_tools = {t.name: t for t in self.manifest.tools}
 
     def get_available_tools(self) -> List[Dict[str, Any]]:
         """Get list of available MCP tools"""
-        return MCP_TOOLS
+        return self._catalog
 
     async def handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -54,7 +65,14 @@ class FunkyGibbonMCPServer:
             }
 
         try:
-            # Route to specific handler
+            # Engine tools have a handler here; a domain's tools are declared
+            # in its manifest and run generically (ADR-012 §2).
+            if tool_name in self._domain_tools:
+                outcome = await run_domain_tool(self.graph_ops, self._domain_tools[tool_name], arguments)
+                if not outcome.success:
+                    raise Exception(outcome.error)
+                return {"success": True, "result": outcome.result}
+
             handler = getattr(self, f"_handle_{tool_name}", None)
             if not handler:
                 return {"error": f"Handler not implemented for tool: {tool_name}"}
@@ -79,30 +97,6 @@ class FunkyGibbonMCPServer:
             await self.index_service.entity_written(self.graph_ops.db, entity)
         else:
             self.graph._add_entity(entity)
-
-    async def _handle_get_devices_in_room(self, room_id: str, at: Optional[str] = None) -> Dict[str, Any]:
-        """Get all devices in a specific room"""
-        result = await self.graph_ops.get_devices_in_room(room_id, at=at)
-        if result.success:
-            return result.result
-        else:
-            raise Exception(result.error)
-
-    async def _handle_find_device_controls(self, device_id: str, at: Optional[str] = None) -> Dict[str, Any]:
-        """Get controls for a device"""
-        result = await self.graph_ops.find_device_controls(device_id, at=at)
-        if result.success:
-            return result.result
-        else:
-            raise Exception(result.error)
-
-    async def _handle_get_room_connections(self, room_id: str, at: Optional[str] = None) -> Dict[str, Any]:
-        """Find connections between rooms"""
-        result = await self.graph_ops.get_room_connections(room_id, at=at)
-        if result.success:
-            return result.result
-        else:
-            raise Exception(result.error)
 
     async def _handle_search_entities(
         self,
@@ -226,22 +220,6 @@ class FunkyGibbonMCPServer:
     ) -> Dict[str, Any]:
         """Find similar entities"""
         result = await self.graph_ops.find_similar_entities_tool(entity_id, limit)
-        if result.success:
-            return result.result
-        else:
-            raise Exception(result.error)
-
-    async def _handle_get_procedures_for_device(self, device_id: str, at: Optional[str] = None) -> Dict[str, Any]:
-        """Get procedures and manuals for a device"""
-        result = await self.graph_ops.get_procedures_for_device_tool(device_id, at=at)
-        if result.success:
-            return result.result
-        else:
-            raise Exception(result.error)
-
-    async def _handle_get_automations_in_room(self, room_id: str, at: Optional[str] = None) -> Dict[str, Any]:
-        """Get automations affecting a room"""
-        result = await self.graph_ops.get_automations_in_room_tool(room_id, at=at)
         if result.success:
             return result.result
         else:

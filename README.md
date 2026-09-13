@@ -27,7 +27,7 @@ alternatives that were rejected and why.
 **Current status**: **installed and running in a real house since March 2026**,
 with a second install at another house. Authenticated data endpoints, a
 protocol-correct sync engine (see [`inbetweenies/PROTOCOL.md`](inbetweenies/PROTOCOL.md)),
-23 MCP tools, backup/restore, and data-migration + upgrade tooling. The Python
+MCP tools (18 engine tools plus each domain's own — 23 for the house), backup/restore, and data-migration + upgrade tooling. The Python
 **blowing-off** client also runs as an MCP server, mirroring the TypeScript port
 (*KittenKong*). CI runs the test suites on Linux and macOS across Python
 3.11–3.14. Latest release: `v0.6.0` — `inbetweenies-v3`, the temporal cutover
@@ -48,7 +48,7 @@ described below, with MCP as the only client interface
 
 1. **🚀 FunkyGibbon** (Server) - Python-based backend server
    - FastAPI server: MCP tools over HTTP (the client interface), sync, auth, backup
-   - 23 MCP tools for smart home management
+   - MCP tools: 18 engine tools plus the domain's own (house adds 5, vehicles adds 8)
    - Entity-relationship knowledge graph
    - SQLite database with immutable versioning
    - **Security**: JWT authentication, rate limiting, audit logging
@@ -188,7 +188,7 @@ Being precise, because the temporal work is real but mostly unreleased:
 | Domain abstraction — vocabulary in a manifest, not the schema | **shipped** ([ADR-012](docs/adr/ADR-012-domain-abstraction.md)) |
 | Interval edges (`valid_from` / `valid_to`), `inbetweenies-v3` wire | **landing** — implemented, not yet released |
 | `snapshot(T)`, `diff(T1,T2)`, `at` on every read | **designed, not built** |
-| Second domain (`vehicles`) instantiated | **designed, not built** |
+| Second domain (`vehicles`) instantiated | **first pass shipped** — [domains/vehicles](domains/vehicles/README.md): manifest, seed, eight declared tools, the `vehicle-walk` skill; runs standalone or alongside the house |
 | Vector similarity via sqlite-vec | **deferred** — conditional on embeddings having an owner |
 
 The v3 cutover is a **hard** one: no compatibility window, no version
@@ -520,6 +520,23 @@ See [domains/house/README.md](domains/house/README.md) for the complete
 vocabulary, and [ADR-013](docs/adr/ADR-013-house-vocabulary-cleanup.md) for how
 blobs are linked.
 
+### Domains
+
+The engine is domain-blind ([ADR-012](docs/adr/ADR-012-domain-abstraction.md)):
+the vocabulary, the domain's own tools and its skills are a manifest under
+`domains/`, and the server serves whichever one `DOMAIN_MANIFEST` names
+(default `domains.house.manifest:HOUSE`). Two exist:
+
+| Domain | Own tools | Skill | Run it |
+|---|---|---|---|
+| [`house`](domains/house/README.md) | 5 (`get_devices_in_room`, …) | room walk | the default |
+| [`vehicles`](domains/vehicles/README.md) | 8 (`get_parts_on_vehicle`, `get_vehicle_history`, …) | `vehicle-walk` | `DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES DATABASE_URL=sqlite+aiosqlite:///./vehicles.db API_PORT=8001 python -m funkygibbon` |
+
+Each server advertises the 18 engine tools plus its own domain's, with
+`create_entity` / `create_relationship` offering that domain's vocabulary.
+A second domain is a second process with its own database file; see
+[docs/domains.md](docs/domains.md).
+
 ## 🔐 Security Features (Phase 5)
 
 The system includes enterprise-grade security features that have been fully implemented and tested:
@@ -629,7 +646,7 @@ curl -X POST http://localhost:8000/api/v1/auth/guest/generate-qr \
 ## 📚 Documentation
 
 - [Protocol spec](inbetweenies/PROTOCOL.md) — authoritative inbetweenies-v3 sync protocol
-- [docs/mcp.md](docs/mcp.md) — the client interface: the 23 MCP tools
+- [docs/mcp.md](docs/mcp.md) — the client interface: the MCP tools
 - [UPGRADE.md](UPGRADE.md) — install upgrade runbook
 - [funkygibbon/README.md](funkygibbon/README.md) — server
 - [blowing-off/README.md](blowing-off/README.md) — client + MCP server
@@ -642,7 +659,7 @@ since March 2026**, with a second install at another house:
 - Authenticated data endpoints (bearer token), `funkygibbon setup-auth`
 - Protocol-correct sync: canonical versions, `server_time` watermark, one shared
   conflict resolver, tombstone deletes, per-id acks, convergence digest
-- 23 MCP tools; blowing-off also runs as an MCP server
+- MCP tools (18 engine + the domain's); blowing-off also runs as an MCP server
 - Backup/restore + scheduler; data-migration and upgrade tooling
 - User Generated Content (PDFs, photos, notes) with BLOB storage, carried by sync
 - CI green on Linux and macOS across Python 3.11–3.14

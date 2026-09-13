@@ -124,6 +124,42 @@ An edge may legitimately reference an entity that has not synced yet.
 than rejecting the write: refusing data because of arrival order is not a
 property of the data.
 
+## 2a. Tools and skills
+
+A domain's MCP tools are **declared, not coded** (ADR-012 §2). The manifest
+carries a tuple of `DomainTool`s; the engine renders each into the catalog and
+dispatches calls to it, on the server and on a replica alike, from
+`inbetweenies/mcp/domain_tools.py`.
+
+```python
+DomainTool(
+    name="get_parts_on_vehicle",
+    description="Parts currently fitted to a vehicle; with `at`, the parts fitted then.",
+    anchor="vehicle_id", anchor_types=("vehicle",),
+    walk=(Walk("fitted_to", "incoming", ("part",)),),
+    result_key="parts",
+)
+```
+
+A **walk** starts at the anchor entity (whose type is checked), follows the
+named relationship in the named direction, keeps results of the named types,
+optionally filters on `content` (`where={"status": "open"}`), and may chain
+several hops. Every walk takes `at`. The result is
+`{anchor: id, "anchor": {...}, result_key: [entities], "count", "as_of"}`.
+`get_devices_in_room` and `get_parts_on_vehicle` are the same engine code with
+different constants.
+
+A tool that genuinely needs logic supplies `handler=` instead — an
+`async (ops, **arguments)` in the domain package. The house's
+`find_device_controls` and the vehicles' `get_vehicle_history` are handlers.
+Either way the engine's 18 tools cannot be redeclared, and `catalog_for(manifest)`
+is what every transport serves.
+
+**Skills** are guided workflows over the tools — the house's room walk, the
+vehicles' `vehicle-walk`. A domain ships them as `SKILL.md` files under
+`domains/<name>/skills/` and names them in the manifest (`skills={...}`) so a
+client can find them without knowing the repo layout.
+
 ## 3. Adding a domain
 
 1. **Create the package.**
@@ -146,17 +182,32 @@ property of the data.
    finished: ADR-013 changed what the vocabulary says, so house is now declared
    like any other domain and the enums are legacy.
 
-3. **Mount it.** One engine process serves N domains at `/{domain}/api/v1/...`,
-   one database file each (ADR-012 §3). Adding one is config plus manifest — no
-   engine code.
+3. **Declare its tools and skills** (see [§2a](#2a-tools-and-skills)). A
+   walk is data; a handler is a function in `domains/<name>/tools.py` that
+   takes the `ops` it runs against.
 
-4. **Run the conformance suite against it.** `test_protocol_conformance.py`
+4. **Run it.** A domain is served by its own process with its own database
+   file and port, told which manifest to load:
+
+   ```bash
+   DATABASE_URL=sqlite+aiosqlite:///./vehicles.db python domains/vehicles/seed.py
+   DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES DATABASE_URL=sqlite+aiosqlite:///./vehicles.db API_PORT=8001 python -m funkygibbon
+   ```
+
+   That is ADR-012 §3's topology — separate endpoint, separate database,
+   separate MCP client per domain, shared auth and protocol — as two processes.
+   One process mounting N domains is the later iteration; nothing a client
+   sees changes when it lands. Adding a domain is a manifest plus a line in
+   `pyproject.toml`'s `packages` so it is installed with the engine — no engine
+   code.
+
+5. **Run the conformance suite against it.** `test_protocol_conformance.py`
    asserts the protocol clause by clause and is written to be parameterized by
    manifest: its vocabulary sits in three module constants. The same invariants
    passing for house and vehicles is what proves the engine is domain-blind rather
    than merely arranged to look that way.
 
-5. **Check isolation.** See below.
+6. **Check isolation.** See below.
 
 ## 4. No domain leakage
 
@@ -201,18 +252,19 @@ be a reference, not a second home for the same entity.
 | Base vocabulary (attachments, apps) | done — `inbetweenies/domain.py`, ADR-013 §3/§4 |
 | `domains/house` | done, declared (was derived; ADR-013 changed what it says) |
 | Isolation test | done |
-| Boundary validation wired to the manifest | in progress (Stage D.2) |
-| Declarative MCP tools | not started — ADR-012 §2 expects the 5 house-specific tools to collapse into manifest definitions |
-| Per-domain mounting and database files | not started — ADR-012 §3 |
-| `domains/vehicles` | not started — the proof |
+| Boundary validation wired to the manifest | done — tool calls and sync pushes; the legacy enums are no longer consulted on any write path |
+| Declarative MCP tools | done — `DomainTool` / `Walk`; the house's `get_devices_in_room` is a walk, its other four are handlers in `domains/house/tools.py`; nothing house-specific remains in the engine |
+| Skills named by the manifest | done — `manifest.skills` |
+| Per-domain database files and endpoints | done as **one process per domain** (`DOMAIN_MANIFEST`, `DATABASE_URL`, `API_PORT`); one process mounting N domains is not started |
+| `domains/vehicles` | **first pass done** — manifest, seed, 8 tools, `vehicle-walk` skill, tests (`tests/test_vehicles_domain.py`) |
+| Cross-domain references (§4) | not started |
+| KittenKong reads its domain from the catalog | not started — the TypeScript client still hard-codes the house tools |
 
 The second domain is **`vehicles`**, not `garage`: `garage` is a room name in
 the house domain and in the live graph, so it would collide with an entity name
 on the first cross-domain reference.
 
-The five house-specific MCP tools (`get_devices_in_room`, `find_device_controls`,
-`get_room_connections`, `get_procedures_for_device`, `get_automations_in_room`)
-are still Python, and still the largest remaining piece of house vocabulary
-inside the engine. ADR-012 §2 expects most to become declarative — a type filter
-plus a relationship walk — at which point `get_devices_in_room` and a future
-`get_cars_in_bay` are the same engine query with different constants.
+The five house tools left the engine: `get_devices_in_room` is a declared walk
+and the other four are handlers in `domains/house/tools.py`. The vehicles
+domain's `get_parts_on_vehicle` is the same walk with different constants,
+which is what §2 predicted.

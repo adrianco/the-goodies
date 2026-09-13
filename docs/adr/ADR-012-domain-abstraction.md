@@ -1,6 +1,6 @@
 # ADR-012: Domain abstraction — a generic temporal-graph engine, house and vehicles as domain packages
 
-**Status:** Proposed · 2026-08-01 · Renamed 2026-08-03: the second domain is
+**Status:** Accepted · 2026-08-01 · Implemented in part 2026-09-13 — §1 (vocabulary in a manifest, enforced on every write path), §2 (declarative `DomainTool`s, skills named by the manifest; the five house tools moved out of the engine), §6.3 (`domains/vehicles` first pass: manifest, seed, eight tools, `vehicle-walk`). §3 is delivered as one process per domain (`DOMAIN_MANIFEST` / `DATABASE_URL` / `API_PORT`), not one process mounting N; §4 cross-domain references not started. See `docs/domains.md` §6. · Renamed 2026-08-03: the second domain is
 **`vehicles`**, not `garage`. `garage` is a *room* in the house domain — it is in
 the seed data and in the live graph — so using it as a domain name would have
 collided with an entity name on the very first cross-domain reference. Renamed

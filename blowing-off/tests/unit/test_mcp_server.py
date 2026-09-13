@@ -53,7 +53,9 @@ def test_the_two_transports_serve_the_same_tools():
     They were two hand-maintained lists that happened to agree. This is the
     check that makes them agree by construction.
     """
-    from funkygibbon.mcp.tools import MCP_TOOLS
+    from domains.house import HOUSE
+    from funkygibbon.mcp.tools import tools_for
+    MCP_TOOLS = tools_for(HOUSE)
 
     assert {t.name for t in TOOLS} == {t["name"] for t in MCP_TOOLS}
 

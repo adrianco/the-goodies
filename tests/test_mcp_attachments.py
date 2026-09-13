@@ -203,7 +203,9 @@ class TestAppendOnlyRetraction:
 
     async def test_there_is_no_delete_tool(self):
         """Append-only is the design. A delete tool would be the invention."""
-        from inbetweenies.mcp.catalog import TOOLS_BY_NAME
+        from domains.house import HOUSE
+        from inbetweenies.mcp.catalog import catalog_for
+        TOOLS_BY_NAME = {t.name: t for t in catalog_for(HOUSE)}
 
         assert not [n for n in TOOLS_BY_NAME if "delete" in n or "remove" in n]
 

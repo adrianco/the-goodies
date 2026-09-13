@@ -6,8 +6,9 @@ This provides MCP tool functionality that works with local graph data.
 
 from typing import Dict, Any, List, Optional
 
+from inbetweenies.mcp.domain_tools import run_domain_tool
+
 from ..graph import LocalGraphOperations, LocalGraphStorage
-from inbetweenies.mcp.tools import MCPTools
 
 
 class LocalMCPClient:
@@ -19,18 +20,17 @@ class LocalMCPClient:
     def __init__(self, storage: Optional[LocalGraphStorage] = None):
         """Initialize with local storage"""
         self.graph_ops = LocalGraphOperations(storage)
+        # ADR-012: the engine's tools, then whatever the domain declares. The
+        # domain's run through the generic executor against this replica's
+        # store, exactly as they do on the server.
+        self.manifest = self.graph_ops.domain
         self.tools = {
-            "get_devices_in_room": self.graph_ops.get_devices_in_room,
-            "find_device_controls": self.graph_ops.find_device_controls,
-            "get_room_connections": self.graph_ops.get_room_connections,
             "search_entities": self.graph_ops.search_entities_tool,
             "create_entity": self.graph_ops.create_entity_tool,
             "create_relationship": self.graph_ops.create_relationship_tool,
             "find_path": self.graph_ops.find_path_tool,
             "get_entity_details": self.graph_ops.get_entity_details_tool,
             "find_similar_entities": self.graph_ops.find_similar_entities_tool,
-            "get_procedures_for_device": self.graph_ops.get_procedures_for_device_tool,
-            "get_automations_in_room": self.graph_ops.get_automations_in_room_tool,
             "update_entity": self.graph_ops.update_entity_tool,
             # The catalog (inbetweenies.mcp.catalog) is the contract; this map
             # was twelve entries while the catalog had eighteen, so the Python
@@ -48,6 +48,13 @@ class LocalMCPClient:
             "get_graph_diff": self.graph_ops.get_graph_diff,
             "list_entities": self.graph_ops.list_entities,
         }
+        for tool in self.manifest.tools:
+            self.tools[tool.name] = self._domain_tool(tool)
+
+    def _domain_tool(self, tool):
+        async def call(**arguments):
+            return await run_domain_tool(self.graph_ops, tool, arguments)
+        return call
 
     async def execute_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:
         """

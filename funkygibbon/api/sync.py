@@ -12,14 +12,14 @@ from functools import lru_cache
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from funkygibbon.database import get_db
 from funkygibbon.graph.index_service import write_through_applied_changes
 from funkygibbon.repositories.graph import next_server_seq, stamp_relationship
 from inbetweenies.models import (
-    Entity, EntityRelationship, EntityType, RelationshipType, SourceType,
+    Entity, EntityRelationship,
 )
 # Interval clamps compare a wire datetime against a stored one, and SQLite
 # hands back naive values however they were written (see the helper's docstring).
@@ -160,7 +160,7 @@ class SyncHandler:
         # Filters (apply to both full and delta).
         if request.filters:
             if request.filters.entity_types:
-                wanted = {EntityType(et) for et in request.filters.entity_types}
+                wanted = set(request.filters.entity_types)
                 entities = [e for e in entities if e.entity_type in wanted]
             if request.filters.modified_by:
                 wanted_users = set(request.filters.modified_by)
@@ -482,10 +482,10 @@ class SyncHandler:
         entity = Entity(
             id=change.entity.id,
             version=change.entity.version,
-            entity_type=EntityType(change.entity.entity_type),
+            entity_type=change.entity.entity_type,
             name=change.entity.name,
             content=content,
-            source_type=SourceType(change.entity.source_type),
+            source_type=change.entity.source_type,
             user_id=change.entity.user_id,
             parent_versions=change.entity.parent_versions or [],
             created_at=now,
@@ -605,6 +605,15 @@ class SyncHandler:
         """
         if not change.entity:
             return False  # relationships-only change; nothing to apply here
+
+        # ADR-012 §1: the sync boundary enforces the domain's vocabulary, as
+        # the tool boundary does. A house entity pushed at a vehicles server
+        # is a client pointed at the wrong endpoint, and a 400 says so; storing
+        # it would fragment the graph silently.
+        try:
+            _manifest().check_entity_type(change.entity.entity_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         # ADR-002 §3: resolve THIS id, not the whole table. Scanning every
         # version of every entity once per pushed change is what made a
@@ -886,13 +895,16 @@ class SyncHandler:
         neither, and ``server_seq`` (the replication axis) is never consulted
         here.
         """
+        # ADR-012 §1: the domain manifest, not the legacy enum, says what an
+        # edge may be called.
         try:
-            rel_type = RelationshipType(relationship.relationship_type)
+            _manifest().check_relationship_type(relationship.relationship_type)
         except ValueError:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown relationship_type: {relationship.relationship_type}",
             )
+        rel_type = relationship.relationship_type
 
         # ADR-004 §1: endpoints are checked by id, not by (id, version).
         #

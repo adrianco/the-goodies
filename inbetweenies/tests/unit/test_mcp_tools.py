@@ -8,13 +8,25 @@ failure.
 
 import pytest
 
+from domains.house import HOUSE
 from inbetweenies.mcp import ToolResult
+from inbetweenies.mcp.domain_tools import run_domain_tool
 from inbetweenies.models import Entity, EntityType, RelationshipType
 from inbetweenies.tests.memory_graph import (
     ExplodingGraph,
     VersionedInMemoryGraph,
     make_entity,
 )
+
+
+async def house_tool(ops, name, **arguments):
+    """Run one of the house's declared tools (ADR-012 §2) against ``ops``.
+
+    The five house tools used to be methods on MCPTools. They are declared in
+    the house manifest now and run by the engine's generic executor, which is
+    what these tests exercise.
+    """
+    return await run_domain_tool(ops, HOUSE.tool(name), arguments)
 
 
 @pytest.fixture
@@ -43,7 +55,7 @@ class TestToolResult:
 
 class TestGetDevicesInRoom:
     async def test_lists_the_devices_located_in_the_room(self, house):
-        result = await house.get_devices_in_room("room-kitchen")
+        result = await house_tool(house, "get_devices_in_room", room_id="room-kitchen")
 
         assert result.success is True
         assert result.error is None
@@ -55,29 +67,30 @@ class TestGetDevicesInRoom:
         assert result.result["devices"][0]["entity_type"] == "device"
 
     async def test_room_with_no_devices_reports_zero(self, house):
-        result = await house.get_devices_in_room("room-hall")
+        result = await house_tool(house, "get_devices_in_room", room_id="room-hall")
 
         assert result.success is True
-        assert result.result == {"room_id": "room-hall", "devices": [], "count": 0}
+        assert result.result["room_id"] == "room-hall"
+        assert result.result["devices"] == [] and result.result["count"] == 0
 
     async def test_ignores_non_device_entities_located_in_the_room(self, house):
         # A zone can also be LOCATED_IN a room; only devices may be reported.
         house.add_entity(make_entity("zone-1", EntityType.ZONE, "Ground Floor"))
         house.connect("rel-zone-kitchen", "zone-1", "room-kitchen", RelationshipType.LOCATED_IN)
 
-        result = await house.get_devices_in_room("room-kitchen")
+        result = await house_tool(house, "get_devices_in_room", room_id="room-kitchen")
 
         assert [d["id"] for d in result.result["devices"]] == ["device-light"]
 
     async def test_unknown_room_is_an_error(self, house):
-        result = await house.get_devices_in_room("no-such-room")
+        result = await house_tool(house, "get_devices_in_room", room_id="no-such-room")
 
         assert result.success is False
         assert result.result is None
         assert result.error == "Room no-such-room not found"
 
     async def test_entity_that_is_not_a_room_is_an_error(self, house):
-        result = await house.get_devices_in_room("device-light")
+        result = await house_tool(house, "get_devices_in_room", room_id="device-light")
 
         assert result.success is False
         assert result.error == "Room device-light not found"
@@ -85,7 +98,7 @@ class TestGetDevicesInRoom:
 
 class TestFindDeviceControls:
     async def test_reports_capabilities_and_services(self, house):
-        result = await house.find_device_controls("device-light")
+        result = await house_tool(house, "find_device_controls", device_id="device-light")
 
         assert result.success is True
         assert result.result["device_id"] == "device-light"
@@ -94,34 +107,34 @@ class TestFindDeviceControls:
         assert result.result["services"] == ["lightbulb"]
 
     async def test_reports_controlled_devices(self, house):
-        result = await house.find_device_controls("device-hub")
+        result = await house_tool(house, "find_device_controls", device_id="device-hub")
 
         assert result.result["controlled_devices"] == [
             {"id": "device-light", "name": "Kitchen Light", "type": "device"}
         ]
 
     async def test_device_controlling_nothing_reports_an_empty_list(self, house):
-        result = await house.find_device_controls("device-light")
+        result = await house_tool(house, "find_device_controls", device_id="device-light")
 
         assert result.result["controlled_devices"] == []
 
     async def test_device_without_content_defaults_to_empty_lists(self, empty_graph):
         empty_graph.add_entity(make_entity("d", EntityType.DEVICE, "Bare Device", None))
 
-        result = await empty_graph.find_device_controls("d")
+        result = await house_tool(empty_graph, "find_device_controls", device_id="d")
 
         assert result.success is True
         assert result.result["capabilities"] == []
         assert result.result["services"] == []
 
     async def test_unknown_device_is_an_error(self, house):
-        result = await house.find_device_controls("no-such-device")
+        result = await house_tool(house, "find_device_controls", device_id="no-such-device")
 
         assert result.success is False
         assert result.error == "Device no-such-device not found"
 
     async def test_entity_that_is_not_a_device_is_an_error(self, house):
-        result = await house.find_device_controls("room-kitchen")
+        result = await house_tool(house, "find_device_controls", device_id="room-kitchen")
 
         assert result.success is False
         assert result.error == "Device room-kitchen not found"
@@ -129,7 +142,7 @@ class TestFindDeviceControls:
 
 class TestGetRoomConnections:
     async def test_merges_incoming_and_outgoing_connections(self, house):
-        result = await house.get_room_connections("room-hall")
+        result = await house_tool(house, "get_room_connections", room_id="room-hall")
 
         assert result.success is True
         assert result.result["room_id"] == "room-hall"
@@ -144,7 +157,7 @@ class TestGetRoomConnections:
         house.add_entity(make_entity("room-den", EntityType.ROOM, "Den"))
         house.connect("rel-hall-den", "room-hall", "room-den", RelationshipType.CONNECTS_TO)
 
-        result = await house.get_room_connections("room-hall")
+        result = await house_tool(house, "get_room_connections", room_id="room-hall")
 
         by_id = {c["id"]: c for c in result.result["connections"]}
         assert by_id["room-den"]["connection_type"] == "direct"
@@ -153,24 +166,24 @@ class TestGetRoomConnections:
         house.add_entity(make_entity("door-1", EntityType.DOOR, "Front Door"))
         house.connect("rel-door-hall", "door-1", "room-hall", RelationshipType.CONNECTS_TO)
 
-        result = await house.get_room_connections("room-hall")
+        result = await house_tool(house, "get_room_connections", room_id="room-hall")
 
         assert "door-1" not in [c["id"] for c in result.result["connections"]]
         assert result.result["connection_count"] == 2
 
     async def test_room_with_no_connections(self, house):
-        result = await house.get_room_connections("room-living")
+        result = await house_tool(house, "get_room_connections", room_id="room-living")
 
         assert result.result["connection_count"] == 1  # only the hallway
 
     async def test_unknown_room_is_an_error(self, house):
-        result = await house.get_room_connections("no-such-room")
+        result = await house_tool(house, "get_room_connections", room_id="no-such-room")
 
         assert result.success is False
         assert result.error == "Room no-such-room not found"
 
     async def test_entity_that_is_not_a_room_is_an_error(self, house):
-        result = await house.get_room_connections("device-hub")
+        result = await house_tool(house, "get_room_connections", room_id="device-hub")
 
         assert result.success is False
         assert result.error == "Room device-hub not found"
@@ -213,7 +226,7 @@ class TestSearchEntitiesTool:
 
         assert result.success is False
         assert result.result is None
-        assert "not a valid EntityType" in result.error
+        assert "unknown entity_type 'spaceship' for domain 'house'" in result.error
 
 
 class TestCreateEntityTool:
@@ -248,7 +261,7 @@ class TestCreateEntityTool:
 
         assert result.success is False
         assert result.result is None
-        assert "not a valid EntityType" in result.error
+        assert "unknown entity_type 'spaceship' for domain 'house'" in result.error
         assert await empty_graph.get_entities_by_type(EntityType.DEVICE) == []
 
 
@@ -298,7 +311,7 @@ class TestCreateRelationshipTool:
         )
 
         assert result.success is False
-        assert "not a valid RelationshipType" in result.error
+        assert "unknown relationship_type 'teleports_to' for domain 'house'" in result.error
 
     async def test_invalid_entity_type_combination_is_rejected(self, house):
         # CONTROLS is only valid device->device, automation->device and
@@ -306,8 +319,9 @@ class TestCreateRelationshipTool:
         result = await house.create_relationship_tool("room-kitchen", "home-1", "controls")
 
         assert result.success is False
-        assert result.error == (
-            "Invalid relationship: room cannot have controls relationship to home"
+        # ADR-012 §1: the manifest phrases the refusal, and says what IS allowed.
+        assert result.error.startswith(
+            "Invalid relationship: 'controls' does not permit 'room' -> 'home' in domain 'house'"
         )
 
     async def test_rejected_relationship_is_not_stored(self, house):
@@ -458,7 +472,7 @@ class TestFindSimilarEntitiesTool:
 
 class TestGetProceduresForDeviceTool:
     async def test_collects_procedures_and_manuals(self, house):
-        result = await house.get_procedures_for_device_tool("device-light")
+        result = await house_tool(house, "get_procedures_for_device", device_id="device-light")
 
         assert result.success is True
         assert result.result["device_id"] == "device-light"
@@ -481,26 +495,26 @@ class TestGetProceduresForDeviceTool:
             "rel-light-note", "device-light", "note-1", RelationshipType.DOCUMENTED_BY
         )
 
-        result = await house.get_procedures_for_device_tool("device-light")
+        result = await house_tool(house, "get_procedures_for_device", device_id="device-light")
 
         assert [m["id"] for m in result.result["manuals"]] == ["manual-1"]
         assert result.result["total_documentation"] == 2
 
     async def test_device_without_documentation(self, house):
-        result = await house.get_procedures_for_device_tool("device-hub")
+        result = await house_tool(house, "get_procedures_for_device", device_id="device-hub")
 
         assert result.result["procedures"] == []
         assert result.result["manuals"] == []
         assert result.result["total_documentation"] == 0
 
     async def test_unknown_device_is_an_error(self, house):
-        result = await house.get_procedures_for_device_tool("ghost")
+        result = await house_tool(house, "get_procedures_for_device", device_id="ghost")
 
         assert result.success is False
         assert result.error == "Device ghost not found"
 
     async def test_entity_that_is_not_a_device_is_an_error(self, house):
-        result = await house.get_procedures_for_device_tool("room-kitchen")
+        result = await house_tool(house, "get_procedures_for_device", device_id="room-kitchen")
 
         assert result.success is False
         assert result.error == "Device room-kitchen not found"
@@ -508,7 +522,7 @@ class TestGetProceduresForDeviceTool:
 
 class TestGetAutomationsInRoomTool:
     async def test_finds_automations_through_the_rooms_devices(self, house):
-        result = await house.get_automations_in_room_tool("room-kitchen")
+        result = await house_tool(house, "get_automations_in_room", room_id="room-kitchen")
 
         assert result.success is True
         assert result.result["room_id"] == "room-kitchen"
@@ -532,7 +546,7 @@ class TestGetAutomationsInRoomTool:
         empty_graph.connect("r3", "auto", "d1", RelationshipType.AUTOMATES)
         empty_graph.connect("r4", "auto", "d2", RelationshipType.AUTOMATES)
 
-        result = await empty_graph.get_automations_in_room_tool("room")
+        result = await house_tool(empty_graph, "get_automations_in_room", room_id="room")
 
         assert result.result["automation_count"] == 1
         affected = result.result["automations"][0]["affects_devices"]
@@ -545,25 +559,25 @@ class TestGetAutomationsInRoomTool:
         empty_graph.connect("r1", "d1", "room", RelationshipType.LOCATED_IN)
         empty_graph.connect("r2", "sched", "d1", RelationshipType.AUTOMATES)
 
-        result = await empty_graph.get_automations_in_room_tool("room")
+        result = await house_tool(empty_graph, "get_automations_in_room", room_id="room")
 
         assert result.result["automations"] == []
         assert result.result["automation_count"] == 0
 
     async def test_room_without_automated_devices(self, house):
-        result = await house.get_automations_in_room_tool("room-living")
+        result = await house_tool(house, "get_automations_in_room", room_id="room-living")
 
         assert result.success is True
         assert result.result["automation_count"] == 0
 
     async def test_unknown_room_is_an_error(self, house):
-        result = await house.get_automations_in_room_tool("ghost")
+        result = await house_tool(house, "get_automations_in_room", room_id="ghost")
 
         assert result.success is False
         assert result.error == "Room ghost not found"
 
     async def test_entity_that_is_not_a_room_is_an_error(self, house):
-        result = await house.get_automations_in_room_tool("device-light")
+        result = await house_tool(house, "get_automations_in_room", room_id="device-light")
 
         assert result.success is False
         assert result.error == "Room device-light not found"
@@ -598,20 +612,20 @@ class TestBackendFailuresBecomeToolErrors:
     @pytest.mark.parametrize(
         "call",
         [
-            pytest.param(lambda g: g.get_devices_in_room("r"), id="get_devices_in_room"),
-            pytest.param(lambda g: g.find_device_controls("d"), id="find_device_controls"),
-            pytest.param(lambda g: g.get_room_connections("r"), id="get_room_connections"),
+            pytest.param(lambda g: house_tool(g, "get_devices_in_room", room_id="r"), id="get_devices_in_room"),
+            pytest.param(lambda g: house_tool(g, "find_device_controls", device_id="d"), id="find_device_controls"),
+            pytest.param(lambda g: house_tool(g, "get_room_connections", room_id="r"), id="get_room_connections"),
             pytest.param(
                 lambda g: g.create_relationship_tool("a", "b", "located_in"),
                 id="create_relationship_tool",
             ),
             pytest.param(lambda g: g.get_entity_details_tool("e"), id="get_entity_details_tool"),
             pytest.param(
-                lambda g: g.get_procedures_for_device_tool("d"),
+                lambda g: house_tool(g, "get_procedures_for_device", device_id="d"),
                 id="get_procedures_for_device_tool",
             ),
             pytest.param(
-                lambda g: g.get_automations_in_room_tool("r"),
+                lambda g: house_tool(g, "get_automations_in_room", room_id="r"),
                 id="get_automations_in_room_tool",
             ),
             pytest.param(
@@ -753,16 +767,16 @@ class TestAsOfReads:
 
     async def test_devices_in_room_follows_the_move(self):
         graph = self._timeline()
-        then = await graph.get_devices_in_room("kitchen", at=APRIL.isoformat())
-        now = await graph.get_devices_in_room("kitchen")
+        then = await house_tool(graph, "get_devices_in_room", room_id="kitchen", at=APRIL.isoformat())
+        now = await house_tool(graph, "get_devices_in_room", room_id="kitchen")
         assert [d["id"] for d in then.result["devices"]] == ["lamp"]
         assert now.result["devices"] == []
 
     async def test_an_entity_created_after_at_does_not_exist_then(self):
         graph = self._timeline()
         graph.add_entity(make_entity("new", EntityType.ROOM, "New Room", version=_ver(JULY)))
-        assert (await graph.get_devices_in_room("new", at=APRIL.isoformat())).success is False
-        assert (await graph.get_devices_in_room("new")).success is True
+        assert (await house_tool(graph, "get_devices_in_room", room_id="new", at=APRIL.isoformat())).success is False
+        assert (await house_tool(graph, "get_devices_in_room", room_id="new")).success is True
 
     async def test_a_renamed_entity_shows_its_old_name_then(self):
         graph = self._timeline()
@@ -781,7 +795,7 @@ class TestAsOfReads:
 
     async def test_a_bad_at_is_a_reported_error_not_a_crash(self):
         graph = self._timeline()
-        result = await graph.get_devices_in_room("kitchen", at="not a time")
+        result = await house_tool(graph, "get_devices_in_room", room_id="kitchen", at="not a time")
         assert result.success is False and "not a time" in result.error
 
 

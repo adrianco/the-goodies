@@ -37,7 +37,8 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from inbetweenies.mcp.catalog import MCP_TOOLS_SPEC
+from inbetweenies.domain import load_manifest
+from inbetweenies.mcp.catalog import mcp_tools_for
 
 from ..client import BlowingOffClient
 
@@ -54,13 +55,16 @@ _ENTITY_TYPES = ("home, room, device, zone, door, window, procedure, manual, "
 # That still holds and this does not do it: the catalog is the same explicit
 # schema, written once. types.Tool takes input_schema, which is exactly what
 # ToolSpec.as_mcp() renders.
+#
+# ADR-012: which tools exist depends on the domain this replica holds, named by
+# $DOMAIN_MANIFEST (default: the house). The engine's tools plus the domain's.
 TOOLS: List[types.Tool] = [
     types.Tool(
         name=spec["name"],
         description=spec["description"],
         input_schema=spec["inputSchema"],
     )
-    for spec in MCP_TOOLS_SPEC
+    for spec in mcp_tools_for(load_manifest())
 ]
 
 

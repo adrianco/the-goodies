@@ -1,18 +1,24 @@
 """MCP tool definitions for FunkyGibbon.
 
-The schemas themselves live in :mod:`inbetweenies.mcp.catalog` -- one
-definition rendered for both transports. They used to be maintained here *and*
-in the stdio server, by hand, with nothing keeping the two in step.
+The schemas live in :mod:`inbetweenies.mcp.catalog` -- the engine's tools --
+and a domain's own tools in its manifest (ADR-012 §2). ``tools_for(manifest)``
+renders the full set in the shape ``GET /api/v1/mcp/tools`` has always
+returned (a ``parameters`` key, not the MCP spec's ``inputSchema``).
 
-``MCP_TOOLS`` keeps the shape ``GET /api/v1/mcp/tools`` has always returned
-(a ``parameters`` key, not the MCP spec's ``inputSchema``), so this indirection
-changes nothing a caller can observe.
+There is no module-level list any more: which tools exist depends on which
+domain the server is configured to serve, and a house server must not
+advertise ``get_parts_on_vehicle`` any more than a vehicles server should
+advertise ``get_devices_in_room``.
 """
 
 from typing import Any, Dict, List
 
-from inbetweenies.mcp.catalog import MCP_TOOLS as _CATALOG_REST
+from inbetweenies.domain import DomainManifest
+from inbetweenies.mcp.catalog import rest_tools_for
 
-MCP_TOOLS: List[Dict[str, Any]] = _CATALOG_REST
 
-__all__ = ["MCP_TOOLS"]
+def tools_for(manifest: DomainManifest) -> List[Dict[str, Any]]:
+    return rest_tools_for(manifest)
+
+
+__all__ = ["tools_for"]

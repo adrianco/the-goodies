@@ -3,6 +3,6 @@ MCP (Model Context Protocol) server for FunkyGibbon
 """
 
 from .server import FunkyGibbonMCPServer
-from .tools import MCP_TOOLS
+from .tools import tools_for
 
-__all__ = ['FunkyGibbonMCPServer', 'MCP_TOOLS']
+__all__ = ['FunkyGibbonMCPServer', 'tools_for']

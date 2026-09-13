@@ -37,16 +37,15 @@ REVISION HISTORY:
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-import json
 
 from .protocol import InbetweeniesProtocol
 from inbetweenies.sync import SyncState, SyncResult, Change, Conflict, SyncOperation
 from ..repositories import SyncMetadataRepository
 from inbetweenies.models import (
-    Entity, EntityRelationship, EntityType, RelationshipType, SourceType,
+    Entity, EntityRelationship, SourceType,
 )
 
 
@@ -336,10 +335,10 @@ class SyncEngine:
                 entity = Entity(
                     id=entity_data.get('id'),
                     version=entity_data.get('version', ''),
-                    entity_type=EntityType(entity_data.get('entity_type', 'unknown')),
+                    entity_type=entity_data.get('entity_type', 'unknown'),
                     name=entity_data.get('name', ''),
                     content=entity_data.get('content', {}),
-                    source_type=SourceType(entity_data.get('source_type', SourceType.IMPORTED)),
+                    source_type=entity_data.get('source_type', SourceType.IMPORTED.value),
                     parent_versions=entity_data.get('parent_versions', []),
                     user_id=entity_data.get('user_id', 'sync')
                 )
@@ -378,7 +377,7 @@ class SyncEngine:
                     id=raw["id"],
                     from_entity_id=raw["from_entity_id"],
                     to_entity_id=raw["to_entity_id"],
-                    relationship_type=RelationshipType(raw["relationship_type"]),
+                    relationship_type=raw["relationship_type"],
                     properties=raw.get("properties") or {},
                     user_id=raw.get("user_id"),
                     valid_from=_parse_bound(raw.get("valid_from")),

@@ -33,6 +33,31 @@ protocol and the edge table, and both changes are hard:
 Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
 below; the migration detects which shape it is starting from.
 
+## v0.8.0 (unreleased) — domains are pluggable; the vehicles domain
+
+Additive for a house install. Nothing to do beyond the one command, but four
+things changed that a script author may notice:
+
+- **The tool catalog comes from the domain.** `GET /api/v1/mcp/tools` is the
+  18 engine tools plus the served domain's own (the house's five, so still 23).
+  The `enum` lists on `create_entity` / `create_relationship` /
+  `search_entities` / `list_entities` are now generated from the manifest, so
+  `contained_in` (deleted in ADR-013) is no longer advertised and `photo` /
+  `app` are.
+- **Vocabulary is enforced on every write path** (ADR-013 §5 closed): an
+  undeclared `entity_type` in a tool call *or a sync push* is a 400 naming the
+  declared types; an edge between endpoints the manifest does not permit is
+  refused with the rule that refused it.
+- **`domains/` is installed with the engine.** The server imports the manifest
+  `DOMAIN_MANIFEST` names at runtime; v0.7.0 relied on the checkout being on
+  the path. The one command handles it.
+- **A second domain: `vehicles`.** `DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES`
+  with its own `DATABASE_URL` and `API_PORT` runs a vehicles server alongside
+  the house; see `domains/vehicles/README.md`. blowing-off honours the same
+  variable.
+- **Matching clients:** KittenKong `v0.7.0` still works against a house
+  server; it does not yet read the catalog for another domain.
+
 ## v0.7.0 — the graph REST API is removed; concurrent edits merge
 
 Additive on v0.6.0 for clients; **`oook` must be upgraded with the server**

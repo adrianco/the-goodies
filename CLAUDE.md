@@ -184,7 +184,7 @@ blowing-off search "smart"
 
 **FunkyGibbon (Server)**
 - FastAPI backend at `funkygibbon/`
-- MCP server implementation providing 23 tools
+- MCP server implementation providing the MCP tools: 18 engine tools plus the served domain's own (house: 5, so 23; vehicles: 8, so 26)
 - Graph database using SQLite with immutable versioning
 - JWT authentication and role-based access control
 - HTTP endpoints under `/api/v1/`: `mcp/tools/*` (the client interface), `sync/`, `auth/*`, `sync-metadata/`, `backup/*`. There is no graph REST API (ADR-015).
@@ -237,10 +237,14 @@ The vocabulary is *domain* data, not engine schema: it lives in
 `domains/house/manifest.py`, not in the database columns. See
 [domains/house/README.md](domains/house/README.md) for what is declared versus
 what is actually used, and `docs/domains.md` for adding a second domain.
+The second domain exists: `domains/vehicles` (manifest, seed, tools, the
+`vehicle-walk` skill) — served with `DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES`.
+The engine never imports a domain (`tests/test_domain_isolation.py`); it loads
+the one it is told to serve.
 
 ### MCP Tools
 
-The 23 MCP tools are defined in `inbetweenies/mcp/tools.py` and implemented in both server and client:
+The engine's 18 tools have their schemas in `inbetweenies/mcp/catalog.py` and their behaviour in `inbetweenies/mcp/tools.py`. A domain's own tools are declared as data in its manifest (`DomainTool` / `Walk` in `inbetweenies/domain.py`) and run by `inbetweenies/mcp/domain_tools.py` against any store — server or replica. `catalog_for(manifest)` is the full list a server advertises. The house's five:
 - Device discovery (`get_devices_in_room`, `find_device_controls`)
 - Graph navigation (`find_path`, `get_room_connections`)
 - Entity management (`create_entity`, `update_entity`, `search_entities`)
