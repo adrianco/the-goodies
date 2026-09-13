@@ -16,7 +16,7 @@ CORE FEATURES:
 - RESTful API with OpenAPI documentation
 
 KEY ENDPOINTS:
-- /api/v1/graph/* - Graph operations (entities, relationships, search)
+- /api/v1/mcp/tools/* - the client interface: every graph read and write is a tool (ADR-015)
 - /api/v1/mcp/* - MCP tool execution and tool listing
 - /api/v1/sync/* - Client synchronization and conflict resolution
 - /health - System health monitoring
@@ -71,7 +71,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..database import init_db
-from .routers import sync_metadata, graph, mcp, auth, backup
+from .routers import sync_metadata, mcp, auth, backup
 from .routers.auth import require_auth
 from . import sync as enhanced_sync
 from ..auth import auth_rate_limiter, audit_logger
@@ -190,7 +190,6 @@ def create_app() -> FastAPI:
     app.include_router(enhanced_sync.router, tags=["sync"], dependencies=protected)
     app.include_router(sync_metadata.router, prefix=f"{settings.api_prefix}/sync-metadata", tags=["sync-metadata"], dependencies=protected)
     # Graph and MCP routers (primary functionality)
-    app.include_router(graph.router, prefix=f"{settings.api_prefix}", tags=["graph"], dependencies=protected)
     app.include_router(mcp.router, prefix=f"{settings.api_prefix}", tags=["mcp"], dependencies=protected)
 
     @app.get("/")

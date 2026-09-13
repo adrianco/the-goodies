@@ -1,7 +1,7 @@
 # The Goodies — Staged Implementation Plan
 
 **Date:** 2026-08-01 (revised 2026-08-02 — see §1.2) · **Planned at:** `715a3e8` (v0.3.0 + ADR-001…012)
-**Status: proposed — awaiting owner review. Nothing implemented in this repository.**
+**Status: executed.** Stages A–F all landed by 2026-09-13 (v0.5.0 carried Stage E, the temporal cutover; v0.6.0 delivered ADR-004 §3 and ADR-015). Kept as the record of *why this order*; the per-ADR status headers in [`adr/`](adr/) are the source of truth for what landed and what did not.
 **Companion to:** [`design-review-2026-08.md`](design-review-2026-08.md) (findings) and [`adr/`](adr/) (decisions). This document is the third piece: *order of work*, and why that order.
 
 ---

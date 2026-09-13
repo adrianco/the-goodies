@@ -19,11 +19,14 @@ of the Inbetweenies protocol. This ensures data consistency when multiple
 clients modify the same entity.
 
 KNOWN ISSUES:
-- Resolution within 1 second uses sync_id (arbitrary)
-- No merge strategies (only last-write-wins)
 - Timezone handling could be more robust
 
 REVISION HISTORY:
+- 2026-09-13: three_way_merge -- ADR-005 §2 rung 3. Keys changed on one side
+  take that side; keys changed on both are reported so the caller can settle
+  them by LWW (rung 4) for that key set only. Deletion-safe: the base
+  distinguishes "deleted" from "never existed", which is the defect that made
+  the old two-way merge resurrect deletions.
 - 2025-07-28: Initial implementation
 - 2025-07-29: Enhanced timezone handling
 - 2025-07-29: Fixed None sync_id comparison
@@ -129,3 +132,61 @@ class ConflictResolver:
                 reason="local has newer timestamp",
                 timestamp_diff_ms=diff_ms
             )
+
+
+# --------------------------------------------------------------------------- #
+# ADR-005 §2 rung 3 -- three-way field merge
+# --------------------------------------------------------------------------- #
+
+_MISSING = object()
+
+
+@dataclass
+class MergeResult:
+    """Outcome of a three-way merge of two content dicts against their base."""
+    merged: Dict[str, Any]
+    #: Keys both sides changed, to different values. Not merged here: the
+    #: caller settles them by the ordering rule (rung 4) for this key set only.
+    conflicted: set
+    #: Keys taken from each side, for the conflict record.
+    took_local: set
+    took_remote: set
+
+
+def three_way_merge(base: Dict[str, Any], local: Dict[str, Any],
+                    remote: Dict[str, Any]) -> MergeResult:
+    """Merge ``local`` and ``remote`` against their common ancestor ``base``.
+
+    Per key, over the union of all three:
+    - unchanged on both sides         -> keep
+    - changed on one side only        -> take that side (a deletion is a change)
+    - changed on both, to the same    -> keep (they agree)
+    - changed on both, differently    -> conflicted; left at the base value
+      here and reported, for the caller to settle by rung 4
+
+    "Changed" is judged against the base, which is what makes this
+    deletion-safe: a key absent on one side and present in the base is a
+    deletion by that side, not a key the other side never had.
+    """
+    merged: Dict[str, Any] = {}
+    conflicted, took_local, took_remote = set(), set(), set()
+    for key in set(base) | set(local) | set(remote):
+        b = base.get(key, _MISSING)
+        l = local.get(key, _MISSING)
+        r = remote.get(key, _MISSING)
+        local_changed = l != b
+        remote_changed = r != b
+        if not local_changed and not remote_changed:
+            chosen = b
+        elif local_changed and not remote_changed:
+            chosen = l; took_local.add(key)
+        elif remote_changed and not local_changed:
+            chosen = r; took_remote.add(key)
+        elif l == r:
+            chosen = l
+        else:
+            conflicted.add(key); chosen = b
+        if chosen is not _MISSING:
+            merged[key] = chosen
+    return MergeResult(merged=merged, conflicted=conflicted,
+                       took_local=took_local, took_remote=took_remote)

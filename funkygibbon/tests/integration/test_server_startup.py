@@ -30,15 +30,16 @@ class TestServerStartup:
             assert response.status_code == 200
             assert response.json() == {"status": "healthy"}
 
-            # Graph API sits behind require_auth, so this needs the session's
-            # real admin token. Calling it unauthenticated (as this test used
-            # to) just asserts on a 401 and proves nothing about the graph API.
-            response = await client.get(
-                "/api/v1/graph/entities",
+            # The tools sit behind require_auth, so this needs the session's
+            # real admin token. Calling unauthenticated (as this test used to)
+            # just asserts on a 401 and proves nothing about the graph.
+            response = await client.post(
+                "/api/v1/mcp/tools/list_entities",
                 headers={"Authorization": f"Bearer {auth_token}"},
+                json={"arguments": {}},
             )
             assert response.status_code == 200
-            data = response.json()
+            data = response.json()["result"]
             assert "entities" in data
             assert isinstance(data["entities"], list)
 

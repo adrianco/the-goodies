@@ -401,12 +401,6 @@ class SQLGraphOperations(MCPTools):
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def find_path(self, from_id: str, to_id: str, max_depth: int = 10) -> List[Entity]:
-        """Find path between entities using BFS"""
-        # For now, return empty list - graph traversal needs the in-memory index
-        # This would be better implemented with recursive CTEs in SQL
-        return []
-
     async def find_similar_entities(self, entity_id: str, limit: int = 5) -> List[Any]:
         """Find entities similar to this one, via FTS5 more-like-this (ADR-006 §3).
 

@@ -26,6 +26,7 @@ KITTENKONG_TOOLS = {
     "get_entity_versions", "tombstone_entity", "get_statistics",
     # Relationship parity and the as-of surface (issue #85, ADR-004 §3).
     "list_relationships", "get_connected", "end_relationship", "get_graph_diff",
+    "list_entities",
 }
 
 PYTHON_ONLY_TOOLS: set = set()  # none: the two clients serve the same catalog

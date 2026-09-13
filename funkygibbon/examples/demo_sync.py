@@ -177,13 +177,14 @@ async def test_sync_api():
         "entity_types": ["device"]
     }
 
+    # The client interface is the MCP tools (ADR-015); search is a tool call.
     async with httpx.AsyncClient() as client:
-        response = await client.post(f"{base_url}/graph/search", json=search_request)
+        response = await client.post(f"{base_url}/mcp/tools/search_entities",
+                                     json={"arguments": search_request})
         if response.status_code == 200:
-            results = response.json()
+            results = response.json().get("result", {})
             print(f"   Found {len(results.get('results', []))} entities")
-            for result in results.get("results", [])[:3]:
-                entity = result.get("entity", {})
+            for entity in results.get("results", [])[:3]:
                 print(f"   - {entity.get('name', 'Unknown')} ({entity.get('entity_type', 'Unknown')})")
 
     print("\n✅ Sync API test completed!")

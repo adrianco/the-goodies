@@ -46,6 +46,7 @@ class LocalMCPClient:
             "get_connected": self.graph_ops.get_connected,
             "end_relationship": self.graph_ops.end_relationship_tool,
             "get_graph_diff": self.graph_ops.get_graph_diff,
+            "list_entities": self.graph_ops.list_entities,
         }
 
     async def execute_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:

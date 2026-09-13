@@ -141,10 +141,11 @@ class TestIsLatest:
         by_id = {c["entity"]["id"]: c["entity"] for c in served if c.get("entity")}
         assert by_id["E"]["name"] == "kept"
 
-        rest = client.get(f"/api/v1/graph/entities/E", headers=headers)
-        assert rest.status_code == 200
-        assert rest.json()["entity"]["name"] == "kept", (
-            "the REST API and sync must serve the same version"
+        via_tool = client.post("/api/v1/mcp/tools/get_entity_details", headers=headers,
+                               json={"arguments": {"entity_id": "E"}})
+        assert via_tool.status_code == 200
+        assert via_tool.json()["result"]["entity"]["name"] == "kept", (
+            "the MCP tools and sync must serve the same version"
         )
 
     def test_a_tombstone_becomes_the_current_row(self, client, headers):
@@ -261,10 +262,9 @@ class TestEveryWritePathMaintainsTheInvariants:
     def test_all_three_writers_share_one_sequence(self, client, headers):
         """A cursor is a position in ONE order. Two allocators would collide,
         and a client would skip whichever row lost the tie."""
-        client.post("/api/v1/graph/entities", headers=headers, json={
-            "entity_type": "device", "name": "via-rest", "content": {},
-            "source_type": "manual", "user_id": USER,
-        })
+        client.post("/api/v1/mcp/tools/create_entity", headers=headers, json={"arguments": {
+            "entity_type": "device", "name": "via-tool", "content": {}, "user_id": USER,
+        }})
         _sync(client, headers, [_change("create", id="VIA-SYNC",
                                         version=Entity.create_version("a"))])
         self._mcp_store("VIA-MCP", Entity.create_version("a"))
@@ -477,13 +477,12 @@ class TestEveryWritePathMaintainsIsLatest:
 
         assert _rows("R2")[0].server_seq is not None
 
-    def test_rest_and_sync_writes_share_one_sequence(self, client, headers):
+    def test_tool_and_sync_writes_share_one_sequence(self, client, headers):
         """Two writers allocating stamps independently would collide, and a
         client cursor would then skip whichever lost."""
-        client.post("/api/v1/graph/entities", headers=headers, json={
-            "entity_type": "device", "name": "via-rest", "content": {},
-            "source_type": "manual", "user_id": USER,
-        })
+        client.post("/api/v1/mcp/tools/create_entity", headers=headers, json={"arguments": {
+            "entity_type": "device", "name": "via-tool", "content": {}, "user_id": USER,
+        }})
         _sync(client, headers, [_change("create", id="VIA-SYNC",
                                         version=Entity.create_version("a"))])
 

@@ -20,8 +20,8 @@ joins — and the damage is only visible much later, in query results that are
 quietly incomplete. The manifest keeps writes honest while staying data.
 """
 
-from dataclasses import dataclass
-from typing import FrozenSet, Iterable, Mapping, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import FrozenSet, Iterable, Mapping, Optional, Tuple, Callable, Dict, Any
 
 
 @dataclass(frozen=True)
@@ -108,6 +108,15 @@ BASE_RELATIONSHIP_RULES: Tuple[RelationshipRule, ...] = (
 )
 
 
+#: ADR-005 §2 rung 2 -- a per-entity-type merge rule supplied by the domain.
+#: Called with the three CONTENT dicts (base, local, remote) of a concurrent
+#: edit; returns a dict of the keys it OWNS and their merged values (empty to
+#: decline). The engine three-way merges everything else (rung 3), settles
+#: what it cannot by the ordering rule (rung 4), then overlays the rule's keys.
+#: A rule is a refinement of rung 3, never a replacement.
+MergeRule = Callable[[Dict[str, Any], Dict[str, Any], Dict[str, Any]], Optional[Dict[str, Any]]]
+
+
 @dataclass(frozen=True)
 class DomainManifest:
     """Everything the engine needs to know about a domain's vocabulary."""
@@ -119,6 +128,9 @@ class DomainManifest:
     # Entity types that carry a blob via top-level content.blob_id. Always
     # includes BASE_ATTACHMENT_TYPES; a domain may add its own.
     attachment_types: FrozenSet[str] = frozenset(BASE_ATTACHMENT_TYPES)
+    #: entity type -> MergeRule (ADR-005 §2 rung 2). Empty means every
+    #: concurrent edit goes straight to the generic three-way merge.
+    merge_rules: Mapping[str, MergeRule] = field(default_factory=dict)
 
     @property
     def relationship_types(self) -> FrozenSet[str]:
@@ -183,6 +195,7 @@ def build_manifest(
     source_types: Iterable[str],
     relationship_rules: Iterable[RelationshipRule],
     attachment_types: Iterable[str] = (),
+    merge_rules: Mapping[str, MergeRule] = None,
 ) -> DomainManifest:
     """Assemble a manifest, merging the base vocabulary into the domain's.
 
@@ -213,5 +226,5 @@ def build_manifest(
         ),
         source_types=frozenset(str(t) for t in source_types),
         relationship_rules=rules,
-        attachment_types=attachments,
+        attachment_types=attachments,        merge_rules=dict(merge_rules or {}),
     )

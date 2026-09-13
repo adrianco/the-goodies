@@ -16,13 +16,12 @@ import pytest
 API = "/api/v1"
 
 # Representative endpoints across every protected router. The point is coverage of
-# each router (graph / mcp / sync / sync-metadata) and both reads and writes — a
+# each router (mcp / sync / sync-metadata) and both reads and writes — a
 # router-level dependency protects all of its routes, so one per router proves it.
 PROTECTED = [
-    ("GET", f"{API}/graph/entities"),
-    ("GET", f"{API}/graph/statistics"),
-    ("POST", f"{API}/graph/entities"),
     ("GET", f"{API}/mcp/tools"),
+    ("GET", f"{API}/mcp/tools/get_statistics"),
+    ("POST", f"{API}/mcp/tools/get_statistics"),
     ("GET", f"{API}/sync-metadata/"),
     ("POST", f"{API}/sync-metadata/"),
     ("GET", f"{API}/sync/status"),
@@ -32,9 +31,8 @@ PROTECTED = [
 # Endpoints that should return a clean 200 for an authenticated read against an
 # empty test database (proves auth lets legitimate traffic through).
 READABLE = [
-    f"{API}/graph/entities",
-    f"{API}/graph/statistics",
     f"{API}/mcp/tools",
+    f"{API}/mcp/tools/get_statistics",
     f"{API}/sync-metadata/",
 ]
 

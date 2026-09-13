@@ -19,7 +19,7 @@ graph TB
     subgraph server["FunkyGibbon — the authority"]
         AUTH["/api/v1/auth/*"]
         SYNC["/api/v1/sync/<br/>Inbetweenies v2"]
-        REST["/api/v1/graph/*<br/><i>local only</i>"]
+        MCPT["/api/v1/mcp/tools/*<br/>the client interface"]
         DB[("SQLite<br/>entities · relationships · blobs")]
     end
 
@@ -34,15 +34,15 @@ graph TB
     BO -->|bearer token| AUTH
     BO -->|bearer token| SYNC
 
-    OOOK -->|bearer token +<br/>X-FunkyGibbon-Local-Key| REST
+    OOOK -->|bearer token| MCPT
 
     SYNC --- DB
-    REST --- DB
+    MCPT --- DB
 
     classDef authority fill:#1f4e5f,stroke:#0d2b35,color:#fff
     classDef client fill:#2d5a3d,stroke:#173021,color:#fff
     classDef caller fill:#5a4a2d,stroke:#302617,color:#fff
-    class AUTH,SYNC,REST,DB authority
+    class AUTH,SYNC,MCPT,DB authority
     class KK,BO client
     class SKILL,CLAUDE,OOOK caller
 ```
@@ -53,7 +53,7 @@ graph TB
 |---|---|---|---|
 | **Agents / skills** | a client's MCP server | none (local process) | All reads and writes are MCP tools against a local replica. |
 | **KittenKong, Blowing-Off** | `auth` + `sync` **only** | bearer token | They hold the whole graph locally. Sync is the only thing they need from the server. |
-| **`oook`** | `auth` + `graph` REST | bearer token **plus** `X-FunkyGibbon-Local-Key` | Local administration and testing, on the server's own machine. |
+| **`oook`** | `auth` + MCP tools over HTTP | bearer token | Local administration and testing, on the server's own machine — through the same tools every client uses. |
 
 **FunkyGibbon serves no MCP.** MCP is the client-side interface, served against
 a local replica. A server-side MCP endpoint was a third way to write the same
@@ -71,9 +71,11 @@ Every one of these was a real invention filling a real gap:
 | No delete (append-only by design) | `DELETE /relationships/{id}` to a route that never existed | Silent 404s |
 | Sync could not carry bytes | direct server calls for attachments | The boundary this diagram exists to draw |
 
-The second credential exists so the first column cannot recur quietly: a sync
-client that reaches for the REST API gets a 403 explaining which door it should
-be using.
+The boundary is now enforced by absence rather than by a second credential:
+the graph REST routes are gone (ADR-015), so there is no door for a client to
+reach for. `oook` uses the same MCP tools everyone else does. (An earlier
+revision of this page described an `X-FunkyGibbon-Local-Key` header gating
+REST with a 403; that was never implemented, and is no longer needed.)
 
 ## Writes
 

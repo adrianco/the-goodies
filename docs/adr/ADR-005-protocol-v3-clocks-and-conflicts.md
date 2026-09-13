@@ -1,12 +1,12 @@
 # ADR-005: Inbetweenies v3 — server-arbitrated resolution ladder; clamped LWW; no HLC
 
-**Status:** Partially implemented · proposed 2026-08-01 (v2 — rewritten after design discussion; supersedes the earlier HLC draft) · §1/§3/§4/§5 landed 2026-08-22 on `feat/v3-temporal`.
+**Status:** Implemented · proposed 2026-08-01 (v2 — rewritten after design discussion; supersedes the earlier HLC draft) · §1/§3/§4/§5 landed 2026-08-22 on `feat/v3-temporal`.
 
 **What is done:** §1 clamped LWW on client edit time; §3 wire changes — `inbetweenies-v3`, edge interval rows carrying `valid_from`/`valid_to`, pins off the wire, `vector_clock` removed outright, state digest now covering topology as well as entity versions; §4 PROTOCOL.md §7 rewritten to specify the ladder precisely enough to port from, with the conformance suite asserting §1/§3 clause by clause; §5 HLC deferred with its trigger recorded (§7.4 of PROTOCOL.md).
 
 *2026-09-13: edge interval rows now carry `server_seq` from the same sequence as entities, so the delta cursor is a total order over the whole stream (§3) and the wall-clock bound for edges is gone.*
 
-**What is NOT done:** §2 rungs 2 and 3 — the per-entity-type manifest rules and the three-way field merge. Resolution currently runs rung 1 (fast-forward), rung 4 (clamped LWW) and rung 5 (loser preserved and acknowledged). That is deterministic and loses nothing, but a concurrent edit to two different fields of one entity resolves by LWW where three-way would merge, so a simultaneous rename-and-recontent keeps only one of the two. Rungs 2 and 3 are the remaining work on this ADR. 
+**§2 rungs 2–3 delivered 2026-09-13 (v0.7.0):** `three_way_merge` in `inbetweenies/sync/conflict.py` (deletion-safe against the common ancestor found via `parent_versions`), per-type rules from the domain manifest (`merge_rules`; the house unions `device.capabilities` and prefers `automation.enabled`), rung 4 scoped to the keys both sides changed differently, and the incoming edit kept as a version row (rung 5). The merge is a server-authored version with both parents. The `manual` review-queue option remains unbuilt: no entity type has asked for it.
 
 ## Context
 

@@ -21,13 +21,10 @@ stable answers that do not move with the wall clock.
 
 WHAT IS DELIBERATELY NOT ASSERTED HERE
 --------------------------------------
-`snapshot(at)` and an `at=` parameter on the graph reads. Those are ADR-004 §3
-and are not built: every read still answers `at = now`. What the REST API can
-express today is the *rows* -- interval bounds on `GET /graph/relationships`,
-the version chain on `GET /graph/entities/{id}/versions` -- and that is exactly
-what these assert. When §3 lands, the natural place for its end-to-end coverage
-is this file, asking the same questions with an `at` parameter and comparing the
-answers to the ones computed here by hand.
+Nothing. ADR-004 §3 landed (`at` on every read tool, v0.6.0) and the graph
+REST routes are gone (ADR-015, v0.7.0): every assertion here is a tool call
+over HTTP -- `list_entities`, `list_relationships`, `get_connected`,
+`get_entity_versions`, `get_statistics` -- the same surface a client uses.
 """
 
 from datetime import datetime, timezone
@@ -58,6 +55,15 @@ def http(server_url, auth_token):
         yield client
 
 
+def _tool(http, tool_name, **arguments):
+    """One MCP tool call over HTTP; returns its `result`."""
+    resp = http.post(f"{API}/mcp/tools/{tool_name}", json={"arguments": arguments})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "error" not in body, body
+    return body["result"]
+
+
 def _entities(http):
     """Every entity the server currently serves, keyed by id.
 
@@ -67,9 +73,7 @@ def _entities(http):
     """
     found, offset = {}, 0
     while True:
-        page = http.get(f"{API}/graph/entities", params={"limit": 100, "offset": offset})
-        assert page.status_code == 200, page.text
-        batch = page.json()["entities"]
+        batch = _tool(http, "list_entities", limit=100, offset=offset)["entities"]
         if not batch:
             return found
         for entity in batch:
@@ -84,9 +88,7 @@ def _id_of(http, name):
 
 
 def _relationships(http, **params):
-    resp = http.get(f"{API}/graph/relationships", params=params)
-    assert resp.status_code == 200, resp.text
-    return resp.json()["relationships"]
+    return _tool(http, "list_relationships", **params)["relationships"]
 
 
 def _as_utc(stamp):
@@ -171,9 +173,9 @@ class TestTheRetiredEdge:
         assert manages == []
 
     def test_but_the_retired_interval_is_still_on_record(self, http):
-        """Asserted through `/graph/entities/{id}/connected`'s absence above and
-        the row's presence here: the server must not be able to claim the oven
-        was never managed."""
+        """Asserted through `get_connected`'s absence above and the row's
+        presence here: the server must not be able to claim the oven was never
+        managed."""
         oven = _id_of(http, OVEN)
         homekit = _id_of(http, "Apple HomeKit")
 
@@ -181,9 +183,8 @@ class TestTheRetiredEdge:
         # correctly absent from it. Its existence is asserted where the fixture
         # guarantees it -- via the connected view staying empty while the
         # entity pair still exists and the sync stream carries the history.
-        connected = http.get(f"{API}/graph/entities/{homekit}/connected")
-        assert connected.status_code == 200, connected.text
-        targets = {c["entity"]["id"] for c in connected.json()["connected"]}
+        connected = _tool(http, "get_connected", entity_id=homekit)
+        targets = {c["entity"]["id"] for c in connected["connected"]}
         assert oven not in targets
 
     def test_the_sync_stream_carries_the_retired_interval(self, http):
@@ -221,10 +222,7 @@ class TestTheVersionChain:
 
     def test_the_thermostat_has_two_versions(self, http):
         thermostat = _id_of(http, THERMOSTAT)
-        resp = http.get(f"{API}/graph/entities/{thermostat}/versions")
-        assert resp.status_code == 200, resp.text
-
-        versions = resp.json()["versions"]
+        versions = _tool(http, "get_entity_versions", entity_id=thermostat)["versions"]
         assert len(versions) == 2, (
             "the fixture's entities were all v1, so nothing exercised the "
             "version DAG end to end"
@@ -233,7 +231,7 @@ class TestTheVersionChain:
     def test_the_older_version_carries_the_old_name(self, http):
         thermostat = _id_of(http, THERMOSTAT)
         versions = sorted(
-            http.get(f"{API}/graph/entities/{thermostat}/versions").json()["versions"],
+            _tool(http, "get_entity_versions", entity_id=thermostat)["versions"],
             key=lambda v: v["version"],
         )
         assert versions[0]["name"] == "Thermostat"
@@ -242,7 +240,7 @@ class TestTheVersionChain:
     def test_the_current_version_names_its_parent(self, http):
         thermostat = _id_of(http, THERMOSTAT)
         versions = sorted(
-            http.get(f"{API}/graph/entities/{thermostat}/versions").json()["versions"],
+            _tool(http, "get_entity_versions", entity_id=thermostat)["versions"],
             key=lambda v: v["version"],
         )
         assert versions[-1]["parent_versions"] == [versions[0]["version"]]
@@ -254,7 +252,7 @@ class TestTheVersionChain:
         that re-derives `is_latest` would name the wrong row as current."""
         thermostat = _id_of(http, THERMOSTAT)
         versions = sorted(
-            http.get(f"{API}/graph/entities/{thermostat}/versions").json()["versions"],
+            _tool(http, "get_entity_versions", entity_id=thermostat)["versions"],
             key=lambda v: v["version"],
         )
         assert versions[0]["version"].startswith(
@@ -336,13 +334,11 @@ class TestThePresentIsUnchanged:
     def test_the_current_graph_is_the_original_forty_seven_edges(self, http):
         assert len(_relationships(http)) == 47
 
-    def test_the_statistics_endpoint_agrees(self, http):
+    def test_the_statistics_tool_agrees(self, http):
         """The index's own count, which is the number a retired edge leaking
         into the current graph would inflate -- and did, before the currency
         filter stopped being gated on an endpoint filter being supplied."""
-        resp = http.get(f"{API}/graph/statistics")
-        assert resp.status_code == 200, resp.text
-        stats = resp.json()
+        stats = _tool(http, "get_statistics")
         assert stats["total_relationships"] == 47
 
 

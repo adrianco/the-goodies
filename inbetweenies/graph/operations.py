@@ -177,6 +177,15 @@ class GraphOperations(ABC):
 
                 for rel in relationships:
                     neighbor_id = rel.to_entity_id
+                    if neighbor_id in visited:
+                        continue
+                    visited.add(neighbor_id)
+
+                    # A tombstoned endpoint is not part of the graph even though
+                    # the edge row that reaches it may still be open.
+                    neighbor = await self.get_entity(neighbor_id, at=at)
+                    if neighbor is None or getattr(neighbor, "is_tombstone", False):
+                        continue
 
                     if neighbor_id == to_id:
                         # Found the target
@@ -187,9 +196,7 @@ class GraphOperations(ABC):
                                 full_path.append(entity)
                         return full_path
 
-                    if neighbor_id not in visited:
-                        visited.add(neighbor_id)
-                        next_queue.append((neighbor_id, path + [neighbor_id]))
+                    next_queue.append((neighbor_id, path + [neighbor_id]))
 
             queue = next_queue
             depth += 1

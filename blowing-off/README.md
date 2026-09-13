@@ -1,7 +1,7 @@
 # Blowing-Off: Python Client
 
 Blowing-Off is the Python client for The Goodies smart home system — a reference
-implementation of the inbetweenies-v2 protocol. The maintained port is
+implementation of the inbetweenies-v3 protocol. The maintained port is
 **KittenKong** (TypeScript, `rolandcanyon-cmd/the-goodies-typescript`); the
 earlier Swift port (*WildThing*) is abandoned.
 
@@ -9,7 +9,7 @@ earlier Swift port (*WildThing*) is abandoned.
 
 - **Local SQLite cache** of the Entity/Relationship knowledge graph (shared
   inbetweenies models)
-- **Inbetweenies-v2 sync** — bidirectional, with a `server_time` delta watermark,
+- **Inbetweenies-v3 sync** — bidirectional, with a `server_time` delta watermark,
   the canonical conflict resolver (last-write-wins + version tiebreak), and
   tombstone deletes
 - **MCP server** — exposes the 12 knowledge-graph tools to MCP clients

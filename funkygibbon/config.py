@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     )
     api_key: Optional[str] = Field(default=None, validation_alias="API_KEY")
 
+    # Domain (ADR-012): the manifest this server enforces. `verify_db` took it
+    # as an argument; the server now needs it at runtime for the per-type merge
+    # rules (ADR-005 §2 rung 2). `package.module:ATTRIBUTE`.
+    domain_manifest: str = Field(default="domains.house.manifest:HOUSE", validation_alias="DOMAIN_MANIFEST")
+
     # Sync
     sync_batch_size: int = Field(default=50, validation_alias="SYNC_BATCH_SIZE")
     sync_conflict_strategy: str = Field(default="last_write_wins", validation_alias="SYNC_CONFLICT_STRATEGY")

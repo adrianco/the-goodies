@@ -1,7 +1,7 @@
 # The Goodies — Design & Implementation Review
 
 **Date:** 2026-08-01 (updated same day after design discussion) · **Reviewed at:** `d00749b` (v0.3.0)
-**Status: review only — no implementation yet.** All ADRs are *Proposed*; further review time is planned before any code changes.
+**Status: historical.** The review that produced ADR-001…013. Every ADR has since moved past *Proposed* — see each ADR's status header, and [ADR-014](adr/ADR-014-temporal-prior-art-and-platform.md) / [ADR-015](adr/ADR-015-mcp-is-the-client-interface.md) for the two decisions taken after it. The findings below are unchanged; the numbers are from 2026-08-01.
 **Inputs:** Graphify knowledge graph (4,205 nodes · 6,782 edges · 211 communities over 221 files), full test run (508 passed, 70% coverage, 36s), live production instance (423 entities · 461 relationships · 510 version rows · 5.7 MB), and code reading guided by the graph's community hubs.
 
 This document has two parts: **findings** (what was measured — unchanged by opinion) and **decisions** (where the design discussion landed, recorded in ADR-001…012). Where a decision overturned the reviewer's first recommendation, that is said plainly.

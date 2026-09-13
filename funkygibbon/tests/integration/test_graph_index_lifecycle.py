@@ -7,9 +7,10 @@ name but *invisible to `find_path`* until the process restarted, because
 `nodes` structure that traversal reads. The same hole swallowed sync-applied
 changes wholesale.
 
-Every test here drives the real HTTP endpoints against one long-lived
-application, exactly as a client would, and asserts on traversal endpoints
-(`/graph/path`, `/graph/entities/{id}/connected`) rather than on internals.
+Every test here drives the real HTTP surface against one long-lived
+application, exactly as a client would -- the MCP tools (ADR-015; the graph
+REST routes these tests were written against are gone) -- and asserts on
+traversal (`find_path`, `get_connected`) rather than on internals.
 """
 
 import pytest
@@ -38,47 +39,50 @@ async def warm_index(async_client, app, auth):
     rebuild-on-drift safety net: on a cold index the first read loads everything
     from storage and would hide a broken write path. A real server is warm.
     """
-    resp = await async_client.get(f"{API}/graph/statistics", headers=auth)
-    assert resp.status_code == 200, resp.text
+    assert (await _tool(async_client, auth, "get_statistics")) is not None
     service = app.state.graph_index
     assert service.loaded
     return service
 
 
-async def _create_entity(client, auth, name, entity_type="device"):
-    resp = await client.post(
-        f"{API}/graph/entities",
-        headers=auth,
-        json={"entity_type": entity_type, "name": name, "content": {}, "user_id": USER},
-    )
+async def _tool(client, auth, tool_name, **arguments):
+    """Call one MCP tool over HTTP and return its `result` (the client interface)."""
+    resp = await client.post(f"{API}/mcp/tools/{tool_name}", headers=auth, json={"arguments": arguments})
     assert resp.status_code == 200, resp.text
-    return resp.json()["entity"]
+    body = resp.json()
+    assert "error" not in body, body
+    return body["result"]
+
+
+async def _create_entity(client, auth, name, entity_type="device"):
+    return (await _tool(client, auth, "create_entity", entity_type=entity_type, name=name,
+                        content={}, user_id=USER))["entity"]
 
 
 async def _create_relationship(client, auth, source, target, rel_type="controls"):
-    resp = await client.post(
-        f"{API}/graph/relationships",
-        headers=auth,
-        json={
-            "source_id": source["id"],
-            "target_id": target["id"],
-            "relationship_type": rel_type,
-            "properties": {},
-            "user_id": USER,
-        },
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()["relationship"]
+    return (await _tool(client, auth, "create_relationship", from_entity_id=source["id"],
+                        to_entity_id=target["id"], relationship_type=rel_type, properties={}))["relationship"]
 
 
 async def _find_path(client, auth, source, target):
-    resp = await client.post(
-        f"{API}/graph/path",
-        headers=auth,
-        json={"from_entity_id": source["id"], "to_entity_id": target["id"], "max_depth": 5},
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()
+    return await _path_ids(client, auth, source["id"], target["id"])
+
+
+async def _path_ids(client, auth, from_id, to_id):
+    return await _tool(client, auth, "find_path", from_entity_id=from_id, to_entity_id=to_id, max_depth=5)
+
+
+async def _search_ids(client, auth, query):
+    """search_entities returns flat SearchResult dicts: id/name at the top level."""
+    return [(r["id"], r["name"]) for r in (await _tool(client, auth, "search_entities", query=query, limit=10))["results"]]
+
+
+async def _connected(client, auth, entity_id):
+    return await _tool(client, auth, "get_connected", entity_id=entity_id)
+
+
+async def _update(client, auth, entity_id, **changes):
+    return await _tool(client, auth, "update_entity", entity_id=entity_id, changes=changes, user_id=USER)
 
 
 @pytest.mark.asyncio
@@ -92,11 +96,7 @@ async def test_entity_created_via_rest_is_immediately_visible_to_find_path(
     await _create_relationship(async_client, auth, hub, lamp)
 
     # Name search saw these even before ADR-003 -- assert it still does.
-    search = await async_client.post(
-        f"{API}/graph/search", headers=auth, json={"query": "Index Lamp", "limit": 10}
-    )
-    assert search.status_code == 200, search.text
-    assert any(r["entity"]["id"] == lamp["id"] for r in search.json()["results"])
+    assert any(i == lamp["id"] for i, _ in await _search_ids(async_client, auth, "Index Lamp"))
 
     # ...and traversal, which is what was broken, must see them too.
     path = await _find_path(async_client, auth, hub, lamp)
@@ -119,16 +119,12 @@ async def test_new_relationship_is_immediately_traversable(async_client, auth, w
     lamp = await _create_entity(async_client, auth, "Conn Lamp")
     await _create_relationship(async_client, auth, hub, lamp)
 
-    resp = await async_client.get(
-        f"{API}/graph/entities/{hub['id']}/connected", headers=auth
-    )
-    assert resp.status_code == 200, resp.text
-    connected = resp.json()
+    connected = await _connected(async_client, auth, hub["id"])
     assert connected["count"] == 1, connected
     assert connected["connected"][0]["entity"]["id"] == lamp["id"]
 
-    stats = await async_client.get(f"{API}/graph/statistics", headers=auth)
-    assert stats.json()["total_relationships"] == 1
+    stats = await _tool(async_client, auth, "get_statistics")
+    assert stats["total_relationships"] == 1
     assert warm_index.rebuild_count == rebuilds_before
 
 
@@ -157,23 +153,10 @@ async def test_updated_entity_is_reindexed_without_restart(async_client, auth, w
     lamp = await _create_entity(async_client, auth, "Rename Lamp")
     await _create_relationship(async_client, auth, hub, lamp)
 
-    resp = await async_client.put(
-        f"{API}/graph/entities/{lamp['id']}",
-        headers=auth,
-        json={"name": "Renamed Lamp", "user_id": USER},
-    )
-    assert resp.status_code == 200, resp.text
+    await _update(async_client, auth, lamp["id"], name="Renamed Lamp")
 
-    search = await async_client.post(
-        f"{API}/graph/search", headers=auth, json={"query": "Renamed Lamp", "limit": 10}
-    )
-    ids = [r["entity"]["id"] for r in search.json()["results"]]
-    assert lamp["id"] in ids
-
-    stale = await async_client.post(
-        f"{API}/graph/search", headers=auth, json={"query": "Rename Lamp", "limit": 10}
-    )
-    assert all(r["entity"]["name"] != "Rename Lamp" for r in stale.json()["results"])
+    assert lamp["id"] in [i for i, _ in await _search_ids(async_client, auth, "Renamed Lamp")]
+    assert all(n != "Rename Lamp" for _, n in await _search_ids(async_client, auth, "Rename Lamp"))
 
     assert (await _find_path(async_client, auth, hub, lamp))["found"] is True
     assert warm_index.rebuild_count == rebuilds_before
@@ -188,24 +171,11 @@ async def test_tombstoned_entity_drops_out_of_traversal(async_client, auth, warm
     await _create_relationship(async_client, auth, hub, lamp)
     assert (await _find_path(async_client, auth, hub, lamp))["found"] is True
 
-    resp = await async_client.put(
-        f"{API}/graph/entities/{lamp['id']}",
-        headers=auth,
-        json={"content": {"deleted": True}, "user_id": USER},
-    )
-    assert resp.status_code == 200, resp.text
+    await _tool(async_client, auth, "tombstone_entity", entity_id=lamp["id"], reason="test", user_id=USER)
 
     assert (await _find_path(async_client, auth, hub, lamp))["found"] is False
-
-    connected = await async_client.get(
-        f"{API}/graph/entities/{hub['id']}/connected", headers=auth
-    )
-    assert connected.json()["count"] == 0
-
-    search = await async_client.post(
-        f"{API}/graph/search", headers=auth, json={"query": "Tombstone Lamp", "limit": 10}
-    )
-    assert all(r["entity"]["id"] != lamp["id"] for r in search.json()["results"])
+    assert (await _connected(async_client, auth, hub["id"]))["count"] == 0
+    assert all(i != lamp["id"] for i, _ in await _search_ids(async_client, auth, "Tombstone Lamp"))
     assert warm_index.rebuild_count == rebuilds_before
 
 
@@ -218,7 +188,7 @@ async def test_index_is_owned_by_the_application(async_client, app, auth):
     assert isinstance(service, GraphIndexService)
 
     # A read loads the index; after that every write must be written through it.
-    assert (await async_client.get(f"{API}/graph/statistics", headers=auth)).status_code == 200
+    await _tool(async_client, auth, "get_statistics")
     assert service.loaded
     rebuilds_before = service.rebuild_count
 
@@ -285,10 +255,7 @@ async def test_sync_shaped_write_through_reaches_the_apps_index(
     )
 
     # And it is genuinely visible to graph reads over HTTP.
-    search = await async_client.post(
-        f"{API}/graph/search", headers=auth, json={"query": "Synced Lamp", "limit": 10}
-    )
-    assert any(r["entity"]["id"] == synced.id for r in search.json()["results"])
+    assert any(i == synced.id for i, _ in await _search_ids(async_client, auth, "Synced Lamp"))
     assert warm_index.rebuild_count == rebuilds_before
     assert hub["id"] in warm_index.index.entities
 
@@ -331,12 +298,8 @@ async def test_write_bypassing_the_index_is_repaired_by_drift_detection(
     ))
     await test_session.commit()
 
-    path = await async_client.post(
-        f"{API}/graph/path",
-        headers=auth,
-        json={"from_entity_id": hub["id"], "to_entity_id": rogue.id, "max_depth": 5},
-    )
-    assert path.json()["found"] is True, "drift check must repair a bypassed write"
+    path = await _path_ids(async_client, auth, hub["id"], rogue.id)
+    assert path["found"] is True, "drift check must repair a bypassed write"
     assert service.rebuild_count == rebuilds_before + 1
 
 
@@ -396,12 +359,11 @@ async def test_sync_applied_entity_is_immediately_traversable(
     assert resp.status_code == 200, resp.text
     assert arrived_id in resp.json()["applied"], resp.json()
 
-    path = await async_client.post(
-        f"{API}/graph/path",
-        headers=auth,
-        json={"from_entity_id": hub["id"], "to_entity_id": arrived_id, "max_depth": 5},
-    )
-    assert path.status_code == 200, path.text
+    path_body = await _path_ids(async_client, auth, hub["id"], arrived_id)
+    class _R:  # keep the assertions below unchanged in shape
+        status_code = 200
+        def json(self): return path_body
+    path = _R()
     assert path.json()["found"] is True, (
         "an entity applied by sync is invisible to find_path -- the sync path "
         "did not write through to the index (finding F2)"
@@ -460,22 +422,13 @@ async def test_a_retired_edge_does_not_come_back_on_rebuild(
     lamp = await _create_entity(async_client, auth, "Retire Lamp")
     rel = await _create_relationship(async_client, auth, hub, lamp)
 
-    connected = await async_client.get(
-        f"{API}/graph/entities/{hub['id']}/connected", headers=auth
-    )
-    assert connected.json()["count"] == 1, "precondition: the edge starts live"
+    assert (await _connected(async_client, auth, hub["id"]))["count"] == 1, "precondition: the edge starts live"
 
     await _retire_edge(test_session, rel["id"])
 
     # Drift detection notices the bypassed write and rebuilds from storage.
-    connected = await async_client.get(
-        f"{API}/graph/entities/{hub['id']}/connected", headers=auth
-    )
-    assert connected.status_code == 200, connected.text
-    assert connected.json()["count"] == 0, "a retired edge came back as a live one"
-
-    stats = await async_client.get(f"{API}/graph/statistics", headers=auth)
-    assert stats.json()["total_relationships"] == 0
+    assert (await _connected(async_client, auth, hub["id"]))["count"] == 0, "a retired edge came back as a live one"
+    assert (await _tool(async_client, auth, "get_statistics"))["total_relationships"] == 0
 
 
 @pytest.mark.asyncio
@@ -519,9 +472,6 @@ async def test_a_moved_edge_leaves_the_index_holding_only_the_new_placement(
         test_session, entity_ids=[], relationship_ids=[edge_id]
     )
 
-    connected = await async_client.get(
-        f"{API}/graph/entities/{lamp['id']}/connected", headers=auth
-    )
-    assert connected.status_code == 200, connected.text
-    rooms = [c["entity"]["id"] for c in connected.json()["connected"]]
+    connected = await _connected(async_client, auth, lamp["id"])
+    rooms = [c["entity"]["id"] for c in connected["connected"]]
     assert rooms == [hall["id"]], f"index holds the wrong interval: {rooms}"

@@ -1,7 +1,8 @@
 # ADR-015: MCP is the client interface; the graph REST API is for maintenance
 
-**Status:** Accepted · 2026-09-13 · Owner decision. Records a rule the code
-already mostly obeyed and closes the gaps that let it be broken.
+**Status:** Implemented · 2026-09-13 · Owner decision. Records a rule the code
+already mostly obeyed, closes the gaps that let it be broken, and — as of
+v0.7.0 — removes the graph REST routes entirely; `oook` moved to the tools.
 
 ## Context
 
@@ -52,7 +53,7 @@ never existed — the phantom route #85's report was built on.
 
 - `docs/mcp.md` is the reference for clients, and no longer lists REST routes
   as an alternative. The phantom `DELETE` is gone from it.
-- Twenty-two tools. `README.md` and `CLAUDE.md` said twelve.
+- Twenty-three tools (`list_entities` closed the last REST-only read). `README.md` and `CLAUDE.md` said twelve.
 - A future REST removal is a non-event for every client; only `oook` would
   need to move, and it can move to the tools it already uses for half its
   commands.
@@ -65,7 +66,6 @@ never existed — the phantom route #85's report was built on.
 - **Keep both surfaces at parity forever.** Twice the code, twice the tests,
   and the history of this project says the two drift the moment one is not
   exercised. Rejected.
-- **Remove the REST routes now.** `oook` uses them for search, get-entity,
-  list and statistics, and `oook` is the operator's tool on the box; breaking
-  it in the same release as a protocol cutover is one change too many.
-  Deferred; the door is open.
+- **Keep the REST routes for `oook`.** Deferred in the first draft of this
+  ADR to avoid coupling the removal to the protocol cutover; done one release
+  later (v0.7.0) once `oook`'s four commands were moved to tools.

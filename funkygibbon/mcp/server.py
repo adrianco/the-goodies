@@ -66,6 +66,20 @@ class FunkyGibbonMCPServer:
             logger.error(f"Error executing tool {tool_name}: {str(e)}")
             return {"error": str(e)}
 
+    async def _index_entity(self, entity) -> None:
+        """Write-through for an entity this server just wrote (ADR-003 decision 2).
+
+        Through the service when we have one, so the storage marker is re-read
+        and the drift net does not fire on our own write; patching `self.graph`
+        directly -- the old way, still the fallback -- left the marker behind
+        and cost a full rebuild on the next read.
+        """
+        await self.graph_ops.db.commit()
+        if self.index_service is not None:
+            await self.index_service.entity_written(self.graph_ops.db, entity)
+        else:
+            self.graph._add_entity(entity)
+
     async def _handle_get_devices_in_room(self, room_id: str, at: Optional[str] = None) -> Dict[str, Any]:
         """Get all devices in a specific room"""
         result = await self.graph_ops.get_devices_in_room(room_id, at=at)
@@ -107,20 +121,25 @@ class FunkyGibbonMCPServer:
         self,
         entity_type: str,
         name: str,
-        content: Optional[Dict[str, Any]] = None
+        content: Optional[Dict[str, Any]] = None,
+        user_id: str = "mcp-user",
     ) -> Dict[str, Any]:
         """Create a new entity"""
+        # `user_id` is in the catalog schema and KittenKong has always sent
+        # it; this handler used to reject it as an unexpected keyword, which
+        # the router turned into a 400 -- so the documented argument failed
+        # the call. Every handler accepts what its schema declares.
         result = await self.graph_ops.create_entity_tool(
             entity_type=entity_type,
             name=name,
             content=content or {},
-            user_id="mcp-user"
+            user_id=user_id or "mcp-user",
         )
         if result.success:
             # Update in-memory index
             entity = await self.graph_ops.get_entity(result.result["entity"]["id"])
             if entity:
-                self.graph._add_entity(entity)
+                await self._index_entity(entity)
             return result.result
         else:
             raise Exception(result.error)
@@ -130,7 +149,8 @@ class FunkyGibbonMCPServer:
         from_entity_id: str,
         to_entity_id: str,
         relationship_type: str,
-        properties: Optional[Dict[str, Any]] = None
+        properties: Optional[Dict[str, Any]] = None,
+        user_id: str = "mcp-user",
     ) -> Dict[str, Any]:
         """Create a relationship between entities"""
         result = await self.graph_ops.create_relationship_tool(
@@ -138,7 +158,7 @@ class FunkyGibbonMCPServer:
             to_entity_id=to_entity_id,
             relationship_type=relationship_type,
             properties=properties,
-            user_id="mcp-user"
+            user_id=user_id or "mcp-user",
         )
         if result.success:
             await self.graph_ops.db.commit()
@@ -239,7 +259,7 @@ class FunkyGibbonMCPServer:
             # Update in-memory index
             entity = await self.graph_ops.get_entity(entity_id)
             if entity:
-                self.graph._add_entity(entity)
+                await self._index_entity(entity)
             return result.result
         else:
             raise Exception(result.error)
@@ -265,7 +285,7 @@ class FunkyGibbonMCPServer:
         # without waiting for the drift check.
         attachment = await self.graph_ops.get_entity(result.result["attachment_id"])
         if attachment:
-            self.graph._add_entity(attachment)
+            await self._index_entity(attachment)
         return result.result
 
     async def _handle_attach_document(
@@ -284,7 +304,7 @@ class FunkyGibbonMCPServer:
             raise Exception(result.error)
         attachment = await self.graph_ops.get_entity(result.result["attachment_id"])
         if attachment:
-            self.graph._add_entity(attachment)
+            await self._index_entity(attachment)
         return result.result
 
     async def _handle_get_blob(self, blob_id: str, include_data: bool = False) -> Dict[str, Any]:
@@ -321,7 +341,7 @@ class FunkyGibbonMCPServer:
             raise Exception(result.error)
         entity = await self.graph_ops.get_entity(entity_id)
         if entity:
-            self.graph._add_entity(entity)
+            await self._index_entity(entity)
         return result.result
 
     # --- Relationship parity (issue #85) and the as-of surface (ADR-004 §3) ---
@@ -377,6 +397,16 @@ class FunkyGibbonMCPServer:
                 await self.index_service.relationship_ended(self.graph_ops.db, relationship_id)
             else:
                 self.graph.remove_relationship(relationship_id)
+        return result.result
+
+    async def _handle_list_entities(
+        self, entity_type: Optional[str] = None, limit: int = 100, offset: int = 0,
+        at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        result = await self.graph_ops.list_entities(entity_type=entity_type, limit=limit,
+                                                    offset=offset, at=at)
+        if not result.success:
+            raise Exception(result.error)
         return result.result
 
     async def _handle_get_graph_diff(self, since: str, until: Optional[str] = None) -> Dict[str, Any]:

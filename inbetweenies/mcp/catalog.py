@@ -447,6 +447,22 @@ TOOL_SPECS: Tuple[ToolSpec, ...] = (
         },
     ),
     ToolSpec(
+        name='list_entities',
+        description=(
+            'List entities, optionally by type, paged. Current by default; '
+            'with `at`, the entities that existed then, each at its version then.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {
+                'entity_type': {'type': 'string', 'description': 'Optional filter, e.g. room'},
+                'limit': {'type': 'integer', 'description': 'Page size, default 100'},
+                'offset': {'type': 'integer', 'description': 'Page start, default 0'},
+                'at': _AT_PARAM,
+            },
+        },
+    ),
+    ToolSpec(
         name='get_graph_diff',
         description=(
             'What changed between two instants: entities that gained a version, '
@@ -469,7 +485,7 @@ TOOL_SPECS: Tuple[ToolSpec, ...] = (
 AS_OF_TOOLS = frozenset({
     'get_devices_in_room', 'find_device_controls', 'get_room_connections',
     'find_path', 'get_entity_details', 'get_procedures_for_device',
-    'get_automations_in_room', 'list_relationships', 'get_connected',
+    'get_automations_in_room', 'list_relationships', 'get_connected', 'list_entities',
 })
 
 

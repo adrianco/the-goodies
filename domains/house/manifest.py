@@ -202,6 +202,53 @@ RELATIONSHIP_RULES = [
     # uses it and none could.
 ]
 
+# --------------------------------------------------------------------------- #
+# Merge rules (ADR-005 §2 rung 2)
+#
+# Salvaged in spirit from the deleted funkygibbon/sync/conflict_resolution.py
+# (ADR-008): the two domain facts the generic three-way merge cannot know.
+# Each rule handles ONLY the key it understands and hands everything else to
+# the generic merge, so a rule is a refinement of rung 3, never a replacement.
+# --------------------------------------------------------------------------- #
+
+def _union_list(*lists):
+    seen, out = set(), []
+    for lst in lists:
+        for item in lst or []:
+            key = repr(item)
+            if key not in seen:
+                seen.add(key); out.append(item)
+    return out
+
+
+def merge_device(base, local, remote):
+    """Two edits to a device's `capabilities` are additive: union them.
+
+    A capability someone recorded is a fact about the hardware; two people
+    discovering different capabilities of the same device are both right. A
+    rule returns only the keys it owns; the engine three-way merges the rest.
+    """
+    if not any("capabilities" in d for d in (base, local, remote)):
+        return {}
+    return {"capabilities": _union_list(base.get("capabilities"), local.get("capabilities"),
+                                        remote.get("capabilities"))}
+
+
+def merge_automation(base, local, remote):
+    """`enabled` prefers enabled: if either side turned it on, it is on.
+
+    Disabling is the destructive direction -- an automation someone just
+    enabled must not be switched off by a stale edit that never saw it.
+    """
+    values = [d["enabled"] for d in (local, remote) if "enabled" in d]
+    return {"enabled": any(bool(v) for v in values)} if values else {}
+
+
+MERGE_RULES = {
+    "device": merge_device,
+    "automation": merge_automation,
+}
+
 HOUSE = build_manifest(
     name="house",
     entity_types=ENTITY_TYPES,
@@ -211,4 +258,5 @@ HOUSE = build_manifest(
     # appliance PDF. Both carry a blob via top-level content.blob_id, and
     # listing `manual` here is what tells the engine so.
     attachment_types=("manual",),
+    merge_rules=MERGE_RULES,
 )

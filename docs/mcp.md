@@ -104,17 +104,17 @@ a new tool lands in one place and appears on both transports. (They used to be
 two hand-maintained lists, which is how the surface came to lack any photo tool
 while the implementation had one.)
 
-## The REST graph API is not for clients
+## There is no graph REST API
 
-`/api/v1/graph/*` is still mounted. It is the **local maintenance surface**:
-its one client is `oook`, run by the operator on the server host. It is not the
-interface for a skill, an agent, a script, or either replica — those use the
-tools above, and only the tools ([ADR-015](adr/ADR-015-mcp-is-the-client-interface.md)).
-Do not add callers. If a tool is missing, that is a bug to report, not a reason
-to reach for a route.
+`/api/v1/graph/*` was removed in v0.7.0 ([ADR-015](adr/ADR-015-mcp-is-the-client-interface.md)).
+`oook` — the operator's tool on the server host, and the last caller — uses the
+same tools as everyone else. The endpoints that remain are protocol and
+administration: `/api/v1/auth/*`, `/api/v1/sync/`, `/api/v1/sync-metadata/`,
+`/api/v1/backup/*`, `/health`. If you find a graph question the tools cannot
+answer, that is a bug to report, not a route to add.
 
 An earlier revision of this page listed `DELETE /api/v1/graph/relationships/{id}`.
-**That route has never existed**; the delete is `end_relationship`, below.
+**That route never existed**; the delete is `end_relationship`, below.
 
 ## Relationships and time
 
@@ -128,12 +128,13 @@ whole of edge maintenance and history:
 | `get_connected` | every entity one edge away from an entity, either direction, with the edge |
 | `end_relationship` | **the delete.** Ends the interval and keeps the row; to move an edge, end it and create the new one. Idempotent |
 | `get_graph_diff` | what changed between two instants: versions gained, edges started, edges ended |
+| `list_entities` | enumerate entities, optionally by type, paged; `at` for the entities that existed then |
 
 **Every graph read takes `at`** (ISO-8601 UTC; omitted means now), and answers
 for the graph as it was then — `get_devices_in_room`, `find_device_controls`,
 `get_room_connections`, `find_path`, `get_entity_details`,
 `get_procedures_for_device`, `get_automations_in_room`, `list_relationships`,
-`get_connected`. An entity created after `at` does not exist at `at`; a
+`get_connected`, `list_entities`. An entity created after `at` does not exist at `at`; a
 renamed entity shows its old name. This is SQL:2011's `AS OF` (ADR-014 §1).
 
 There is **no dedicated blob endpoint.** A blob reaches the server through

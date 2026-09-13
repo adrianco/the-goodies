@@ -278,12 +278,12 @@ class TestTombstones:
 class TestOwnership:
     """ADR-003 decision 1: one owner, no module global."""
 
-    def test_graph_router_has_no_module_level_index(self):
-        from funkygibbon.api.routers import graph as graph_router
+    def test_no_router_has_a_module_level_index(self):
+        from funkygibbon.api.routers import mcp as mcp_router
 
-        assert not hasattr(graph_router, "_graph_index"), (
+        assert not hasattr(mcp_router, "_graph_index"), (
             "the module-global GraphIndex is what ADR-003 removes; the index now "
-            "lives on app.state"
+            "lives on app.state. (The graph REST router that once held it is gone -- ADR-015.)"
         )
 
     def test_each_application_owns_exactly_one_service(self):

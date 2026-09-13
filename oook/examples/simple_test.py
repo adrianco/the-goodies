@@ -1,108 +1,79 @@
 #!/usr/bin/env python3
 """
-Simple test script for Oook functionality
+Smoke test for oook against a running FunkyGibbon -- through the MCP tools.
+
+Every read and write here is a tool call (the-goodies ADR-015). The earlier
+version of this script mixed tool calls with the graph REST routes; those
+routes are gone.
+
+Needs a bearer token: FUNKYGIBBON_TOKEN, or FUNKYGIBBON_URL + the admin
+password in FUNKYGIBBON_PASSWORD.
 """
 
-import httpx
 import json
+import os
 
-def test_oook():
-    """Test basic MCP operations"""
+import httpx
 
-    print("=== Testing Oook/FunkyGibbon Phase 2 ===\n")
+URL = os.environ.get("FUNKYGIBBON_URL", "http://localhost:8000")
 
-    client = httpx.Client(base_url="http://localhost:8000")
 
-    # 1. Check health
-    health = client.get("/health")
-    print(f"1. Health check: {health.json()}")
+def token(client: httpx.Client) -> str:
+    if os.environ.get("FUNKYGIBBON_TOKEN"):
+        return os.environ["FUNKYGIBBON_TOKEN"]
+    resp = client.post("/api/v1/auth/admin/login",
+                       json={"password": os.environ.get("FUNKYGIBBON_PASSWORD", "admin")})
+    resp.raise_for_status()
+    return resp.json()["access_token"]
 
-    # 2. List MCP tools
-    tools = client.get("/api/v1/mcp/tools")
-    print(f"\n2. MCP tools available: {len(tools.json()['tools'])} tools")
 
-    # 3. Create entities
-    print("\n3. Creating test entities:")
+def tool(client: httpx.Client, name: str, **arguments):
+    resp = client.post(f"/api/v1/mcp/tools/{name}", json={"arguments": arguments})
+    resp.raise_for_status()
+    body = resp.json()
+    if body.get("error"):
+        raise RuntimeError(f"{name}: {body['error']}")
+    return body["result"]
 
-    # Create home
-    home = client.post("/api/v1/graph/entities", json={
-        "entity_type": "home",
-        "name": "Demo Home",
-        "content": {"address": "123 Test Street"},
-        "user_id": "test-user"
-    })
-    home_data = home.json()["entity"]
-    print(f"   ✓ Created home: {home_data['name']} (ID: {home_data['id']})")
 
-    # Create room
-    room = client.post("/api/v1/graph/entities", json={
-        "entity_type": "room",
-        "name": "Kitchen",
-        "content": {"area": 25},
-        "user_id": "test-user"
-    })
-    room_data = room.json()["entity"]
-    print(f"   ✓ Created room: {room_data['name']} (ID: {room_data['id']})")
+def main():
+    print("=== oook smoke test (MCP tools) ===\n")
+    with httpx.Client(base_url=URL, timeout=10.0) as client:
+        print("1. health:", client.get("/health").json())
+        client.headers["Authorization"] = f"Bearer {token(client)}"
 
-    # Create device
-    device = client.post("/api/v1/graph/entities", json={
-        "entity_type": "device",
-        "name": "Smart Oven",
-        "content": {"manufacturer": "Samsung", "model": "SmartOven Pro"},
-        "user_id": "test-user"
-    })
-    device_data = device.json()["entity"]
-    print(f"   ✓ Created device: {device_data['name']} (ID: {device_data['id']})")
+        tools = client.get("/api/v1/mcp/tools").json()["tools"]
+        print(f"2. {len(tools)} tools available")
 
-    # 4. Search entities
-    print("\n4. Searching for entities:")
-    search = client.post("/api/v1/graph/search", json={
-        "query": "smart",
-        "limit": 10
-    })
-    results = search.json()
-    print(f"   Found {results['count']} results for 'smart'")
+        home = tool(client, "create_entity", entity_type="home", name="Demo Home",
+                    content={"address": "123 Test Street"}, user_id="oook-smoke")["entity"]
+        room = tool(client, "create_entity", entity_type="room", name="Kitchen",
+                    content={"area": 25}, user_id="oook-smoke")["entity"]
+        oven = tool(client, "create_entity", entity_type="device", name="Smart Oven",
+                    content={"manufacturer": "Samsung"}, user_id="oook-smoke")["entity"]
+        print(f"3. created {home['name']}, {room['name']}, {oven['name']}")
 
-    # 5. Create relationships
-    print("\n5. Creating relationships:")
+        found = tool(client, "search_entities", query="smart", limit=10)
+        print(f"4. search 'smart': {found['count']} result(s)")
 
-    # Device in room
-    rel1 = client.post("/api/v1/mcp/tools/create_relationship", json={
-        "arguments": {
-            "from_entity_id": device_data["id"],
-            "to_entity_id": room_data["id"],
-            "relationship_type": "located_in",
-            "properties": {"wall": "north"}
-        }
-    })
-    print("   ✓ Created relationship: device located_in room")
+        tool(client, "create_relationship", from_entity_id=oven["id"], to_entity_id=room["id"],
+             relationship_type="located_in", properties={"wall": "north"})
+        tool(client, "create_relationship", from_entity_id=room["id"], to_entity_id=home["id"],
+             relationship_type="located_in")
+        print("5. relationships created")
 
-    # Room in home
-    rel2 = client.post("/api/v1/mcp/tools/create_relationship", json={
-        "arguments": {
-            "from_entity_id": room_data["id"],
-            "to_entity_id": home_data["id"],
-            "relationship_type": "part_of",
-            "properties": {"floor": 1}
-        }
-    })
-    print("   ✓ Created relationship: room part_of home")
+        connected = tool(client, "get_connected", entity_id=room["id"])
+        print(f"6. kitchen has {connected['count']} connection(s)")
 
-    # 6. Get graph statistics
-    print("\n6. Graph statistics:")
-    stats = client.get("/api/v1/graph/statistics")
-    stats_data = stats.json()
-    print(f"   - Total entities: {stats_data['total_entities']}")
-    print(f"   - Total relationships: {stats_data['total_relationships']}")
-    print(f"   - Entity types: {json.dumps(stats_data['entity_types'], indent=6)}")
+        stats = tool(client, "get_statistics")
+        print(f"7. graph: {stats['total_entities']} entities, {stats['total_relationships']} edges")
+        print("   by type:", json.dumps(stats["entity_types"]))
 
-    print("\n✅ All tests passed! Phase 2 implementation is working correctly.")
+    print("\nok")
 
-    client.close()
 
 if __name__ == "__main__":
     try:
-        test_oook()
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        print("\nMake sure the FunkyGibbon server is running on http://localhost:8000")
+        main()
+    except Exception as exc:  # pragma: no cover - a smoke script
+        print(f"\nfailed: {exc}\nIs FunkyGibbon running at {URL}?")

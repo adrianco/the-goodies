@@ -270,9 +270,9 @@ def run(argv: Optional[list] = None) -> int:
                           args.dry_run)
 
     print("\nNext: (re)start the server so it picks up .env, then verify:")
-    print(f"  curl -s -o /dev/null -w '%{{http_code}}' {args.server_url}/api/v1/graph/statistics   # expect 401/403")
+    print(f"  curl -s -o /dev/null -w '%{{http_code}}' {args.server_url}/api/v1/mcp/tools   # expect 401/403")
     print(f"  curl -s -o /dev/null -w '%{{http_code}}' -H 'Authorization: Bearer <token>' "
-          f"{args.server_url}/api/v1/graph/statistics   # expect 200")
+          f"{args.server_url}/api/v1/mcp/tools   # expect 200")
     return 0
 
 

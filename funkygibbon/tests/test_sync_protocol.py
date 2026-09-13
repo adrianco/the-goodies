@@ -236,10 +236,16 @@ def test_concurrent_update_conflict_resolved_by_version(client, headers):
                  [_change("update", id="Y", version=v3, name="v3", parents=[v1])])
     conflicts = resp.json()["conflicts"]
     assert conflicts and conflicts[0]["entity_id"] == "Y"
-    assert conflicts[0]["resolved_version"] == v3  # greater version wins the tiebreak
     latest = [c["entity"] for c in _sync(client, headers, "full").json()["changes"]
               if c["entity"]["id"] == "Y"][0]
-    assert latest["version"] == v3
+    # ADR-005 §2: the two edits share v1, so they are MERGED (rung 3). Both
+    # changed `name`, so that key is settled by the ordering rule (rung 4) --
+    # v3 is later, so its name wins -- and the result is a server-authored
+    # merge version with both edits as parents, not v3 itself.
+    assert conflicts[0]["resolved_version"] == latest["version"]
+    assert latest["name"] == "v3"
+    assert set(latest["parent_versions"]) == {v2, v3}
+    assert "lww:name" in conflicts[0]["resolution_strategy"]
 
 
 def test_delete_creates_tombstone_and_propagates(client, headers):
@@ -945,8 +951,8 @@ class TestRelationshipToolsOverMcp:
     surface.
     """
 
-    def _tool(self, client, headers, name, **args):
-        resp = client.post(f"/api/v1/mcp/tools/{name}", headers=headers, json={"arguments": args})
+    def _tool(self, client, headers, tool_name, **args):
+        resp = client.post(f"/api/v1/mcp/tools/{tool_name}", headers=headers, json={"arguments": args})
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert "error" not in body, body
@@ -980,7 +986,7 @@ class TestRelationshipToolsOverMcp:
         """ADR-003 decision 2: the write and the index update share a code path."""
         self._seed_edge(client, headers)
         self._tool(client, headers, "end_relationship", relationship_id="rel1")
-        stats = client.get("/api/v1/graph/statistics", headers=headers).json()
+        stats = self._tool(client, headers, "get_statistics")
         assert stats["total_relationships"] == 0
 
     def test_get_connected_is_the_generic_neighbourhood(self, client, headers):

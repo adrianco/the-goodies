@@ -184,10 +184,10 @@ blowing-off search "smart"
 
 **FunkyGibbon (Server)**
 - FastAPI backend at `funkygibbon/`
-- MCP server implementation providing 22 tools
+- MCP server implementation providing 23 tools
 - Graph database using SQLite with immutable versioning
 - JWT authentication and role-based access control
-- REST API endpoints under `/api/v1/`
+- HTTP endpoints under `/api/v1/`: `mcp/tools/*` (the client interface), `sync/`, `auth/*`, `sync-metadata/`, `backup/*`. There is no graph REST API (ADR-015).
 
 **Blowing-off (Client)**
 - Python synchronization client at `blowing-off/`
@@ -240,7 +240,7 @@ what is actually used, and `docs/domains.md` for adding a second domain.
 
 ### MCP Tools
 
-The 22 MCP tools are defined in `inbetweenies/mcp/tools.py` and implemented in both server and client:
+The 23 MCP tools are defined in `inbetweenies/mcp/tools.py` and implemented in both server and client:
 - Device discovery (`get_devices_in_room`, `find_device_controls`)
 - Graph navigation (`find_path`, `get_room_connections`)
 - Entity management (`create_entity`, `update_entity`, `search_entities`)
@@ -256,12 +256,12 @@ The 22 MCP tools are defined in `inbetweenies/mcp/tools.py` and implemented in b
 
 ### Database Schema
 
-SQLite database with main tables:
-- `entities`: Core entity storage with versioning
-- `entity_relationships`: Graph edges between entities
-- `entity_history`: Complete change history
-- `blobs`: Binary data storage
-- `sync_queue`: Client synchronization tracking
+SQLite database, four tables (the ORM in `inbetweenies/models/`):
+- `entities`: immutable `(id, version)` rows; `is_latest` and `server_seq` (ADR-002)
+- `entity_relationships`: immutable interval rows keyed `(id, valid_from)` (ADR-004), also stamped with `server_seq`
+- `blobs`: binary data, linked only by an attachment entity's `content.blob_id`
+- `sync_metadata`: per-client sync state
+There is no separate history table: history *is* the version rows and the ended intervals.
 
 ## 🚀 Available Agents (54 Total)
 

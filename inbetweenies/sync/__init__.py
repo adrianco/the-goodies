@@ -5,7 +5,7 @@ This module contains the core synchronization protocol components that are
 shared between server (FunkyGibbon) and client (Blowing-Off) implementations.
 """
 
-from .conflict import ConflictResolver, ConflictResolution
+from .conflict import ConflictResolver, three_way_merge, MergeResult, ConflictResolution
 from .types import SyncOperation, Change, Conflict, SyncState, SyncResult
 from .protocol import (
     BlobChange, EntityChange, RelationshipChange, SyncChange,

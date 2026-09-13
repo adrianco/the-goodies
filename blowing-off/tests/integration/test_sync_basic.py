@@ -104,13 +104,9 @@ class TestBasicSync:
                 },
                 "user_id": "test-user"
             }
-            response = await http.post(
-                "/api/v1/graph/entities",
-                json=entity_data,
-                headers=headers
-            )
+            response = await http.post("/api/v1/mcp/tools/create_entity", json={"arguments": entity_data}, headers=headers)
             assert response.status_code in [200, 201]
-            home_entity = response.json()["entity"]
+            home_entity = response.json()["result"]["entity"]
 
             # Create a room entity
             room_data = {
@@ -122,24 +118,20 @@ class TestBasicSync:
                 },
                 "user_id": "test-user"
             }
-            response = await http.post(
-                "/api/v1/graph/entities",
-                json=room_data,
-                headers=headers
-            )
+            response = await http.post("/api/v1/mcp/tools/create_entity", json={"arguments": room_data}, headers=headers)
             assert response.status_code in [200, 201]
-            room_entity = response.json()["entity"]
+            room_entity = response.json()["result"]["entity"]
 
             # Create relationship between home and room
             rel_data = {
-                "source_id": room_entity["id"],
-                "target_id": home_entity["id"],
+                "from_entity_id": room_entity["id"],
+                "to_entity_id": home_entity["id"],
                 "relationship_type": "located_in",
                 "user_id": "test-user"
             }
             response = await http.post(
-                "/api/v1/graph/relationships",
-                json=rel_data,
+                "/api/v1/mcp/tools/create_relationship",
+                json={"arguments": rel_data},
                 headers=headers
             )
             assert response.status_code in [200, 201]
@@ -243,11 +235,7 @@ class TestBasicSync:
                 "user_id": "test-user"
             }
 
-            response = await http.post(
-                "/api/v1/graph/entities",
-                json=server_entity,
-                headers=headers
-            )
+            response = await http.post("/api/v1/mcp/tools/create_entity", json={"arguments": server_entity}, headers=headers)
             assert response.status_code in [200, 201]
 
         # Sync should handle both entities without conflict since they have different IDs

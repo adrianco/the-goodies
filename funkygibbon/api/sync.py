@@ -6,7 +6,9 @@ between FunkyGibbon server and clients.
 """
 
 import hashlib
+import importlib
 import logging
+from functools import lru_cache
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -28,6 +30,19 @@ from inbetweenies.sync import (
     SyncRequest, ConflictInfo, SyncStats, SyncResponse,
     ConflictResolver,
 )
+from inbetweenies.sync.conflict import three_way_merge
+from funkygibbon.config import settings
+
+
+@lru_cache(maxsize=1)
+def _manifest():
+    """The domain manifest this server enforces (settings.domain_manifest).
+
+    Loaded once: it is the source of the per-type merge rules (ADR-005 §2
+    rung 2). Same `package.module:ATTRIBUTE` form `migrate --verify` takes.
+    """
+    module_name, _, attr = settings.domain_manifest.partition(":")
+    return getattr(importlib.import_module(module_name), attr or "MANIFEST")
 
 
 # Router
@@ -603,7 +618,7 @@ class SyncHandler:
         if existing.version == change.entity.version:
             return True  # idempotent re-send: already in the desired state
 
-        parents = change.entity.parent_versions or []
+        parents = list(change.entity.parent_versions or [])
 
         if not parents:
             # An update that names no parent_versions for an id we already hold is
@@ -612,18 +627,24 @@ class SyncHandler:
             # like any other concurrent edit instead of letting it through
             # unchallenged. Record the version it supersedes if it wins, so the
             # version DAG stays connected (same repair as the tombstone path).
+            #
+            # The synthesized parent is for the DAG only. It is NOT history the
+            # client had, so it must not make the edit look mergeable: passing
+            # the client's real (empty) parents keeps a blind overwrite on the
+            # ordering rule, decided whole, as §7.2 says.
             change.entity.parent_versions = [existing.version]
-            return await self._resolve_conflict(change, existing, conflicts)
+            return await self._resolve_conflict(change, existing, conflicts, claimed_parents=[])
 
         if existing.version in parents:
             await self._insert_version(change)  # fast-forward
             return True
 
         # Client edited from a version we have since superseded.
-        return await self._resolve_conflict(change, existing, conflicts)
+        return await self._resolve_conflict(change, existing, conflicts, claimed_parents=parents)
 
     async def _resolve_conflict(self, change: SyncChange, existing: Entity,
-                                conflicts: List[ConflictInfo]) -> bool:
+                                conflicts: List[ConflictInfo],
+                                claimed_parents: Optional[List[str]] = None) -> bool:
         """Resolve a concurrent edit canonically (LWW + version tiebreak, §7).
 
         Always returns True: the change was *processed*, which is what an ack
@@ -650,6 +671,24 @@ class SyncHandler:
         resolution = ConflictResolver.resolve(local, remote)
         remote_wins = resolution.winner.get("version") == change.entity.version
 
+        # ADR-005 §2 rungs 2-3: if the two edits share an ancestor, MERGE them
+        # rather than pick one. Rung 4 (clamped LWW) then settles only the keys
+        # both sides changed differently. Without an ancestor -- a parentless
+        # overwrite -- there is nothing to merge against, and LWW decides whole.
+        base = await self._common_ancestor(existing, claimed_parents or [])
+        if base is not None and base.version != existing.version:
+            merged_version, strategy = await self._merge_versions(
+                change, existing, base, remote_wins=remote_wins, resolution=resolution,
+            )
+            conflicts.append(ConflictInfo(
+                entity_id=change.entity.id,
+                local_version=existing.version,
+                remote_version=change.entity.version,
+                resolution_strategy=strategy,
+                resolved_version=merged_version,
+            ))
+            return True
+
         if remote_wins:
             await self._insert_version(change)
             resolved_version = change.entity.version
@@ -665,6 +704,98 @@ class SyncHandler:
             resolved_version=resolved_version,
         ))
         return True
+
+    async def _common_ancestor(self, existing: Entity, remote_parents: List[str]) -> Optional[Entity]:
+        """The nearest version both edits descend from (ADR-005 §2 rung 3).
+
+        Walks `parent_versions` -- the DAG is already stored, and the deleted
+        VersionTree.find_common_ancestor (ADR-008) proved this is cheap at
+        this scale. "Nearest" is the greatest version string among the common
+        ancestors, which is the newest because versions sort chronologically.
+        """
+        if not remote_parents:
+            return None
+        rows = (await self.db_session.execute(
+            select(Entity).where(Entity.id == existing.id)
+        )).scalars().all()
+        by_version = {row.version: row for row in rows}
+
+        def ancestors(start: List[str]) -> set:
+            seen, frontier = set(), list(start)
+            while frontier:
+                v = frontier.pop()
+                if v in seen or v not in by_version:
+                    continue
+                seen.add(v)
+                frontier.extend(by_version[v].parent_versions or [])
+            return seen
+
+        common = ancestors([existing.version]) & ancestors(list(remote_parents))
+        if not common:
+            return None
+        return by_version[max(common)]
+
+    async def _merge_versions(self, change: SyncChange, existing: Entity, base: Entity, *,
+                              remote_wins: bool, resolution) -> tuple:
+        """Rungs 2-4: produce a server-authored merge version with both parents.
+
+        The incoming version is stored too, as a non-latest row -- it is a real
+        edit in the DAG and a parent of the merge (ADR-011 §2: nothing loses
+        existence). Returns (merge version, strategy string).
+        """
+        base_c = dict(base.content or {})
+        local_c = dict(existing.content or {})
+        remote_c = dict(change.entity.content or {})
+        generic = three_way_merge(base_c, local_c, remote_c)
+        content = dict(generic.merged)
+
+        # Rung 4, scoped: only the keys both sides changed differently.
+        winner_c = remote_c if remote_wins else local_c
+        for key in generic.conflicted:
+            if key in winner_c:
+                content[key] = winner_c[key]
+            else:
+                content.pop(key, None)
+
+        # Rung 2: the domain's rule overlays the keys it owns.
+        strategy = "three_way_merge"
+        entity_type = getattr(existing.entity_type, "value", existing.entity_type)
+        rule = _manifest().merge_rules.get(entity_type)
+        if rule is not None:
+            owned = rule(base_c, local_c, remote_c) or {}
+            if owned:
+                content.update(owned)
+                strategy = f"manifest_rule:{entity_type}+three_way_merge"
+
+        # The name is one more field under the same rule.
+        conflicted = set(generic.conflicted)
+        if existing.name == base.name:
+            name = change.entity.name
+        elif change.entity.name == base.name or change.entity.name == existing.name:
+            name = existing.name
+        else:
+            name = change.entity.name if remote_wins else existing.name
+            conflicted.add("name")
+        if conflicted:
+            strategy += "+lww:" + ",".join(sorted(conflicted))
+
+        # Store the incoming edit as history first, then the merge on top.
+        await self._insert_version(change, becomes_latest=False)
+        merge = SyncChange(
+            change_type="update",
+            entity=EntityChange(
+                id=change.entity.id,
+                version=Entity.create_version("server-merge"),
+                entity_type=entity_type,
+                name=name,
+                content=content,
+                source_type=getattr(existing.source_type, "value", existing.source_type),
+                user_id=change.entity.user_id,
+                parent_versions=[existing.version, change.entity.version],
+            ),
+        )
+        await self._insert_version(merge)
+        return merge.entity.version, strategy
 
     async def _preserve_losing_version(self, change: SyncChange, existing: Entity) -> None:
         """Store a losing version as a non-latest row so its content survives.

@@ -20,18 +20,19 @@ the write that loses is *kept* — stored as a version row, acknowledged, and
 recoverable. A concurrent write can lose prominence; it can never lose existence.
 Replicas then verify they actually agree, rather than assuming it.
 
-The design is written down: 13 [ADRs](docs/adr/) covering the datastore, the
+The design is written down: 15 [ADRs](docs/adr/) covering the datastore, the
 temporal model, the sync protocol, and the domain abstraction, each with the
 alternatives that were rejected and why.
 
 **Current status**: **installed and running in a real house since March 2026**,
 with a second install at another house. Authenticated data endpoints, a
 protocol-correct sync engine (see [`inbetweenies/PROTOCOL.md`](inbetweenies/PROTOCOL.md)),
-22 MCP tools, backup/restore, and data-migration + upgrade tooling. The Python
+23 MCP tools, backup/restore, and data-migration + upgrade tooling. The Python
 **blowing-off** client also runs as an MCP server, mirroring the TypeScript port
 (*KittenKong*). CI runs the test suites on Linux and macOS across Python
-3.11–3.14. Latest release: `v0.4.0` — the final `inbetweenies-v2` release before
-the temporal cutover described below.
+3.11–3.14. Latest release: `v0.6.0` — `inbetweenies-v3`, the temporal cutover
+described below, with MCP as the only client interface
+([ADR-015](docs/adr/ADR-015-mcp-is-the-client-interface.md)).
 
 > ⚠️ Authentication is enforced: every data endpoint (`/graph`, `/mcp`, `/sync`,
 > `/sync-metadata`, `/backup`) requires a bearer token. Only `/health` and
@@ -46,8 +47,8 @@ the temporal cutover described below.
 ### Core Components
 
 1. **🚀 FunkyGibbon** (Server) - Python-based backend server
-   - FastAPI REST API with graph operations
-   - 22 MCP tools for smart home management
+   - FastAPI server: MCP tools over HTTP (the client interface), sync, auth, backup
+   - 23 MCP tools for smart home management
    - Entity-relationship knowledge graph
    - SQLite database with immutable versioning
    - **Security**: JWT authentication, rate limiting, audit logging
@@ -126,7 +127,7 @@ every replica computes identical snapshots.
 ## 🌐 The distributed model
 
 *Design: [ADR-005](docs/adr/ADR-005-protocol-v3-clocks-and-conflicts.md) and
-[ADR-011](docs/adr/ADR-011-sync-robustness-no-silent-loss.md). Shipped in v0.4.0.*
+[ADR-011](docs/adr/ADR-011-sync-robustness-no-silent-loss.md). Shipped in v0.5.0 (`inbetweenies-v3`).*
 
 Clients are not caches. Each holds the whole graph — small enough that a phone
 carries years of history comfortably — and stays fully useful offline.
@@ -365,7 +366,7 @@ python -m pytest --cov=funkygibbon --cov=blowingoff --cov=inbetweenies --cov-rep
 ```
 the-goodies/
 ├── funkygibbon/          # Server (Python FastAPI)
-│   ├── api/             # REST API routes
+│   ├── api/             # HTTP: MCP tools, sync, auth, backup (no graph REST -- ADR-015)
 │   ├── mcp/             # MCP server implementation  
 │   ├── graph/           # Graph operations
 │   ├── repositories/    # Data access layer
@@ -382,7 +383,7 @@ the-goodies/
 │   ├── models/          # Entity and relationship models
 │   ├── mcp/             # MCP tool implementations
 │   ├── sync/            # Synchronization protocol
-│   └── PROTOCOL.md      # Authoritative inbetweenies-v2 spec
+│   └── PROTOCOL.md      # Authoritative inbetweenies-v3 spec
 ├── scripts/             # upgrade.sh and helpers
 ├── UPGRADE.md           # Install upgrade runbook
 └── archive/             # Superseded / historical docs (see archive/README.md)
@@ -627,7 +628,8 @@ curl -X POST http://localhost:8000/api/v1/auth/guest/generate-qr \
 
 ## 📚 Documentation
 
-- [Protocol spec](inbetweenies/PROTOCOL.md) — authoritative inbetweenies-v2 sync protocol
+- [Protocol spec](inbetweenies/PROTOCOL.md) — authoritative inbetweenies-v3 sync protocol
+- [docs/mcp.md](docs/mcp.md) — the client interface: the 23 MCP tools
 - [UPGRADE.md](UPGRADE.md) — install upgrade runbook
 - [funkygibbon/README.md](funkygibbon/README.md) — server
 - [blowing-off/README.md](blowing-off/README.md) — client + MCP server
@@ -640,7 +642,7 @@ since March 2026**, with a second install at another house:
 - Authenticated data endpoints (bearer token), `funkygibbon setup-auth`
 - Protocol-correct sync: canonical versions, `server_time` watermark, one shared
   conflict resolver, tombstone deletes, per-id acks, convergence digest
-- 22 MCP tools; blowing-off also runs as an MCP server
+- 23 MCP tools; blowing-off also runs as an MCP server
 - Backup/restore + scheduler; data-migration and upgrade tooling
 - User Generated Content (PDFs, photos, notes) with BLOB storage, carried by sync
 - CI green on Linux and macOS across Python 3.11–3.14

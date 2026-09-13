@@ -59,18 +59,17 @@ class TestLosingChangeIsAcknowledged:
         """Create an entity server-side and return its id."""
         async with httpx.AsyncClient(base_url=server_url) as http:
             response = await http.post(
-                "/api/v1/graph/entities",
+                "/api/v1/mcp/tools/create_entity",
                 headers={"Authorization": f"Bearer {auth_token}"},
-                json={
+                json={"arguments": {
                     "entity_type": "note",
                     "name": "server-owned",
                     "content": {"origin": "server"},
-                    "source_type": "manual",
                     "user_id": "server-user",
-                },
+                }},
             )
             response.raise_for_status()
-            return response.json()["entity"]["id"]
+            return response.json()["result"]["entity"]["id"]
 
     async def test_losing_push_is_acked_and_not_retried_forever(
         self, client, server_url, auth_token
@@ -127,11 +126,12 @@ class TestLosingChangeIsAcknowledged:
         await client.sync()
 
         async with httpx.AsyncClient(base_url=server_url) as http:
-            response = await http.get(
-                f"/api/v1/graph/entities/{entity_id}",
+            response = await http.post(
+                "/api/v1/mcp/tools/get_entity_details",
                 headers={"Authorization": f"Bearer {auth_token}"},
+                json={"arguments": {"entity_id": entity_id}},
             )
             response.raise_for_status()
-            assert response.json()["entity"]["name"] == "server-owned", (
+            assert response.json()["result"]["entity"]["name"] == "server-owned", (
                 "the losing client edit must not have overwritten the server"
             )

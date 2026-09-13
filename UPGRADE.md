@@ -33,6 +33,25 @@ protocol and the edge table, and both changes are hard:
 Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
 below; the migration detects which shape it is starting from.
 
+## v0.7.0 — the graph REST API is removed; concurrent edits merge
+
+Additive on v0.6.0 for clients; **`oook` must be upgraded with the server**
+(it ships in this repo, so the one command does both).
+
+- **`/api/v1/graph/*` is gone.** Every client, including `oook`, uses the MCP
+  tools. Nothing else changes for blowing-off or KittenKong — neither ever
+  called those routes. If you have a script of your own that did, see
+  `docs/mcp.md` for the tool that replaces each route.
+- **Concurrent edits are merged** (ADR-005 §2 rungs 2–3): two edits that
+  share an ancestor produce a server-authored merge version with both as
+  parents — keys changed on one side take that side, `device.capabilities`
+  union, `automation.enabled` prefers enabled, and only keys both sides
+  changed differently fall to last-write-wins. A blind overwrite (no
+  `parent_versions`) is decided whole, as before. Set `DOMAIN_MANIFEST` if the
+  server runs a domain other than `domains.house.manifest:HOUSE`.
+- `list_entities` tool. Twenty-three tools.
+- **Matching clients:** KittenKong `adrianco/the-goodies-typescript` **`v0.7.0`**.
+
 ## v0.6.0 — MCP is the client interface (ADR-015)
 
 Additive on top of v0.5.0; the same one command upgrades from v0.2.2, v0.4.0

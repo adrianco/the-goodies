@@ -43,6 +43,10 @@ def _rel_dict(rel: EntityRelationship) -> Dict[str, Any]:
         "from_entity_id": rel.from_entity_id,
         "to_entity_id": rel.to_entity_id,
         "type": getattr(rel.relationship_type, "value", rel.relationship_type),
+        # Same value under the model's own field name, so a consumer that
+        # reads `EntityRelationship.to_dict()` and a tool result alike does
+        # not need two spellings.
+        "relationship_type": getattr(rel.relationship_type, "value", rel.relationship_type),
         "properties": rel.properties or {},
         "user_id": rel.user_id,
         "valid_from": rel.valid_from.isoformat() if getattr(rel, "valid_from", None) else None,
@@ -810,13 +814,13 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             if direction in ("outgoing", "both"):
                 for rel in await self.get_relationships(from_id=entity_id, rel_type=rel_type, at=moment):
                     target = await self.get_entity(rel.to_entity_id, at=moment)
-                    if target:
+                    if target and not getattr(target, "is_tombstone", False):
                         connected.append({"entity": target.to_dict(), "relationship": _rel_dict(rel),
                                           "direction": "outgoing"})
             if direction in ("incoming", "both"):
                 for rel in await self.get_relationships(to_id=entity_id, rel_type=rel_type, at=moment):
                     source = await self.get_entity(rel.from_entity_id, at=moment)
-                    if source:
+                    if source and not getattr(source, "is_tombstone", False):
                         connected.append({"entity": source.to_dict(), "relationship": _rel_dict(rel),
                                           "direction": "incoming"})
             return ToolResult(True, {
@@ -909,6 +913,38 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
                 "edges_ended": ended,
                 "counts": {"entities": len(changed), "edges_started": len(started),
                            "edges_ended": len(ended)},
+            })
+        except Exception as e:
+            return ToolResult(False, None, str(e))
+
+    async def list_entities(
+        self,
+        entity_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        at: Optional[str] = None,
+    ) -> ToolResult:
+        """Enumerate entities, optionally by type; paged; as of ``at``.
+
+        The last graph read that existed only as a REST route (ADR-015).
+        Current entities by default; with ``at``, the entities that existed
+        at that instant, each at the version it had then.
+        """
+        try:
+            moment = _parse_at(at)
+            types = [EntityType(entity_type)] if entity_type else list(EntityType)
+            found = []
+            for et in types:
+                for current in await self.get_entities_by_type(et, include_deleted=moment is not None):
+                    entity = current if moment is None else await self.get_entity(current.id, at=moment)
+                    if entity is not None:
+                        found.append(entity)
+            found.sort(key=lambda e: (getattr(e.entity_type, "value", e.entity_type), e.name or "", e.id))
+            page = found[offset: offset + limit]
+            return ToolResult(True, {
+                "entities": [e.to_dict() for e in page],
+                "count": len(page), "total": len(found),
+                "limit": limit, "offset": offset, "as_of": at,
             })
         except Exception as e:
             return ToolResult(False, None, str(e))

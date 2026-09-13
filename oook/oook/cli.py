@@ -95,45 +95,32 @@ class MCPClient:
         response.raise_for_status()
         return response.json()
 
-    def search_entities(self, query: str, entity_types: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Search for entities"""
-        payload = {"query": query}
-        if entity_types:
-            payload["entity_types"] = entity_types
+    # ADR-015: oook is a client of the MCP tools like everything else. The
+    # graph REST routes it used for these four commands are gone; each is one
+    # tool call, and the result is the tool's `result` payload.
+    def _call(self, tool_name: str, **arguments) -> Dict[str, Any]:
+        body = self.execute_tool(tool_name, {k: v for k, v in arguments.items() if v is not None})
+        if body.get("error"):
+            raise RuntimeError(body["error"])
+        return body["result"]
 
-        response = self.client.post(
-            f"{self.base_url}/api/v1/graph/search",
-            json=payload
-        )
-        response.raise_for_status()
-        return response.json()
+    def search_entities(self, query: str, entity_types: Optional[List[str]] = None,
+                        limit: int = 10) -> Dict[str, Any]:
+        """Search for entities (tool: search_entities)."""
+        return self._call("search_entities", query=query, entity_types=entity_types, limit=limit)
 
     def get_entity(self, entity_id: str) -> Dict[str, Any]:
-        """Get entity details"""
-        response = self.client.get(f"{self.base_url}/api/v1/graph/entities/{entity_id}")
-        response.raise_for_status()
-        return response.json()
+        """Entity details with relationships (tool: get_entity_details)."""
+        return self._call("get_entity_details", entity_id=entity_id)
 
     def create_entity(self, entity_type: str, name: str, content: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new entity"""
-        response = self.client.post(
-            f"{self.base_url}/api/v1/graph/entities",
-            json={
-                "entity_type": entity_type,
-                "name": name,
-                "content": content,
-                "source_type": "manual",
-                "user_id": "oook-cli"
-            }
-        )
-        response.raise_for_status()
-        return response.json()
+        """Create a new entity (tool: create_entity)."""
+        return self._call("create_entity", entity_type=entity_type, name=name,
+                          content=content, user_id="oook-cli")
 
     def get_graph_stats(self) -> Dict[str, Any]:
-        """Get graph statistics"""
-        response = self.client.get(f"{self.base_url}/api/v1/graph/statistics")
-        response.raise_for_status()
-        return response.json()
+        """Graph statistics (tool: get_statistics)."""
+        return self._call("get_statistics")
 
 
 @click.group()
@@ -302,26 +289,24 @@ def search(ctx, query, entity_types, limit):
     client = ctx.obj['client']
 
     try:
-        results = client.search_entities(query, list(entity_types) if entity_types else None)
+        results = client.search_entities(query, list(entity_types) if entity_types else None, limit)
 
         console.print(f"\n[bold]Search Results for '{query}':[/bold]\n")
 
-        for result in results['results']:
-            entity = result['entity']
-            score = result['score']
-
+        # The tool's SearchResult is flat: id/name/entity_type/score at the top.
+        for entity in results['results']:
             console.print(Panel(
                 f"[cyan]Name:[/cyan] {entity['name']}\n"
                 f"[cyan]Type:[/cyan] {entity['entity_type']}\n"
                 f"[cyan]ID:[/cyan] {entity['id']}\n"
-                f"[cyan]Score:[/cyan] {score:.2f}",
+                f"[cyan]Score:[/cyan] {float(entity.get('score', 0)):.2f}",
                 title=f"[bold]{entity['name']}[/bold]"
             ))
 
-            if result.get('highlights'):
+            if entity.get('highlights'):
                 console.print("[yellow]Highlights:[/yellow]")
-                for highlight in result['highlights']:
-                    console.print(f"  • {highlight}")
+                for field, snippet in dict(entity['highlights']).items():
+                    console.print(f"  • {field}: {snippet}")
 
             console.print()
 
@@ -400,12 +385,12 @@ def get(ctx, entity_id):
             if result['relationships']['outgoing']:
                 console.print("\n[cyan]Outgoing:[/cyan]")
                 for rel in result['relationships']['outgoing']:
-                    console.print(f"  → {rel['relationship_type']} → {rel['to_entity_id']}")
+                    console.print(f"  → {rel['type']} → {rel['to']}")
 
             if result['relationships']['incoming']:
                 console.print("\n[cyan]Incoming:[/cyan]")
                 for rel in result['relationships']['incoming']:
-                    console.print(f"  ← {rel['relationship_type']} ← {rel['from_entity_id']}")
+                    console.print(f"  ← {rel['type']} ← {rel['from']}")
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")

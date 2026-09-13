@@ -426,6 +426,106 @@ class TestTombstones:
 
 
 # --------------------------------------------------------------------------- #
+# §7.2 The resolution ladder, rungs 2-4 (ADR-005 §2)
+# --------------------------------------------------------------------------- #
+class TestResolutionLadder:
+    """Concurrent edits with a common ancestor are MERGED, not picked."""
+
+    def _seed(self, client, headers, content, entity_type=ENTITY_TYPE, name="thing"):
+        v1 = Entity.create_version("a")
+        body = sync(client, headers, changes=[{
+            "change_type": "create",
+            "entity": {"id": "M", "version": v1, "entity_type": entity_type, "name": name,
+                       "content": content, "source_type": SOURCE_TYPE, "user_id": USER,
+                       "parent_versions": []},
+            "relationships": [],
+        }])
+        assert "M" in body["applied"]
+        return v1
+
+    def _edit(self, client, headers, parents, content, name="thing", entity_type=ENTITY_TYPE, user="b"):
+        v = Entity.create_version(user)
+        body = sync(client, headers, changes=[{
+            "change_type": "update",
+            "entity": {"id": "M", "version": v, "entity_type": entity_type, "name": name,
+                       "content": content, "source_type": SOURCE_TYPE, "user_id": user,
+                       "parent_versions": parents},
+            "relationships": [],
+        }])
+        return v, body
+
+    def _current(self, client, headers):
+        return {c["entity"]["id"]: c["entity"]
+                for c in sync(client, headers, "full")["changes"] if c.get("entity")}["M"]
+
+    def test_rung_3_disjoint_keys_merge_and_the_merge_names_both_parents(self, client, headers):
+        v1 = self._seed(client, headers, {"colour": "red", "watts": 10})
+        v2, _ = self._edit(client, headers, [v1], {"colour": "blue", "watts": 10})     # server side
+        v3, body = self._edit(client, headers, [v1], {"colour": "red", "watts": 60})   # stale client
+
+        [record] = body["conflicts"]
+        assert record["resolution_strategy"].startswith("three_way_merge")
+        current = self._current(client, headers)
+        assert current["content"] == {"colour": "blue", "watts": 60}, "both edits survive"
+        assert set(current["parent_versions"]) == {v2, v3}
+        assert current["version"] == record["resolved_version"]
+        assert "M" in body["applied"], "the client may drop its pending mark"
+
+    def test_rung_4_settles_only_the_keys_both_changed(self, client, headers):
+        v1 = self._seed(client, headers, {"colour": "red", "watts": 10})
+        self._edit(client, headers, [v1], {"colour": "blue", "watts": 10})
+        # Stale, but stamped LATER, so it wins the ordering rule for `colour`.
+        _, body = self._edit(client, headers, [v1], {"colour": "green", "watts": 60})
+
+        [record] = body["conflicts"]
+        assert "lww:colour" in record["resolution_strategy"]
+        current = self._current(client, headers)
+        assert current["content"] == {"colour": "green", "watts": 60}
+
+    def test_rung_2_device_capabilities_are_unioned(self, client, headers):
+        v1 = self._seed(client, headers, {"capabilities": ["power"]}, entity_type="device", name="Lamp")
+        self._edit(client, headers, [v1], {"capabilities": ["power", "dim"]}, entity_type="device", name="Lamp")
+        _, body = self._edit(client, headers, [v1], {"capabilities": ["power", "colour"]}, entity_type="device", name="Lamp")
+
+        [record] = body["conflicts"]
+        assert record["resolution_strategy"].startswith("manifest_rule:device")
+        assert sorted(self._current(client, headers)["content"]["capabilities"]) == ["colour", "dim", "power"]
+
+    def test_rung_2_automation_prefers_enabled(self, client, headers):
+        v1 = self._seed(client, headers, {"enabled": True}, entity_type="automation", name="Morning")
+        self._edit(client, headers, [v1], {"enabled": True, "time": "07:00"}, entity_type="automation", name="Morning")
+        # A stale edit that disables it must not switch off what the other side kept on.
+        _, body = self._edit(client, headers, [v1], {"enabled": False}, entity_type="automation", name="Morning")
+
+        assert body["conflicts"][0]["resolution_strategy"].startswith("manifest_rule:automation")
+        current = self._current(client, headers)
+        assert current["content"]["enabled"] is True
+        assert current["content"]["time"] == "07:00"
+
+    def test_a_parentless_overwrite_has_no_ancestor_and_stays_lww(self, client, headers):
+        """§7.2 only merges edits that share history; a blind overwrite is decided whole."""
+        v1 = self._seed(client, headers, {"colour": "red"})
+        ancient = "2020-01-01T00:00:00.000000+00:00-000001-old"
+        body = sync(client, headers, changes=[{
+            "change_type": "update",
+            "entity": {"id": "M", "version": ancient, "entity_type": ENTITY_TYPE, "name": "stale",
+                       "content": {"colour": "grey"}, "source_type": SOURCE_TYPE, "user_id": USER,
+                       "parent_versions": []},
+            "relationships": [],
+        }])
+        assert "three_way" not in body["conflicts"][0]["resolution_strategy"]
+        assert self._current(client, headers)["content"] == {"colour": "red"}
+
+    def test_the_incoming_edit_is_kept_as_a_version_row(self, client, headers):
+        """ADR-011 §2: it lost prominence to the merge, not existence."""
+        v1 = self._seed(client, headers, {"colour": "red"})
+        self._edit(client, headers, [v1], {"colour": "blue"})
+        v3, _ = self._edit(client, headers, [v1], {"colour": "green"})
+        assert v3 in {r.version for r in stored_versions("M")}
+        assert next(r for r in stored_versions("M") if r.version == v3).is_latest is False
+
+
+# --------------------------------------------------------------------------- #
 # §1/§3 Edge intervals — the v3 contract a port is built from
 # --------------------------------------------------------------------------- #
 class TestEdgeIntervals:
