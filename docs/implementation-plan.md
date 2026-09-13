@@ -46,7 +46,7 @@ Step 4  getLocalChanges()      // AFTER the overwrite
 
 **Status: fixed upstream.** KittenKong shipped the guard in `ee4eea5` (2026-08-02) with tests (`sync-pending.test.ts`), skipping pull-apply for any id carrying a pending local edit and pushing relationships alongside. The same commit's comment traces the mechanism and cites #69. The Python-side regression test remains outstanding.
 
-**Cross-repo note.** KittenKong lives in `rolandcanyon-cmd/the-goodies-typescript` (upstream). `adrianco/the-goodies-typescript` is a *fork* of it and lags; fixing the fork would not reach production. Stage A retains a coordination dependency outside this repository.
+**Cross-repo note.** KittenKong's canonical repository is `adrianco/the-goodies-typescript`; client releases are cut there and installs track it. `rolandcanyon-cmd/the-goodies-typescript` is where the guard (`ee4eea5`, PR #5) was first developed, and is referenced above only as the origin of that change. *(Corrected 2026-09-13 -- issue #86: an earlier version of this note had the relationship the other way round, and `UPGRADE.md` inherited the mistake.)* Stage A retains a coordination dependency outside this repository.
 
 ### 1.2 The guard and the loser-ack are coupled — shipping one alone livelocks
 

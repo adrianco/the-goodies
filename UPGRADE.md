@@ -6,6 +6,32 @@ machine where the server runs. There are two installs to upgrade (this house,
 then Roland's); both should use the **same release tag** so they land on
 identical code.
 
+## ⚠ This release is the `inbetweenies-v3` cutover — read this first
+
+**v0.4.0 was the last `inbetweenies-v2` release.** This one changes the wire
+protocol and the edge table, and both changes are hard:
+
+- **A v2 client is rejected with HTTP 400** on `/api/v1/sync/`. There is no
+  compatibility window. Stop every client before upgrading the server and do
+  not start one again until it is a v3 build. This is the same "do not let an
+  old one back in" rule as ADR-013 below, one level stricter: a v2 client does
+  not silently damage the graph, it simply cannot sync at all.
+- **Edges become immutable interval rows** (ADR-004). The migration rebuilds
+  `entity_relationships` with a `(id, valid_from)` primary key, drops the
+  `from_entity_version` / `to_entity_version` pins and their foreign keys, and
+  backfills `valid_from` from `created_at`. Every existing edge survives as an
+  open interval. This step is what was **missing from the v0.4.0 migration**
+  (issue #87): on that release the server upgraded cleanly, `--verify` passed,
+  and every data endpoint then returned 500 because the model read columns
+  the table did not have. `--verify` now compares the live schema against the
+  models and fails on that state instead of passing it.
+- **Clients:** the Python client (blowing-off, in this repo) is v3. The
+  TypeScript client (KittenKong, `adrianco/the-goodies-typescript`) must be on
+  its matching v3 release before it reconnects.
+
+Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
+below; the migration detects which shape it is starting from.
+
 ## What this release contains
 
 - **Authentication** is now attached to every data endpoint. After upgrading,
@@ -38,11 +64,17 @@ lowercase, so **one push from an old client writes `DEVICE` alongside `device`**
 and splits the graph into two types that nothing joins. The damage is silent and
 shows up later as queries that quietly return less than they should.
 
-Upgrade the clients to the matching release before restarting them:
-KittenKong (TypeScript) needs
-[PR #5](https://github.com/rolandcanyon-cmd/the-goodies-typescript/pull/5).
+Upgrade the clients to the matching release before restarting them. **Client
+releases live at `adrianco/the-goodies-typescript`** (KittenKong); that is the
+canonical repository, and the one an install should track. Use the client
+release whose tag matches this server tag. (An earlier revision of this
+document pointed at a pull request on a fork, `rolandcanyon-cmd/...`, which
+is where that change was first developed; it is not where releases are cut.)
 
-What the migration does, beyond the earlier steps:
+What the migration does, beyond the earlier steps. **The counts are from one
+install and are illustrative** -- a different house has a different shape (one
+reported zero `part_of` edges). Run `--dry-run` to see your own numbers; do
+not read these as expected values.
 
 | Step | Why |
 |---|---|

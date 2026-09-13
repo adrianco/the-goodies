@@ -62,7 +62,10 @@ JWT_SECRET_OVERRIDE=""
 SKIP_BACKUP=0
 DRY_RUN=0
 ASSUME_YES=0
-PYTHON="${PYTHON:-python3}"
+# Interpreter: resolved AFTER `cd "$REPO_DIR"` below, so the repo's own venv
+# can be preferred. An explicit $PYTHON in the environment always wins.
+PYTHON_EXPLICIT="${PYTHON:-}"
+PYTHON=""
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
@@ -102,6 +105,20 @@ done
 cd "$REPO_DIR"
 git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository: $REPO_DIR"
 
+# Which Python gets the release installed into. This MUST be the interpreter
+# the service runs, or the upgrade installs the new code somewhere the server
+# never looks: start_funkygibbon.sh sources venv/bin/activate, so the repo
+# venv is the default. (#88: this used to be whatever `python3` was on PATH,
+# and on a real upgrade the service came back up missing mcp, aiohttp, rich
+# and tabulate -- all installed, into the wrong Python.)
+if [ -n "$PYTHON_EXPLICIT" ]; then
+  PYTHON="$PYTHON_EXPLICIT"; PYTHON_SOURCE="\$PYTHON from environment"
+elif [ -x "$REPO_DIR/venv/bin/python" ]; then
+  PYTHON="$REPO_DIR/venv/bin/python"; PYTHON_SOURCE="repo venv (what start_funkygibbon.sh runs)"
+else
+  PYTHON="python3"; PYTHON_SOURCE="python3 on PATH (no venv found -- is this the server checkout?)"
+fi
+
 # Resolve the release tag. Fetch tags first (read-only) so "latest" reflects the
 # remote; default --tag to the newest vX.Y.Z when not given.
 git fetch --tags --quiet 2>/dev/null || warn "could not fetch tags; using local tags"
@@ -120,6 +137,7 @@ echo "   launchd agent: $LAUNCHD_PLIST"
 echo "   service stop:  $STOP_CMD"
 echo "   service start: $START_CMD"
 echo "   backup DB:     $([ "$SKIP_BACKUP" = 1 ] && echo no || echo yes)"
+echo "   python:        $PYTHON  [$PYTHON_SOURCE]"
 echo "   dry-run:       $([ "$DRY_RUN" = 1 ] && echo yes || echo no)"
 
 if [ "$ASSUME_YES" != 1 ] && [ "$DRY_RUN" != 1 ]; then
@@ -166,9 +184,22 @@ log "Checking out release tag $TAG"
 run "git checkout --quiet '$TAG'"
 
 # 4. Install/refresh dependencies ------------------------------------------- #
-log "Installing dependencies"
+log "Installing dependencies into $PYTHON"
 run "$PYTHON -m pip install --quiet --upgrade pip"
-[ -f funkygibbon/requirements.txt ] && run "$PYTHON -m pip install --quiet -r funkygibbon/requirements.txt"
+if [ -f pyproject.toml ]; then
+  # 0.3.0+: one editable install from the repo root pulls the full dependency
+  # union for every component (UPGRADE.md step 5). #88: the requirements.txt
+  # line below was the ONLY install step, and c04bf74 deleted those files --
+  # so from v0.4.0 the script upgraded pip and installed nothing else, while
+  # a --dry-run from the pre-upgrade checkout still showed the old line and
+  # hid the problem.
+  run "$PYTHON -m pip install --quiet -e ."
+elif [ -f funkygibbon/requirements.txt ]; then
+  # pre-0.3.0 layouts only
+  run "$PYTHON -m pip install --quiet -r funkygibbon/requirements.txt"
+else
+  die "neither pyproject.toml nor funkygibbon/requirements.txt found after checkout of $TAG"
+fi
 
 # 5. Data migration (idempotent; safe to re-run) ---------------------------- #
 log "Running data migration"
