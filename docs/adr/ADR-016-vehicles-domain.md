@@ -117,9 +117,17 @@ they are set from day one.
 only goes up). Nothing else until the walks show a concurrent-edit pattern.
 
 **Tools**: the engine's 18, plus a small declared set that does not presume
-structure — `get_vehicle_history` (every event, oldest first, `at`-aware),
-`get_events(vehicle, kind, since, until)`, `get_parts_on_vehicle(at)`,
-`get_items_in_location`, `get_vehicles_in_location`, `get_tools_for_vehicle`.
+structure — `get_vehicle_history` (every event, part on/off and move, oldest
+first, `at`-aware), `get_events(vehicle, kind, since, until)`,
+`get_parts_on_vehicle(at)`, `get_items_in_location`, `get_vehicles_in_location`,
+`get_tools_for_vehicle`, and two the owner's example questions demanded
+(2026-09-14): `where_is(part|tool)` — fitted to a vehicle and where that is,
+or on a shelf, `at`-aware — and `get_part_history(part, kind)` — the part's
+fittings and storage, plus the events its vehicles went through while it was
+on them, so "how many races did that gearbox run" is a count. "It won't start,
+how did we fix it last time" is `get_events(kind=repair)` plus text search over
+events that carry `symptom` and `fix`, and "a car-show summary" is the history
+read back as prose; neither needs a tool of its own.
 Anything more specific (`get_modifications`, `get_current_spec`,
 `get_service_due`) is added when its kind is promoted.
 

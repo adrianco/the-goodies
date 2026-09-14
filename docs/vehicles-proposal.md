@@ -122,6 +122,20 @@ The collection straddles the US and the UK (the Mini above is UK-registered), an
 | 2025-08-16 | 61,200 | **Fuel** — Shell, Newmarket Road: 45.2 litres super unleaded, £68.40. | |
 | 2025-11-01 | — | **SORN** — off the road for the winter; declared with DVLA. | |
 
+## Four questions, answered
+
+The owner's own examples of what the record must be able to answer, and how each is answered from what a walk recorded.
+
+**"Make a short summary of the car's history for a car show entry."** `get_vehicle_history` returns the whole life in date order — purchase, every service and repair, parts on and off, moves, the named trips — and the assistant writes the paragraph: *"Bought new in May 2009 by my father from Porsche Redwood City; one family since. 91,400 miles. Clutch at 48,000, top replaced in 2021, otherwise original. The Big Sur run in 2014 is the trip we all remember."* The summary is prose; the facts under it are dated and sourced.
+
+**"Where is that part?"** `where_is` reads the two interval edges: an open *fitted to* says it is on a vehicle — and that vehicle's own location says where — while an open *located in* says it is on a shelf. *"Gearbox #1 is at the team yard in Hollister, since the swap in March 2022. Gearbox #2 is on the Lemons car, which is also at the yard."* Ask it about 2019 and it says the old box was on the car.
+
+**"How many races did that gearbox run?"** `get_part_history` lists every vehicle the part was fitted to and when, then counts the vehicle's events that fall inside those intervals: *"Gearbox #1: one race, Thunderhill 2017, then the third-gear synchro went. Gearbox #2: one race so far, Sonoma 2024."* The same question works for an engine, a set of tyres, a battery.
+
+**"It won't start — how did we fix it last time?"** Repairs are events with the symptom and the fix recorded as the walk transcribed them, so the assistant filters the car's repair events and searches their text: *"January 2022, 74,800 miles, same symptom — crank, no start after three weeks parked. Battery was fine. It was the immobiliser: key re-synced at the dealer, and the fuel-pump relay replaced while there. Invoice attached."*
+
+None of these needed a new entity type. They needed the events to carry a date, a symptom and a fix, and the parts to carry intervals — which is what the walk asks for.
+
 ## The experiment
 
 I do not think the right set of entities can be designed at a desk. The plan is to walk a few vehicles of each kind with a deliberately loose vocabulary — "vehicle, part, location, event-of-some-kind, note, photo, document" — and then look at what actually recurs with structure. Services always have mileage and parts; modifications always have a displaced original and a reversible flag; track days have a venue and a setup. Those become proper things. The rest stay as dated events with text and pictures. That is how the house side of this system found its real vocabulary too: from live data, not from the design.

@@ -194,6 +194,26 @@ TOOLS = (
         },
     ),
     DomainTool(
+        name="where_is",
+        description=(
+            "Where a part or tool is right now (or `at` an instant): fitted to a "
+            "vehicle -- and where that vehicle is -- or on a shelf somewhere, or unknown."
+        ),
+        anchor="item_id", anchor_types=("part", "tool"),
+        handler=vehicle_tools.where_is,
+    ),
+    DomainTool(
+        name="get_part_history",
+        description=(
+            "A part's life: every vehicle it was fitted to and when, every place it "
+            "was kept, and the events that happened to those vehicles while it was on "
+            "them -- so 'how many races did that gearbox run' is a count."
+        ),
+        anchor="part_id", anchor_types=("part",),
+        handler=vehicle_tools.get_part_history,
+        extra_params={"kind": {"type": "string", "description": "Only count/return events of this kind"}},
+    ),
+    DomainTool(
         name="get_vehicle_history",
         description=(
             "A vehicle's whole life in date order: every event, every part "

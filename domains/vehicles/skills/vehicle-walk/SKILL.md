@@ -232,6 +232,11 @@ open with the errors recorded and say what did not land.
 On changes: `session.remove_diff(idx)` / `replace_diff` / `add_diff`,
 re-render, wait. On "discard": `session.set_status("discarded")`.
 
+**Repairs carry `symptom` and `fix`** in `content`, in the user's words, so
+"it won't start — how did we fix it last time" is answerable later. **Parts
+get intervals** so `where_is` and `get_part_history` ("how many races did
+that gearbox run") answer from the edges.
+
 ### Phase 5 — Handoff
 
 `get_vehicle_history` for each vehicle touched, read back as a short timeline

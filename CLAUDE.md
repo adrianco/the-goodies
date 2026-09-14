@@ -184,7 +184,7 @@ blowing-off search "smart"
 
 **FunkyGibbon (Server)**
 - FastAPI backend at `funkygibbon/`
-- MCP server implementation providing the MCP tools: 18 engine tools plus the served domain's own (house: 5, so 23; vehicles: 6, so 24)
+- MCP server implementation providing the MCP tools: 18 engine tools plus the served domain's own (house: 5, so 23; vehicles: 8, so 26)
 - Graph database using SQLite with immutable versioning
 - JWT authentication and role-based access control
 - HTTP endpoints under `/api/v1/`: `mcp/tools/*` (the client interface), `sync/`, `auth/*`, `sync-metadata/`, `backup/*`. There is no graph REST API (ADR-015).

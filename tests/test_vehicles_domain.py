@@ -66,10 +66,11 @@ class TestManifest:
         with pytest.raises(DomainValidationError):
             VEHICLES.check_entity_type("room")
 
-    def test_declares_six_tools_and_a_skill(self):
-        assert len(VEHICLES.tools) == 6
+    def test_declares_eight_tools_and_a_skill(self):
+        assert len(VEHICLES.tools) == 8
         assert sum(1 for t in VEHICLES.tools if t.walk) == 4
-        assert {t.name for t in VEHICLES.tools if t.handler} == {"get_events", "get_vehicle_history"}
+        assert {t.name for t in VEHICLES.tools if t.handler} == {
+            "get_events", "get_vehicle_history", "where_is", "get_part_history"}
         path = pathlib.Path(VEHICLES.skills["vehicle-walk"])
         assert path.exists() and path.read_text().startswith("---\nname: vehicle-walk")
 
@@ -287,7 +288,7 @@ class TestVehiclesServer:
         now = {p["name"] for p in _tool(http, "get_parts_on_vehicle", vehicle_id=lemons["id"])["parts"]}
         assert "Shell WBAAA1300K8129083" in now and "M20B25 engine #2" in now
         then = _tool(http, "get_parts_on_vehicle", vehicle_id=lemons["id"], at=_iso("lemons_race_1"))
-        assert {p["name"] for p in then["parts"]} == {"Shell WBAAA1300K8124471", "M20B25 engine #1"}
+        assert {p["name"] for p in then["parts"]} == {"Shell WBAAA1300K8124471", "M20B25 engine #1", "Getrag 260 gearbox #1"}
         races = _tool(http, "get_events", vehicle_id=lemons["id"], kind="race")["events"]
         assert [e["entity"]["content"]["hours"] for e in races] == [14, 96]
 
@@ -336,6 +337,49 @@ class TestVehiclesServer:
         assert from_feed[1]["entity"]["content"]["currency"] == "GBP"
         connected = _tool(http, "get_connected", entity_id=mini["id"], relationship_type="manages", direction="incoming")
         assert [c["entity"]["name"] for c in connected["connected"]] == ["MINI app"]
+
+    # -- the questions people actually ask (ADR-016 §2, owner examples) ---- #
+
+    def test_where_is_that_part(self, http):
+        old_box = _by_name(http, "part", "Getrag 260 gearbox #1")
+        answer = _tool(http, "where_is", item_id=old_box["id"])
+        assert answer["status"] == "stored" and answer["location"]["name"] == "Team storage yard, Hollister"
+        new_box = _by_name(http, "part", "Getrag 260 gearbox #2")
+        answer = _tool(http, "where_is", item_id=new_box["id"])
+        assert answer["status"] == "fitted" and answer["vehicle"]["name"] == "E30 Lemons car #4471-L"
+        assert answer["location"]["name"] == "Team storage yard, Hollister"
+        # And in 2019 the old box was on the car.
+        then = _tool(http, "where_is", item_id=old_box["id"], at=_iso("lemons_reshell"))
+        assert then["status"] == "fitted"
+
+    def test_how_many_races_did_that_gearbox_run(self, http):
+        old_box = _by_name(http, "part", "Getrag 260 gearbox #1")
+        history = _tool(http, "get_part_history", part_id=old_box["id"], kind="race")
+        assert history["count"] == 1 and history["events"][0]["entity"]["name"] == "Thunderhill 24h"
+        new_box = _by_name(http, "part", "Getrag 260 gearbox #2")
+        assert _tool(http, "get_part_history", part_id=new_box["id"], kind="race")["count"] == 1
+        full = _tool(http, "get_part_history", part_id=old_box["id"])
+        assert [f["vehicle"]["name"] for f in full["fittings"]] == ["E30 Lemons car #4471-L"]
+        assert full["fittings"][0]["to"] is not None
+        assert [s["location"]["name"] for s in full["storage"]] == ["Team storage yard, Hollister"]
+        # The repair that took it off names it directly and is in its history too.
+        assert "Gearbox swap" in [e["entity"]["name"] for e in full["events"]]
+
+    def test_it_wont_start_how_did_we_fix_it_last_time(self, http):
+        boxster = _by_name(http, "vehicle", "2009 Porsche Boxster S")
+        repairs = _tool(http, "get_events", vehicle_id=boxster["id"], kind="repair")["events"]
+        no_start = [e for e in repairs if "start" in (e["entity"]["content"].get("symptom") or "")]
+        assert len(no_start) == 1
+        assert "key re-sync" in no_start[0]["entity"]["content"]["fix"]
+        hits = _tool(http, "search_entities", query="start", entity_types=["event"])["results"]
+        assert any(h["id"] == no_start[0]["entity"]["id"] for h in hits)
+
+    def test_a_car_show_summary_is_the_history_read_back(self, http):
+        boxster = _by_name(http, "vehicle", "2009 Porsche Boxster S")
+        history = _tool(http, "get_vehicle_history", vehicle_id=boxster["id"])["events"]
+        firsts = {e["kind"]: e["when"][:4] for e in reversed(history)}
+        assert firsts["purchase"] == "2009" and firsts["transfer"] == "2019" and firsts["road_trip"] == "2014"
+        assert sum(1 for e in history if e["kind"] in ("service", "repair")) >= 4
 
     # -- the Elise: a UK-registered car, MOT history as a feed, GBP --------- #
 

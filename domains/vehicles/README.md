@@ -17,7 +17,7 @@ designed first (ADR-016 §4). What is *not* loose is the temporal spine:
 domains/vehicles/
   __init__.py                    exports VEHICLES
   manifest.py                    entity/relationship/source types, merge rules, TOOLS, skills
-  tools.py                       the two timeline handlers (get_events, get_vehicle_history)
+  tools.py                       the handlers: get_events, get_vehicle_history, where_is, get_part_history
   seed.py                        the example lifecycles, same primitives as the house seed
   skills/vehicle-walk/SKILL.md   the walk, with kind / stage / country prompt packs
   README.md                      this file
@@ -89,8 +89,10 @@ The engine's 18, with `create_entity` / `create_relationship` / `search` /
 | `get_parts_on_vehicle` | walk | Parts fitted now — or `at` any instant. |
 | `get_tools_for_vehicle` | walk | Tools and spares compatible with it. |
 | `get_items_in_location` | walk | Parts and tools on a shelf / in a yard. |
-| `get_events` | handler | Events oldest first, filtered by `kind`, `since`, `until` on the event's own date. |
+| `get_events` | handler | Events oldest first, filtered by `kind`, `since`, `until` on the event's own date. With `kind=repair` and events that carry `symptom` / `fix`, "how did we fix it last time" is one call. |
 | `get_vehicle_history` | handler | The whole life: every event, every part on/off, every move — one dated timeline. |
+| `where_is` | handler | A part or tool: fitted to which vehicle (and where that is), or on which shelf — or `at` any instant. |
+| `get_part_history` | handler | A part's fittings and storage, and the events its vehicles went through while it was on them (`kind=race` → a count). |
 
 `get_modifications`, `get_current_spec`, `get_service_due` arrive when their
 event kinds are promoted (ADR-016 §4).

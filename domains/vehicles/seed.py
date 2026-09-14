@@ -53,12 +53,14 @@ TIMELINE = {
     # Lemons
     "lemons_bought": _utc(2017, 2, 11), "lemons_caged": _utc(2017, 5, 20), "lemons_race_1": _utc(2017, 9, 16),
     "lemons_engine_swap": _utc(2018, 4, 8), "lemons_reshell": _utc(2019, 11, 2),
-    "lemons_spares_pallet": _utc(2020, 2, 1), "lemons_race_2": _utc(2024, 6, 15), "trailer_home": _utc(2026, 3, 7),
+    "lemons_spares_pallet": _utc(2020, 2, 1), "lemons_gearbox_swap": _utc(2022, 3, 5), "lemons_race_2": _utc(2024, 6, 15),
+    "trailer_home": _utc(2026, 3, 7),
     # Boxster
     "boxster_bought": _utc(2009, 5, 16), "boxster_first_service": _utc(2011, 6, 4),
     "boxster_road_trip": _utc(2014, 8, 9), "boxster_clutch": _utc(2016, 3, 12),
     "boxster_transfer": _utc(2019, 10, 5), "boxster_top": _utc(2021, 7, 17),
-    "boxster_smog": _utc(2023, 2, 11), "boxster_tyres": _utc(2025, 4, 19), "boxster_fuel": _utc(2026, 9, 6),
+    "boxster_no_start": _utc(2022, 1, 9), "boxster_smog": _utc(2023, 2, 11), "boxster_tyres": _utc(2025, 4, 19),
+    "boxster_fuel": _utc(2026, 9, 6),
     # Elise (UK, illustrative)
     "elise_bought": _utc(2015, 6, 13), "elise_mot_2024": _utc(2024, 5, 9), "elise_mot_2025": _utc(2025, 5, 7),
     "elise_fuel": _utc(2025, 8, 16), "elise_sorn": _utc(2025, 11, 1),
@@ -217,6 +219,15 @@ async def populate_vehicles(populator: GraphPopulator) -> None:
         await event(lemons, "Crash, re-shell", "repair", T["lemons_reshell"], hours=55, cost=300,
                     text="Crash damage, shell scrapped; $300 donor shell. Cage, logbook, engine #2, suspension carried over. Lemons tech re-inspection passed.",
                     involved=(shell_2, shell_1))
+        gearbox_1 = await ent(session, "part", "Getrag 260 gearbox #1", {"category": "gearbox"}, key="gearbox_1", at=T["lemons_bought"])
+        await rel(session, gearbox_1, lemons, "fitted_to", valid_from=T["lemons_bought"], valid_to=T["lemons_gearbox_swap"])
+        await rel(session, gearbox_1, yard, "located_in", valid_from=T["lemons_gearbox_swap"])
+        gearbox_2 = await ent(session, "part", "Getrag 260 gearbox #2", {"category": "gearbox"}, key="gearbox_2", at=T["lemons_gearbox_swap"])
+        await rel(session, gearbox_2, lemons, "fitted_to", valid_from=T["lemons_gearbox_swap"])
+        await rel(session, gearbox_2, gearbox_1, "replaced", valid_from=T["lemons_gearbox_swap"])
+        await event(lemons, "Gearbox swap", "repair", T["lemons_gearbox_swap"], hours=70,
+                    text="Third gear synchro gone in #1; #2 fitted from spares, #1 to the yard for a rebuild one day.",
+                    involved=(gearbox_2, gearbox_1))
         engine_3 = await ent(session, "part", "M20B25 engine #3 (spare)", {"category": "engine"}, key="engine_3", at=T["lemons_spares_pallet"])
         await rel(session, engine_3, yard, "located_in", valid_from=T["lemons_spares_pallet"])
         await rel(session, engine_3, lemons, "compatible_with", valid_from=T["lemons_spares_pallet"])
@@ -266,6 +277,11 @@ async def populate_vehicles(populator: GraphPopulator) -> None:
         await rel(session, top, boxster, "fitted_to", valid_from=T["boxster_top"])
         await event(boxster, "Top replaced", "repair", T["boxster_top"], odometer=72100, cost=1890,
                     text="Rear window seam failed; whole top replaced.", involved=(top,))
+        await event(boxster, "Won't start", "repair", T["boxster_no_start"], odometer=74800, cost=310,
+                    text="Cranked but would not start after three weeks parked. Battery was fine (12.6 V). "
+                         "Fix: the immobiliser had lost the key; re-synced the key at the dealer, and the "
+                         "fuel pump relay was replaced while there. Symptom: crank, no start.",
+                    symptom="crank, no start", fix="key re-sync at dealer; fuel pump relay replaced")
         await event(boxster, "Smog check", "inspection", T["boxster_smog"], odometer=80300, cost=60,
                     text="California smog: pass.", result="pass")
         tyres = await ent(session, "part", "Michelin Pilot Sport 4S (set)", {"category": "tyres"}, key="boxster_tyres", at=T["boxster_tyres"])

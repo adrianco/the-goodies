@@ -48,7 +48,7 @@ described below, with MCP as the only client interface
 
 1. **🚀 FunkyGibbon** (Server) - Python-based backend server
    - FastAPI server: MCP tools over HTTP (the client interface), sync, auth, backup
-   - MCP tools: 18 engine tools plus the domain's own (house adds 5, vehicles adds 6)
+   - MCP tools: 18 engine tools plus the domain's own (house adds 5, vehicles adds 8)
    - Entity-relationship knowledge graph
    - SQLite database with immutable versioning
    - **Security**: JWT authentication, rate limiting, audit logging
@@ -531,7 +531,7 @@ the vocabulary, the domain's own tools and its skills are a manifest under
 | Domain | Own tools | Skill | Run it |
 |---|---|---|---|
 | [`house`](domains/house/README.md) | 5 (`get_devices_in_room`, …) | `room-walk`, `room-edit`, `app-walk`, `align-rooms` ([domains/house/skills](domains/house/skills/README.md)) | the default |
-| [`vehicles`](domains/vehicles/README.md) | 6 (`get_parts_on_vehicle`, `get_events`, `get_vehicle_history`, …) | `vehicle-walk` | `DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES DATABASE_URL=sqlite+aiosqlite:///./vehicles.db API_PORT=8001 python -m funkygibbon` |
+| [`vehicles`](domains/vehicles/README.md) | 8 (`get_parts_on_vehicle`, `get_events`, `get_vehicle_history`, `where_is`, `get_part_history`, …) | `vehicle-walk` | `DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES DATABASE_URL=sqlite+aiosqlite:///./vehicles.db API_PORT=8001 python -m funkygibbon` |
 
 Each server advertises the 18 engine tools plus its own domain's, with
 `create_entity` / `create_relationship` offering that domain's vocabulary.
