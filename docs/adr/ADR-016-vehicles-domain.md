@@ -82,6 +82,15 @@ happened to a thing on a date, with evidence*. So:
 | `location` | Where things are kept — **may be off-site** | `kind` (home garage / storage unit / shop / trailer / in transit), address. A house room is an *optional* ADR-017 reference, never required |
 | **`event`** | **Something that happened to a vehicle on a date** | `kind` open: `evaluation`, `purchase`, `service`, `repair`, `modification`, `inspection`, `fuel`, `charge`, `track_day`, `rally`, `show`, `sale`, `sighting`, `recall`, `software_update`, `condition_report` …; `when`, `odometer`, `cost`, `currency`, `where` (text or a location id), free text |
 | `note` | Transcribed speech, free text | The walk's transcript is a note on the vehicle |
+
+**US and UK vehicles** (owner requirement 2026-09-14): `content.country` on
+vehicles and locations; `identity.registration_country` (+ `state` in the US);
+money per event in its own `currency`; volumes in the receipt's unit
+(`gallons` / `litres`); `odometer_unit` per vehicle. The admin differs by
+country — title / state registration / smog in the US; registration mark as
+the working identity, V5C, MOT (a public DVLA feed → `inspection` events with
+advisories), tax and SORN in the UK — and lives in the walk's country pack,
+not in the vocabulary.
 | `photo` | base attachment | |
 | `document` | This domain's attachment type (PDF/scan) | `kind`: invoice, build sheet, title, certificate, period photo, setup sheet … |
 
@@ -142,7 +151,9 @@ The first three are named: a brand-new Mini Cooper SE (app feed), the 2010
 Tesla Roadster with its OVMS connection (third-party telemetry → monthly
 battery condition reports), and the E30-based Lemons race car stored off-site
 with its trailer and spares and no single VIN (identity as a set of numbers
-over time; hours not miles). `docs/vehicles-proposal.md` works each through.
+over time; hours not miles). `docs/vehicles-proposal.md` works each through, plus the family's 2009 Boxster S
+(a gas car with seventeen years of history and a transfer inside the family)
+and a UK-registered car (illustrative: MOT history as a feed, GBP, litres).
 Then,
 then read the graph, not the design: which `event.kind`s recur, which carry
 structure beyond text (a service always has odometer and parts; a

@@ -1,13 +1,15 @@
 # The vehicles domain
 
 The second domain, and the proof that the engine is domain-blind (ADR-012).
-Cars, motorcycles and bicycles; the parts fitted to them; the tools and spares
-on the shelf; where each thing is kept; what was bought when; and what has been
-done to each machine over its life.
+A **walk-first knowledge history graph** for a collection of cars, bikes and
+race cars (ADR-016): every vehicle gets a permanent, append-only record of its
+life — from the pre-purchase evaluation to long after the sale — added to by
+walking round it with a phone.
 
-**First pass.** The vocabulary is deliberately small and will be iterated. What
-this package establishes is the *shape* of a domain -- a manifest, a seed, a
-skill -- and that adding one touches no engine code.
+**Capture-first, on purpose.** The vocabulary below is deliberately loose;
+the entities that deserve their own type are derived from real walks, not
+designed first (ADR-016 §4). What is *not* loose is the temporal spine:
+`event.when`, `fitted_to`'s interval, `located_in`'s interval.
 
 ## What a domain is
 
@@ -15,9 +17,9 @@ skill -- and that adding one touches no engine code.
 domains/vehicles/
   __init__.py                    exports VEHICLES
   manifest.py                    entity/relationship/source types, merge rules, TOOLS, skills
-  tools.py                       the one handler (get_vehicle_history); everything else is a walk
-  seed.py                        a small dated collection, same primitives as the house seed
-  skills/vehicle-walk/SKILL.md   the guided-walk skill, counterpart of the room walk
+  tools.py                       the two timeline handlers (get_events, get_vehicle_history)
+  seed.py                        the example lifecycles, same primitives as the house seed
+  skills/vehicle-walk/SKILL.md   the walk, with kind / stage / country prompt packs
   README.md                      this file
 ```
 
@@ -26,94 +28,97 @@ Nothing under `funkygibbon/`, `inbetweenies/` or `blowing-off/` imports it
 
 ## Running it
 
-**Standalone** -- a vehicles server, its own database file, its own port:
+A vehicles server is its own process, database file and port (ADR-018);
+auth is shared with the house server, so one client token works on both:
 
 ```bash
 DATABASE_URL=sqlite+aiosqlite:///./vehicles.db python domains/vehicles/seed.py
 DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES DATABASE_URL=sqlite+aiosqlite:///./vehicles.db API_PORT=8001 python -m funkygibbon
 ```
 
-**Alongside the house** -- a second process. The house keeps `funkygibbon.db`
-on 8000; vehicles gets `vehicles.db` on 8001. Auth is shared (same
-`JWT_SECRET`, same admin), the sync protocol is the same, and each server
-advertises only its own domain's tools. A client holds one replica per domain
-and syncs each against its own endpoint. This is ADR-012 §3's topology --
-*separate endpoint, separate database file, separate MCP client per domain* --
-delivered as two processes rather than one process mounting two domains; the
-single-process mount is the later iteration and changes nothing a client sees.
-
 A replica (blowing-off) picks its domain the same way:
 `DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES blowingoff-mcp`.
 
 ## Vocabulary
 
-Base vocabulary -- `photo` / `has_photo`, `app` / `manages` -- is inherited and
-not restated here.
+Everything a walk captures is a *thing*, a *place*, or *something that
+happened to a thing on a date, with evidence*. Base vocabulary — `photo` /
+`has_photo`, `app` / `manages` — is inherited and not restated.
 
 | Entity type | What it is |
 |---|---|
-| `vehicle` | A car, motorcycle, bicycle, e-bike, trailer. One type; `content.kind` says which. |
-| `part` | A component fitted to a vehicle now or once (tyres, chain, battery). |
-| `tool` | Workshop equipment that serves vehicles without being fitted. |
-| `location` | A bay, shelf, shed. The domain's own notion of place. |
-| `purchase` | What was paid, to whom, when. May cover several items. |
-| `service_record` | One dated maintenance event: service, repair, inspection. |
-| `issue` | A known problem, `content.status` open or resolved. |
-| `invoice` | **Attachment** (a PDF) -- this domain's `manual`. |
-| `note` | Free text. |
+| `vehicle` | The machine across its whole life. `kind` (car / ev / motorcycle / bicycle / race_car / trailer), `identity` (VIN, frame number, registration mark, a race logbook number — whichever exist), `aliases`, `spec` (free-form factory spec), `status` (evaluating / owned / sold / not_bought), `odometer` + `odometer_unit` (mi / km / hours), `country`. |
+| `part` | A component with identity, fitted for a period or on a shelf. A race car's shell and engines are parts. |
+| `tool` | Workshop equipment. |
+| `location` | Where things are kept, for a period — a garage, a storage yard, a trailer, a lock-up in another country. **May be off-site.** |
+| `event` | **Something that happened to a vehicle on a date.** `kind` is open (evaluation, purchase, transfer, service, repair, modification, inspection, fuel, charge, odometer, software_update, recall, condition_report, track_day, race, rally, show, road_trip, sale, sighting …), plus `when`, `odometer` / `hours`, `cost` + `currency`, `where`, `text`, `source` (walk / feed). |
+| `document` | **Attachment** (PDF/scan): invoice, build sheet, title, V5C, certificate, setup sheet, period photo. |
+| `note` | Transcribed speech, free text. |
 
 | Relationship | Endpoints | Notes |
 |---|---|---|
-| `located_in` | vehicle/part/tool/location → location | Same word as the house, same meaning. |
+| `located_in` | vehicle/part/tool/location → location | **Interval.** |
 | `fitted_to` | part → vehicle | **The interval edge.** End it when the part comes off. |
 | `replaced` | part → part | The new one took the old one's place. |
-| `compatible_with` | part/tool → vehicle | Serves it without being on it. |
-| `purchased_via` | vehicle/part/tool → purchase | |
-| `service_for` | service_record → vehicle/part | |
-| `used` | service_record → tool/part | What a job fitted or used. |
-| `issue_for` | issue → vehicle/part | |
-| `resolved_by` | issue → service_record | |
-| `documented_by` | * → note, purchase/service_record/vehicle → invoice | |
-| `manages` | app → vehicle | Base rule, narrowed. |
+| `compatible_with` | part/tool → vehicle | Spares and tools that serve it. |
+| `happened_to` | event → vehicle / part | |
+| `involved` | event → part / tool / location | What a service fitted, what a modification displaced, the tool a repair used. |
+| `documented_by` | * → note / document | |
+| `manages` | app → vehicle | Base rule, narrowed. An app's writes are `source: feed` events. |
 
-Source types: `manual`, `imported`, `telemetry`, `generated`.
+**US and UK**: `country` on vehicles and locations, `identity.registration_country`
+(+ `state` in the US), `currency` per event, volumes in the receipt's unit
+(`gallons` / `litres`). The admin that differs — title / smog versus V5C /
+MOT / tax / SORN — is in the walk's country pack, not the vocabulary.
 
-**Merge rule** (ADR-005 §2 rung 2): a vehicle's `odometer` only goes up, so two
-concurrent readings merge to the higher one.
+**Merge rule** (ADR-005 §2 rung 2): a vehicle's `odometer` only goes up.
+
+**The volume rule** (ADR-016 §1.2): this is a logbook, not a data logger.
+Fuel and fast-charge purchases are events; trips are not unless they are
+named events; app and OVMS feeds are summarised into logbook-grade facts
+before they are written.
 
 ## Tools
 
-The engine's tools, with `create_entity` / `create_relationship` / `search` /
+The engine's 18, with `create_entity` / `create_relationship` / `search` /
 `list_entities` offering *this* vocabulary, plus:
 
 | Tool | Kind | Answers |
 |---|---|---|
-| `get_vehicles_in_location` | walk | Vehicles kept in a bay/shed. |
-| `get_parts_on_vehicle` | walk | Parts fitted now -- or `at` any instant. |
+| `get_vehicles_in_location` | walk | Vehicles kept in a place — or `at` any instant. |
+| `get_parts_on_vehicle` | walk | Parts fitted now — or `at` any instant. |
 | `get_tools_for_vehicle` | walk | Tools and spares compatible with it. |
-| `get_items_in_location` | walk | Parts and tools on a shelf. |
-| `get_service_records` | walk | Every job done to it. |
-| `get_open_issues` | walk with `where={"status": "open"}` | The to-do list. |
-| `get_purchases_for` | walk | What an item was bought in. |
-| `get_vehicle_history` | handler | Purchase, services, parts on/off, issues -- one dated timeline. |
+| `get_items_in_location` | walk | Parts and tools on a shelf / in a yard. |
+| `get_events` | handler | Events oldest first, filtered by `kind`, `since`, `until` on the event's own date. |
+| `get_vehicle_history` | handler | The whole life: every event, every part on/off, every move — one dated timeline. |
 
-Seven of eight are pure declarations in `manifest.py`; the engine runs them.
-The house's `get_devices_in_room` is the same mechanism with different
-constants, which was the claim ADR-012 made.
+`get_modifications`, `get_current_spec`, `get_service_due` arrive when their
+event kinds are promoted (ADR-016 §4).
+
+## The examples in the seed
+
+| Vehicle | What it stresses |
+|---|---|
+| 2026 Mini Cooper SE | A new EV with an app feed: only logbook-grade facts arrive. |
+| 2010 Tesla Roadster Sport + OVMS | Third-party telemetry summarised into monthly battery condition reports; the OVMS module is a part with a v2 → v3 history. |
+| E30 Lemons car #4471-L | Off-site with its trailer and spares; no single VIN — shell and engines are parts with intervals; hours not miles. |
+| 2009 Porsche Boxster S | A gas car in the family since new: seventeen years of history and a transfer inside the family. |
+| 1998 Lotus Elise S1 *(illustrative)* | UK-registered: registration mark as identity, MOT history as a feed, GBP, litres, SORN. |
+
+`docs/vehicles-proposal.md` works them through in plain language, for friends
+with collections.
 
 ## The skill
 
-`skills/vehicle-walk/SKILL.md` is a Claude skill: a guided walk through the
-garage that records each vehicle with the tools above, the way the house's
-room walk records rooms. Install it by symlinking the directory into a
-project's `.claude/skills/` (or a user's `~/.claude/skills/`). The manifest
-names it (`VEHICLES.skills`) so a client can find a domain's skills without
-knowing the repo layout.
+`skills/vehicle-walk/SKILL.md`: the room walk's mechanism unchanged (session
+file → diffs → review → `confirm` → read-back), with prompt packs per kind
+(car / EV / bike / race car / restoration), per lifecycle stage (evaluating /
+owning / selling / after) and per country (US / UK). It reuses the house's
+`fg_client.py` unchanged. Not yet used on a real garage — that is the next step.
 
 ## What is deliberately not here yet
 
-- Cross-domain references (parts stored in a *house* room) -- ADR-012 §4.
-- Blob-carrying `invoice` entities in the seed.
-- A single process serving both domains -- ADR-012 §3; two processes for now.
-- KittenKong (TypeScript) still hard-codes the house tools; it needs to read
-  the catalog from its server the way blowing-off reads the manifest.
+- Typed `modification` / `service` / `sale` entities and their tools — after the walks (ADR-016 §4).
+- Cross-domain references (a location that *is* a house room) — ADR-017.
+- A `vehicle_commit.py`; the walk applies its diffs with `fg_client` directly.
+- KittenKong (TypeScript) still hard-codes the house tools — ADR-018 §3.

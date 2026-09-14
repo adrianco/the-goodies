@@ -1,66 +1,86 @@
-"""Vehicles vocabulary — the second domain, and the proof (ADR-012).
+"""Vehicles vocabulary — a walk-first knowledge history graph (ADR-016).
 
-What a garage full of bikes and cars needs the graph to say: which vehicles
-exist, what is fitted to them, which tools and spares are on the shelf, where
-each thing is kept, what was bought when and from whom, and what was done to
-each machine over its life. A car's history is *exactly* the temporal model:
-a part's ``fitted_to`` edge is an interval, a service is an event dated when
-it happened, and ``at`` answers "what was on the bike last spring".
+Deliberately a *capture* vocabulary. The owner's direction is that the right
+entities cannot be designed at a desk: do real walks of each kind — a new
+Mini Cooper SE with an app feed, the 2010 Roadster with its OVMS box, the E30
+Lemons race car with no single VIN, the family's 2009 Boxster S — and promote
+what recurs with structure afterwards, the way ADR-013 cleaned up the house
+from live data. So everything a walk captures is one of three things:
 
-First pass. The vocabulary is deliberately small and will be iterated; what
-matters now is that it is a manifest and nothing else -- no engine code, no
-schema, no client change beyond pointing at it.
+* a **thing** — `vehicle`, `part`, `tool`;
+* a **place** — `location`, which may well not be the house;
+* **something that happened to a thing on a date, with evidence** — one
+  `event` type with an open `kind`.
+
+What is not loose is the temporal spine: `event.when`, `fitted_to`'s interval
+and `located_in`'s interval are what make "what was on the car in March" and
+"where was it during the restoration" answerable, and they are set from day one.
+
+This is a knowledge history graph, not a data logger (ADR-016 §1.2): fuel and
+charging purchases are events; trips are not unless they are named events;
+telemetry is summarised into logbook-grade facts before it is written.
 
 Base vocabulary (``photo`` / ``has_photo``, ``app`` / ``manages``) is inherited
 and NOT restated here; see ``inbetweenies/domain.py``.
 """
 
-from inbetweenies.domain import DomainTool, RelationshipRule, Walk, build_manifest
-
 from pathlib import Path
+
+from inbetweenies.domain import DomainTool, RelationshipRule, Walk, build_manifest
 
 from . import tools as vehicle_tools
 
 # --- Entity types ---------------------------------------------------------
 ENTITY_TYPES = [
-    # The machines. `content.kind` says which: car, motorcycle, bicycle,
-    # ebike, trailer... one type, because everything below applies to all
-    # of them alike (parts, tools, purchases, service).
+    # The machine, across its whole life -- evaluated, owned, sold, remembered.
+    # `content.kind`: car / ev / motorcycle / bicycle / race_car / trailer ...
+    # `content.identity`: whichever numbers exist -- VIN, frame number,
+    # registration, a race logbook number. A race car may have several over
+    # its life (the shell is a part; see the Lemons seed). `content.aliases`
+    # are the nicknames. `content.spec` is the free-form factory /
+    # as-delivered specification. `content.status`: evaluating / owned /
+    # sold / not_bought. `content.country` (US / UK / ...) and, inside
+    # `identity`, `registration_country` and a US `state`: a UK car's working
+    # identity is its registration mark and its admin is MOT / V5C / tax / SORN;
+    # a US car's is title, state registration and (in California) smog.
+    # Units are per vehicle (`odometer_unit`: mi / km / hours) and money is
+    # per event (`currency`), so a collection can straddle both countries.
     "vehicle",
-    # A component fitted to a vehicle now or once: tyres, chain, battery,
-    # brake pads. Fitting is an interval edge (`fitted_to`), so a part's life
-    # across vehicles -- and a vehicle's parts at any instant -- is history.
+    # A component with identity: fitted to a vehicle for a period, or on a
+    # shelf. An asset, not a consumable, because modifications and
+    # restorations care about the displaced original. A race car's shell and
+    # its engines are parts.
     "part",
-    # Workshop equipment: torque wrench, stand, charger. Belongs to the
-    # collection, not to a vehicle; `compatible_with` says what it serves.
+    # Workshop equipment.
     "tool",
-    # Where things are kept: a garage bay, a shelf, a shed. The house domain
-    # has rooms; this is the vehicles' own notion of place. A cross-domain
-    # reference to a house room is ADR-012 §4, not this.
+    # Where things are kept, for a period. `content.kind`: home_garage /
+    # storage_unit / shop / yard / trailer / in_transit; an address. May be
+    # off-site, and in another country (`content.country`); a house room is an
+    # optional ADR-017 reference, never required.
     "location",
-    # A purchase: what was paid, to whom, when. Its own entity so one purchase
-    # can cover several items and carry its own invoice.
-    "purchase",
-    # One maintenance event: a service, a repair, an inspection, dated when it
-    # happened (`content.performed_at`) with mileage/hours and what was done.
-    "service_record",
-    # A known problem with a vehicle or part, open until a service resolves it.
-    "issue",
-    # Free text.
+    # Something that happened to a vehicle on a date. `content.kind` is OPEN:
+    # evaluation, purchase, transfer, service, repair, modification,
+    # inspection, fuel, charge, odometer, software_update, recall,
+    # condition_report, track_day, race, rally, show, road_trip, sale,
+    # sighting ... plus `when` (ISO-8601), `odometer` / `hours`, `cost`,
+    # `currency` (USD / GBP / ...), `where` (text), free `text`, and `source`
+    # (walk / feed). Volumes carry their unit (`gallons` or `litres`).
+    "event",
+    # Transcribed speech and free text. The walk's transcript is a note.
     "note",
 ]
 
 # --- Source types ---------------------------------------------------------
 SOURCE_TYPES = [
     "manual",     # human-entered, e.g. during a vehicle walk
-    "imported",   # from a spreadsheet, dealer export, service portal
-    "telemetry",  # from the vehicle itself (OBD, an app's export)
+    "imported",   # from a spreadsheet, a folder of receipts, a dealer export
+    "telemetry",  # summarised from the vehicle or its app (OVMS, the MINI app)
     "generated",  # seed data
 ]
 
 # --- Relationship types ---------------------------------------------------
 RELATIONSHIP_RULES = [
-    # Where a thing IS. Same word as the house uses for the same idea.
+    # Where a thing IS, for a period. Same word as the house, same meaning.
     RelationshipRule(
         name="located_in",
         allowed_endpoints=(
@@ -80,36 +100,39 @@ RELATIONSHIP_RULES = [
         name="compatible_with",
         allowed_endpoints=(("part", "vehicle"), ("tool", "vehicle")),
     ),
-    # An item was bought in a purchase.
+    # An event is about a vehicle (occasionally about a part on the shelf).
     RelationshipRule(
-        name="purchased_via",
-        allowed_endpoints=(("vehicle", "purchase"), ("part", "purchase"), ("tool", "purchase")),
+        name="happened_to",
+        allowed_endpoints=(("event", "vehicle"), ("event", "part")),
     ),
-    # A service was done to a vehicle (or to a part off the vehicle).
-    RelationshipRule(name="service_for", allowed_endpoints=(("service_record", "vehicle"), ("service_record", "part"))),
-    # A service used a tool or fitted a part.
-    RelationshipRule(name="used", allowed_endpoints=(("service_record", "tool"), ("service_record", "part"))),
-    # An issue concerns a vehicle or part, and a service closed it.
-    RelationshipRule(name="issue_for", allowed_endpoints=(("issue", "vehicle"), ("issue", "part"))),
-    RelationshipRule(name="resolved_by", allowed_endpoints=(("issue", "service_record"),)),
-    # Documentation and receipts. `invoice` is this domain's attachment type
-    # (a PDF), the counterpart of the house's `manual`; `note` is text.
+    # What an event touched: the parts a service fitted, the original a
+    # modification displaced, the tool a repair used, the place it happened.
+    RelationshipRule(
+        name="involved",
+        allowed_endpoints=(("event", "part"), ("event", "tool"), ("event", "location")),
+    ),
+    # Evidence and text. `document` is this domain's attachment type (a PDF or
+    # scan: invoice, build sheet, title, certificate, setup sheet, period
+    # photo); `note` is text.
     RelationshipRule(
         name="documented_by",
         allowed_endpoints=(
-            ("vehicle", "note"), ("part", "note"), ("tool", "note"),
-            ("service_record", "note"), ("issue", "note"),
-            ("purchase", "invoice"), ("service_record", "invoice"), ("vehicle", "invoice"),
+            ("vehicle", "note"), ("vehicle", "document"),
+            ("part", "note"), ("part", "document"),
+            ("tool", "note"), ("tool", "document"),
+            ("event", "note"), ("event", "document"),
+            ("location", "note"), ("location", "document"),
         ),
     ),
-    # Base `manages` narrowed: an app (a maker's telematics app, a service
-    # portal) manages vehicles.
+    # Base `manages` narrowed: an app (the MINI app, OVMS, a service portal)
+    # manages vehicles. Its writes are events with source_type telemetry.
     RelationshipRule(name="manages", allowed_endpoints=(("app", "vehicle"),)),
 ]
 
 # --------------------------------------------------------------------------- #
 # Merge rules (ADR-005 §2 rung 2): the domain facts a three-way merge cannot
 # know. An odometer only goes up; two readings merge to the higher one.
+# Nothing else until the walks show a concurrent-edit pattern.
 # --------------------------------------------------------------------------- #
 
 def merge_vehicle(base, local, remote):
@@ -120,14 +143,16 @@ def merge_vehicle(base, local, remote):
 MERGE_RULES = {"vehicle": merge_vehicle}
 
 # --------------------------------------------------------------------------- #
-# Tools (ADR-012 §2). Every one but the history is a declarative walk -- the
-# engine runs them; this file only says which edge to follow and what to keep.
+# Tools (ADR-012 §2). Small, and none presumes structure the walks have not
+# revealed: the walks are declarative; the two history tools are handlers.
+# `get_modifications`, `get_current_spec`, `get_service_due` arrive when their
+# event kinds are promoted (ADR-016 §4).
 # --------------------------------------------------------------------------- #
 
 TOOLS = (
     DomainTool(
         name="get_vehicles_in_location",
-        description="Vehicles kept in a location (a bay, a shed, a shelf).",
+        description="Vehicles kept in a location (a garage, a storage yard, a trailer); with `at`, the vehicles kept there then.",
         anchor="location_id", anchor_types=("location",),
         walk=(Walk("located_in", "incoming", ("vehicle",)),),
         result_key="vehicles",
@@ -148,37 +173,31 @@ TOOLS = (
     ),
     DomainTool(
         name="get_items_in_location",
-        description="Parts and tools stored in a location.",
+        description="Parts and tools stored in a location; with `at`, what was there then.",
         anchor="location_id", anchor_types=("location",),
         walk=(Walk("located_in", "incoming", ("part", "tool")),),
         result_key="items",
     ),
     DomainTool(
-        name="get_service_records",
-        description="Every service, repair and inspection recorded for a vehicle.",
+        name="get_events",
+        description=(
+            "Events recorded for a vehicle, oldest first. Filter by `kind` "
+            "(evaluation, purchase, service, modification, fuel, charge, race, "
+            "sale, sighting, ...), and by `since` / `until` on the event's own date."
+        ),
         anchor="vehicle_id", anchor_types=("vehicle",),
-        walk=(Walk("service_for", "incoming", ("service_record",)),),
-        result_key="service_records",
-    ),
-    DomainTool(
-        name="get_open_issues",
-        description="Issues still open on a vehicle (content.status == open).",
-        anchor="vehicle_id", anchor_types=("vehicle",),
-        walk=(Walk("issue_for", "incoming", ("issue",), where={"status": "open"}),),
-        result_key="issues",
-    ),
-    DomainTool(
-        name="get_purchases_for",
-        description="The purchase(s) an item -- vehicle, part or tool -- was bought in.",
-        anchor="item_id", anchor_types=("vehicle", "part", "tool"),
-        walk=(Walk("purchased_via", "outgoing", ("purchase",)),),
-        result_key="purchases",
+        handler=vehicle_tools.get_events,
+        extra_params={
+            "kind": {"type": "string", "description": "Only events of this kind"},
+            "since": {"type": "string", "description": "Only events on or after this date (ISO-8601)"},
+            "until": {"type": "string", "description": "Only events on or before this date (ISO-8601)"},
+        },
     ),
     DomainTool(
         name="get_vehicle_history",
         description=(
-            "A vehicle's life in date order: purchase, every service, every part "
-            "fitted or removed, every issue opened or resolved. With `at`, the "
+            "A vehicle's whole life in date order: every event, every part "
+            "fitted or removed, every move between locations. With `at`, the "
             "history as it was known then."
         ),
         anchor="vehicle_id", anchor_types=("vehicle",),
@@ -193,8 +212,8 @@ VEHICLES = build_manifest(
     entity_types=ENTITY_TYPES,
     source_types=SOURCE_TYPES,
     relationship_rules=RELATIONSHIP_RULES,
-    # `photo` is base; `invoice` is this domain's own attachment (a PDF).
-    attachment_types=("invoice",),
+    # `photo` is base; `document` is this domain's own attachment (PDF/scan).
+    attachment_types=("document",),
     merge_rules=MERGE_RULES,
     tools=TOOLS,
     skills={"vehicle-walk": _SKILLS_DIR / "vehicle-walk" / "SKILL.md"},

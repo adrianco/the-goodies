@@ -1,15 +1,16 @@
-"""The vehicles domain is the proof that the engine is domain-blind (ADR-012).
+"""The vehicles domain is the proof that the engine is domain-blind (ADR-012, ADR-016).
 
 Three layers, each asserting the same claim from a different side:
 
-* **The manifest** is a complete description -- vocabulary, tools, a skill --
-  and restates none of the base vocabulary.
+* **The manifest** is a complete description -- the capture vocabulary, its
+  tools, a skill -- and restates none of the base vocabulary.
 * **The engine executes it generically**: the declared tools run against an
   in-memory store and against a blowing-off replica with no vehicles code in
   either, and a house server never sees them.
 * **A real FunkyGibbon serving the vehicles manifest** -- separate database,
   separate port, the same engine binary -- answers the domain's questions over
-  MCP, refuses house vocabulary, and syncs a vehicle over inbetweenies-v3.
+  MCP for the four example lifecycles, refuses house vocabulary, and syncs a
+  vehicle over inbetweenies-v3.
 """
 
 import ast
@@ -36,12 +37,14 @@ API = "/api/v1"
 # --- 1. The manifest ------------------------------------------------------- #
 
 class TestManifest:
-    def test_declares_the_vocabulary_and_inherits_the_base(self):
-        assert {"vehicle", "part", "tool", "location", "purchase", "service_record", "issue"} <= VEHICLES.entity_types
+    def test_declares_the_capture_vocabulary_and_inherits_the_base(self):
+        assert {"vehicle", "part", "tool", "location", "event", "note", "document"} <= VEHICLES.entity_types
+        # ADR-016 §2: one open-kind event, not five guessed entity types.
+        assert not {"service_record", "purchase", "issue", "invoice"} & VEHICLES.entity_types
         # Base, inherited, not declared here.
         assert {"photo", "app"} <= VEHICLES.entity_types
         assert {"has_photo", "manages"} <= VEHICLES.relationship_types
-        assert VEHICLES.carries_blob("invoice") and VEHICLES.carries_blob("photo")
+        assert VEHICLES.carries_blob("document") and VEHICLES.carries_blob("photo")
 
     def test_does_not_restate_base_vocabulary_in_source(self):
         source = (REPO_ROOT / "domains" / "vehicles" / "manifest.py").read_text()
@@ -50,23 +53,23 @@ class TestManifest:
             node.value for node in ast.walk(tree)
             if isinstance(node, ast.Constant) and isinstance(node.value, str)
         }
-        # `manages` is narrowed on purpose (allowed); `has_photo` and `photo`
-        # must not be spelled out at all.
         assert "has_photo" not in declared
         entity_list = next(n for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == "ENTITY_TYPES")
         assert "photo" not in {c.value for c in entity_list.value.elts}
 
     def test_endpoint_rules_hold(self):
         VEHICLES.check_relationship("fitted_to", "part", "vehicle")
+        VEHICLES.check_relationship("happened_to", "event", "vehicle")
+        VEHICLES.check_relationship("involved", "event", "part")
         with pytest.raises(DomainValidationError):
             VEHICLES.check_relationship("fitted_to", "vehicle", "part")
         with pytest.raises(DomainValidationError):
             VEHICLES.check_entity_type("room")
 
-    def test_declares_eight_tools_and_a_skill(self):
-        assert len(VEHICLES.tools) == 8
-        assert sum(1 for t in VEHICLES.tools if t.walk) == 7
-        assert VEHICLES.tool("get_vehicle_history").handler is not None
+    def test_declares_six_tools_and_a_skill(self):
+        assert len(VEHICLES.tools) == 6
+        assert sum(1 for t in VEHICLES.tools if t.walk) == 4
+        assert {t.name for t in VEHICLES.tools if t.handler} == {"get_events", "get_vehicle_history"}
         path = pathlib.Path(VEHICLES.skills["vehicle-walk"])
         assert path.exists() and path.read_text().startswith("---\nname: vehicle-walk")
 
@@ -90,11 +93,12 @@ class TestCatalog:
 
     def test_vocabulary_parameters_are_narrowed_to_the_domain(self):
         by_name = {t.name: t for t in catalog_for(VEHICLES)}
-        assert "vehicle" in by_name["create_entity"].parameters["properties"]["entity_type"]["enum"]
+        assert "event" in by_name["create_entity"].parameters["properties"]["entity_type"]["enum"]
         assert "room" not in by_name["create_entity"].parameters["properties"]["entity_type"]["enum"]
-        assert "fitted_to" in by_name["create_relationship"].parameters["properties"]["relationship_type"]["enum"]
+        assert "happened_to" in by_name["create_relationship"].parameters["properties"]["relationship_type"]["enum"]
         assert "at" in by_name["get_parts_on_vehicle"].parameters["properties"]
         assert by_name["get_parts_on_vehicle"].parameters["required"] == ["vehicle_id"]
+        assert {"kind", "since", "until", "at"} <= set(by_name["get_events"].parameters["properties"])
 
     def test_a_domain_may_not_redeclare_an_engine_tool(self):
         from inbetweenies.domain import DomainTool, build_manifest
@@ -109,21 +113,22 @@ class TestCatalog:
 
 @pytest.fixture
 def garage():
-    """An in-memory vehicles graph: one car, two tyre sets, one open issue."""
+    """An in-memory vehicles graph: one car, two tyre sets, three events."""
     g = VersionedInMemoryGraph()
     g.manifest = VEHICLES
-    g.add_entity(make_entity("car", "vehicle", "Outback", {"kind": "car"}))
+    g.add_entity(make_entity("car", "vehicle", "Boxster", {"kind": "car"}))
     g.add_entity(make_entity("bay", "location", "Bay 1"))
-    g.add_entity(make_entity("old", "part", "Michelins", {"category": "tyres"}))
-    g.add_entity(make_entity("new", "part", "Continentals", {"category": "tyres"}))
+    g.add_entity(make_entity("old", "part", "Old tyres", {"category": "tyres"}))
+    g.add_entity(make_entity("new", "part", "New tyres", {"category": "tyres"}))
     g.add_entity(make_entity("wrench", "tool", "Torque wrench"))
-    g.add_entity(make_entity("i1", "issue", "Squeal", {"status": "open"}))
-    g.add_entity(make_entity("i2", "issue", "Creak", {"status": "resolved"}))
+    g.add_entity(make_entity("e1", "event", "Bought", {"kind": "purchase", "when": "2009-05-16"}))
+    g.add_entity(make_entity("e2", "event", "Clutch", {"kind": "service", "when": "2016-03-12"}))
+    g.add_entity(make_entity("e3", "event", "Fuel", {"kind": "fuel", "when": "2026-09-06"}))
     g.connect("r1", "car", "bay", "located_in")
     g.connect("r2", "new", "car", "fitted_to")
     g.connect("r3", "wrench", "car", "compatible_with")
-    g.connect("r4", "i1", "car", "issue_for")
-    g.connect("r5", "i2", "car", "issue_for")
+    for i, e in enumerate(("e1", "e2", "e3")):
+        g.connect(f"h{i}", e, "car", "happened_to")
     return g
 
 
@@ -132,16 +137,21 @@ class TestDeclaredToolsRunOnAnyStore:
         result = await run_domain_tool(garage, VEHICLES.tool("get_parts_on_vehicle"), {"vehicle_id": "car"})
         assert result.success, result.error
         assert [p["id"] for p in result.result["parts"]] == ["new"]
-        assert result.result["anchor"] == {"id": "car", "name": "Outback", "type": "vehicle"}
+        assert result.result["anchor"] == {"id": "car", "name": "Boxster", "type": "vehicle"}
         assert result.result["count"] == 1
-
-    async def test_where_filters_on_content(self, garage):
-        result = await run_domain_tool(garage, VEHICLES.tool("get_open_issues"), {"vehicle_id": "car"})
-        assert [i["id"] for i in result.result["issues"]] == ["i1"]
 
     async def test_a_walk_may_keep_several_types(self, garage):
         result = await run_domain_tool(garage, VEHICLES.tool("get_tools_for_vehicle"), {"vehicle_id": "car"})
         assert [i["id"] for i in result.result["items"]] == ["wrench"]
+
+    async def test_get_events_filters_by_kind_and_date_on_the_events_own_axis(self, garage):
+        everything = await run_domain_tool(garage, VEHICLES.tool("get_events"), {"vehicle_id": "car"})
+        assert [e["kind"] for e in everything.result["events"]] == ["purchase", "service", "fuel"]
+        services = await run_domain_tool(garage, VEHICLES.tool("get_events"), {"vehicle_id": "car", "kind": "service"})
+        assert [e["entity"]["id"] for e in services.result["events"]] == ["e2"]
+        window = await run_domain_tool(garage, VEHICLES.tool("get_events"),
+                                       {"vehicle_id": "car", "since": "2010-01-01", "until": "2020-12-31"})
+        assert [e["entity"]["id"] for e in window.result["events"]] == ["e2"]
 
     async def test_anchor_of_the_wrong_type_is_an_error(self, garage):
         result = await run_domain_tool(garage, VEHICLES.tool("get_parts_on_vehicle"), {"vehicle_id": "bay"})
@@ -156,7 +166,7 @@ class TestDeclaredToolsRunOnAnyStore:
     async def test_the_store_enforces_the_vehicles_vocabulary(self, garage):
         refused = await garage.create_entity_tool("room", "Kitchen", {}, "alice")
         assert refused.success is False and "unknown entity_type 'room'" in refused.error
-        ok = await garage.create_entity_tool("vehicle", "Tarmac", {"kind": "bicycle"}, "alice")
+        ok = await garage.create_entity_tool("event", "Smog", {"kind": "inspection", "when": "2023-02-11"}, "alice")
         assert ok.success, ok.error
         wrong_way = await garage.create_relationship_tool("car", "new", "fitted_to")
         assert wrong_way.success is False and "does not permit" in wrong_way.error
@@ -172,7 +182,7 @@ class TestReplicaPicksItsDomain:
         from blowingoff.mcp.client import LocalMCPClient
         client = LocalMCPClient()
         assert client.manifest is VEHICLES
-        assert "get_parts_on_vehicle" in client.tools
+        assert "get_vehicle_history" in client.tools
         assert "get_devices_in_room" not in client.tools
         assert {t.name for t in catalog_for(VEHICLES)} == set(client.tools)
 
@@ -226,6 +236,10 @@ def _by_name(http, entity_type, name):
     return found[0]
 
 
+def _iso(key):
+    return TIMELINE[key].isoformat()
+
+
 class TestVehiclesServer:
     def test_advertises_exactly_the_vehicles_catalog(self, http):
         names = {t["name"] for t in http.get(f"{API}/mcp/tools").json()["tools"]}
@@ -241,79 +255,115 @@ class TestVehiclesServer:
                          json={"arguments": {"entity_type": "room", "name": "Kitchen", "content": {}}})
         assert resp.status_code == 400 and "unknown entity_type 'room'" in resp.text
 
-    def test_statistics_count_the_vehicles_vocabulary(self, http):
+    def test_statistics_count_the_capture_vocabulary(self, http):
         stats = _tool(http, "get_statistics")
-        assert stats["entity_types"]["vehicle"] == 3
-        assert stats["entity_types"]["part"] == 4
+        assert stats["entity_types"]["vehicle"] == 6   # Mini, Roadster, Lemons, trailer, Boxster, Elise
+        assert stats["entity_types"]["event"] >= 25
+        assert stats["entity_types"]["app"] == 2       # the MINI app and OVMS
         assert "room" not in stats["entity_types"]
-        assert stats["relationship_types"]["fitted_to"] == 3  # current edges; the Michelins' interval is closed
-        history = _tool(http, "list_relationships", relationship_type="fitted_to", include_history=True)
-        assert history["count"] == 4
 
-    def test_parts_now_and_parts_then(self, http):
-        outback = _by_name(http, "vehicle", "2019 Subaru Outback")
-        now = _tool(http, "get_parts_on_vehicle", vehicle_id=outback["id"])
-        assert [p["name"] for p in now["parts"]] == ["Continental TrueContact Tour (set of 4)"]
+    # -- the Roadster: telemetry summarised, a part with its own history ---- #
 
-        before_swap = (TIMELINE["tyres_swapped"].replace(month=6)).isoformat()
-        then = _tool(http, "get_parts_on_vehicle", vehicle_id=outback["id"], at=before_swap)
-        assert [p["name"] for p in then["parts"]] == ["Michelin CrossClimate2 (set of 4)"]
-        assert then["as_of"] == before_swap
+    def test_ovms_module_before_and_after_the_v3_swap(self, http):
+        roadster = _by_name(http, "vehicle", "2010 Tesla Roadster Sport")
+        now = {p["name"] for p in _tool(http, "get_parts_on_vehicle", vehicle_id=roadster["id"])["parts"]}
+        assert "OVMS v3 module" in now and "OVMS v2 module" not in now
+        before = _tool(http, "get_parts_on_vehicle", vehicle_id=roadster["id"],
+                       at=TIMELINE["roadster_ovms_v3"].replace(year=2022).isoformat())
+        names = {p["name"] for p in before["parts"]}
+        assert "OVMS v2 module" in names and "OVMS v3 module" not in names
 
-        before_michelins = TIMELINE["michelins_fitted"].replace(year=2022).isoformat()
-        assert _tool(http, "get_parts_on_vehicle", vehicle_id=outback["id"], at=before_michelins)["parts"] == []
+    def test_battery_condition_reports_are_events_not_telemetry(self, http):
+        roadster = _by_name(http, "vehicle", "2010 Tesla Roadster Sport")
+        reports = _tool(http, "get_events", vehicle_id=roadster["id"], kind="condition_report")["events"]
+        assert [e["entity"]["content"]["cac_ah"] for e in reports] == [135, 129]
+        assert all(e["entity"]["content"]["source"] == "feed" for e in reports)
 
-    def test_open_issues_is_the_to_do_list(self, http):
-        outback = _by_name(http, "vehicle", "2019 Subaru Outback")
-        tarmac = _by_name(http, "vehicle", "Specialized Tarmac SL7")
-        assert [i["name"] for i in _tool(http, "get_open_issues", vehicle_id=outback["id"])["issues"]] == ["Rear brake squeal"]
-        assert _tool(http, "get_open_issues", vehicle_id=tarmac["id"])["issues"] == []
+    # -- the Lemons car: identity as parts over time, hours, off-site ------ #
 
-    def test_history_is_one_dated_timeline(self, http):
-        outback = _by_name(http, "vehicle", "2019 Subaru Outback")
-        history = _tool(http, "get_vehicle_history", vehicle_id=outback["id"])
+    def test_the_shell_is_a_part_and_the_reshell_is_history(self, http):
+        lemons = _by_name(http, "vehicle", "E30 Lemons car #4471-L")
+        assert lemons["content"]["identity"]["lemons_logbook"] == "4471-L"
+        now = {p["name"] for p in _tool(http, "get_parts_on_vehicle", vehicle_id=lemons["id"])["parts"]}
+        assert "Shell WBAAA1300K8129083" in now and "M20B25 engine #2" in now
+        then = _tool(http, "get_parts_on_vehicle", vehicle_id=lemons["id"], at=_iso("lemons_race_1"))
+        assert {p["name"] for p in then["parts"]} == {"Shell WBAAA1300K8124471", "M20B25 engine #1"}
+        races = _tool(http, "get_events", vehicle_id=lemons["id"], kind="race")["events"]
+        assert [e["entity"]["content"]["hours"] for e in races] == [14, 96]
+
+    def test_spares_and_the_trailer_live_at_the_yard(self, http):
+        yard = _by_name(http, "location", "Team storage yard, Hollister")
+        items = {i["name"] for i in _tool(http, "get_items_in_location", location_id=yard["id"])["items"]}
+        assert "M20B25 engine #3 (spare)" in items
+        assert "Fuel pump (spare)" not in items  # fitted at Sonoma; its yard interval ended
+        vehicles_now = {v["name"] for v in _tool(http, "get_vehicles_in_location", location_id=yard["id"])["vehicles"]}
+        assert vehicles_now == {"E30 Lemons car #4471-L"}  # the trailer came home in March
+        vehicles_then = {v["name"] for v in _tool(http, "get_vehicles_in_location", location_id=yard["id"],
+                                                   at=_iso("lemons_race_2"))["vehicles"]}
+        assert vehicles_then == {"E30 Lemons car #4471-L", "Car trailer"}
+
+    # -- the Boxster: a long family history ------------------------------- #
+
+    def test_boxster_history_is_one_dated_timeline(self, http):
+        boxster = _by_name(http, "vehicle", "2009 Porsche Boxster S")
+        history = _tool(http, "get_vehicle_history", vehicle_id=boxster["id"])
         kinds = [(e["when"][:10], e["kind"]) for e in history["events"]]
-        assert kinds == [
-            ("2021-05-14", "purchased"),
-            ("2023-09-10", "part_fitted"),
-            ("2024-04-02", "serviced"),
-            ("2025-03-01", "issue_opened"),
-            ("2025-08-22", "part_fitted"),
-            ("2025-08-22", "part_removed"),
-            ("2025-08-22", "serviced"),
-        ]
+        assert kinds[:3] == [("2009-05-16", "purchase"), ("2009-05-16", "moved_in"), ("2011-06-04", "service")]
+        assert ("2019-10-05", "transfer") in kinds
+        assert ("2016-03-12", "part_fitted") in kinds and ("2016-03-12", "service") in kinds
+        assert kinds[-1] == ("2026-09-06", "fuel")
         whens = [e["when"] for e in history["events"]]
         assert whens == sorted(whens)
 
-    def test_history_as_of_knows_nothing_of_the_future(self, http):
-        outback = _by_name(http, "vehicle", "2019 Subaru Outback")
-        early = _tool(http, "get_vehicle_history", vehicle_id=outback["id"],
-                      at=TIMELINE["outback_oil_change"].isoformat())
-        assert [e["kind"] for e in early["events"]] == ["purchased", "part_fitted", "serviced"]
+    def test_boxster_events_in_a_window(self, http):
+        boxster = _by_name(http, "vehicle", "2009 Porsche Boxster S")
+        window = _tool(http, "get_events", vehicle_id=boxster["id"], since="2019-01-01", until="2021-12-31")["events"]
+        assert [e["kind"] for e in window] == ["transfer", "repair"]
 
-    def test_locations_and_tools(self, http):
-        shelf = _by_name(http, "location", "Workshop Shelf")
-        items = _tool(http, "get_items_in_location", location_id=shelf["id"])
-        assert {i["entity_type"] for i in items["items"]} == {"part", "tool"}
-        bay1 = _by_name(http, "location", "Garage Bay 1")
-        assert [v["name"] for v in _tool(http, "get_vehicles_in_location", location_id=bay1["id"])["vehicles"]] == ["2019 Subaru Outback"]
-        zero = _by_name(http, "vehicle", "Zero SR/F")
-        assert [t["name"] for t in _tool(http, "get_tools_for_vehicle", vehicle_id=zero["id"])["items"]] == ["Level 2 EV charger"]
-        assert [p["name"] for p in _tool(http, "get_purchases_for", item_id=zero["id"])["purchases"]] == ["Zero purchase"]
+    def test_history_as_of_knows_nothing_of_the_future(self, http):
+        boxster = _by_name(http, "vehicle", "2009 Porsche Boxster S")
+        early = _tool(http, "get_vehicle_history", vehicle_id=boxster["id"], at=_iso("boxster_road_trip"))
+        assert [e["kind"] for e in early["events"]] == ["purchase", "moved_in", "service", "road_trip"]
+
+    # -- the Mini: the feed writes logbook-grade facts --------------------- #
+
+    def test_the_mini_app_manages_the_car_and_its_facts_are_events(self, http):
+        mini = _by_name(http, "vehicle", "2026 Mini Cooper SE")
+        from_feed = [e for e in _tool(http, "get_events", vehicle_id=mini["id"])["events"]
+                     if e["entity"]["content"]["source"] == "feed"]
+        assert [e["kind"] for e in from_feed] == ["software_update", "charge", "odometer"]
+        connected = _tool(http, "get_connected", entity_id=mini["id"], relationship_type="manages", direction="incoming")
+        assert [c["entity"]["name"] for c in connected["connected"]] == ["MINI app"]
+
+    # -- the Elise: a UK-registered car, MOT history as a feed, GBP --------- #
+
+    def test_uk_vehicle_carries_its_own_units_and_admin(self, http):
+        elise = _by_name(http, "vehicle", "1998 Lotus Elise S1")
+        assert elise["content"]["country"] == "UK"
+        assert elise["content"]["identity"]["registration_country"] == "UK"
+        mots = _tool(http, "get_events", vehicle_id=elise["id"], kind="inspection")["events"]
+        assert [e["entity"]["content"]["test"] for e in mots] == ["MOT", "MOT"]
+        assert all(e["entity"]["content"]["currency"] == "GBP" for e in mots)
+        fuel = _tool(http, "get_events", vehicle_id=elise["id"], kind="fuel")["events"]
+        assert fuel[0]["entity"]["content"]["litres"] == 45.2
+        lockup = _by_name(http, "location", "Lock-up, Cambridge")
+        assert lockup["content"]["country"] == "UK"
+        assert [v["name"] for v in _tool(http, "get_vehicles_in_location", location_id=lockup["id"])["vehicles"]] == ["1998 Lotus Elise S1"]
+
+    # -- writes through the tools, the way a walk commits ------------------ #
 
     def test_a_vehicle_walk_writes_through_the_tools(self, http):
-        trailer = _tool(http, "create_entity", entity_type="vehicle", name="Bike trailer",
-                        content={"kind": "trailer", "make": "Thule"})["entity"]
-        shelf = _by_name(http, "location", "Workshop Shelf")
-        _tool(http, "create_relationship", from_entity_id=trailer["id"], to_entity_id=shelf["id"],
-              relationship_type="located_in")
-        hitch = _tool(http, "create_entity", entity_type="part", name="Hitch", content={"category": "hitch"})["entity"]
-        _tool(http, "create_relationship", from_entity_id=hitch["id"], to_entity_id=trailer["id"],
-              relationship_type="fitted_to")
-        assert [p["id"] for p in _tool(http, "get_parts_on_vehicle", vehicle_id=trailer["id"])["parts"]] == [hitch["id"]]
+        boxster = _by_name(http, "vehicle", "2009 Porsche Boxster S")
+        smog = _tool(http, "create_entity", entity_type="event", name="Smog check 2026",
+                     content={"kind": "inspection", "when": "2026-09-20", "odometer": 91500, "result": "pass",
+                              "source": "walk"})["entity"]
+        _tool(http, "create_relationship", from_entity_id=smog["id"], to_entity_id=boxster["id"],
+              relationship_type="happened_to")
+        inspections = _tool(http, "get_events", vehicle_id=boxster["id"], kind="inspection")["events"]
+        assert [e["when"] for e in inspections] == ["2023-02-11", "2026-09-20"]
         # The vocabulary is enforced on every write path, not just the type list.
         resp = http.post(f"{API}/mcp/tools/create_relationship", json={"arguments": {
-            "from_entity_id": trailer["id"], "to_entity_id": hitch["id"], "relationship_type": "fitted_to"}})
+            "from_entity_id": boxster["id"], "to_entity_id": smog["id"], "relationship_type": "happened_to"}})
         assert resp.status_code == 400 and "does not permit" in resp.text
 
     def test_sync_is_domain_blind(self, http):
