@@ -66,9 +66,10 @@ v0.2.2, v0.4.0, v0.5.0 or v0.7.0. Things a script author may notice:
   `/api/v1/mcp/tools` must be 401/403, and `/api/v1/graph/statistics` must be
   404 — a server still serving graph REST is older than v0.7.0.
 - **Matching clients:** KittenKong `adrianco/the-goodies-typescript`
-  **`v0.8.0`** (client unchanged since 0.7.0 apart from the pnpm install fix,
-  typescript#2; tagged so both repos pin the same version). It does not yet
-  read the catalog for another domain.
+  **`v0.8.1`** — v0.8.0's build output could not be started by `node`
+  (typescript#3; `tsx` worked); v0.8.1 fixes the packaging and documents the
+  MCP client config shape. It does not yet read the catalog for another
+  domain.
 
 ## v0.7.0 — the graph REST API is removed; concurrent edits merge
 
