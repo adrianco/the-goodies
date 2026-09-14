@@ -35,9 +35,11 @@ def tiny_jpeg():
 def main():
     fg = FGClient()
     cleanup = []   # (kind, id)
+    baseline_rels = None
     try:
         print("== gate 1: transport =="); st = fg.get_statistics()
         check(isinstance(st.get("total_entities"), int) and st["total_entities"] > 0, f"get_statistics: {st.get('total_entities')} entities / {st.get('total_relationships')} relationships")
+        baseline_rels = st.get("total_relationships")
 
         print("== gate 2: reads =="); rooms = fg.list_entities("room")
         check(len(rooms) > 0, f"list_entities(room) -> {len(rooms)}")
@@ -80,7 +82,8 @@ def main():
         fg.delete_entity(did, reason="selftest cleanup", is_error=True)
         rb = readback_other_process(did); check(rb.get("content", {}).get("deleted") is True, "tombstone: deleted=true in another process")
         check(not any(d["id"] == did for d in fg.list_entities("device")), "tombstoned device absent from list_entities")
-        cleanup.remove(("entity", did))
+        # Keep did in `cleanup` (re-tombstone is idempotent) so the cleanup phase
+        # also ends its still-open located_in edge — tombstoning left it dangling.
 
         print("== gate 6: vocabulary (informational) ==")
         for et in ("app", "automation", "home"):
@@ -97,10 +100,29 @@ def main():
         bad("unexpected exception"); traceback.print_exc()
     finally:
         print("== cleanup ==")
+        # Tombstoning an entity does NOT end its edges (they keep an open interval
+        # pointing at a deleted endpoint), so end every throwaway's relationships
+        # in BOTH directions before tombstoning it — otherwise the graph's
+        # relationship count drifts upward on every run (the-goodies#96).
+        ended = 0
+        for kind, eid in cleanup:
+            for finder in (dict(from_id=eid), dict(to_id=eid)):
+                try:
+                    for r in fg.list_relationships(**finder):
+                        if r.get("valid_to"):
+                            continue  # already ended (e.g. the gate-5 move)
+                        try: fg.end_relationship(r["id"], reason="selftest cleanup"); ended += 1
+                        except Exception as ex: print(f"  warn  could not end edge {str(r.get('id'))[:8]}: {ex}")
+                except Exception as ex: print(f"  warn  could not list edges for {eid[:8]}: {ex}")
         for kind, eid in cleanup:
             try: fg.delete_entity(eid, reason="selftest cleanup", is_error=True)
             except Exception as ex: print(f"  warn  could not tombstone {eid[:8]}: {ex}")
-        print(f"  tombstoned {len(cleanup)} throwaway entities")
+        print(f"  ended {ended} edges, tombstoned {len(cleanup)} throwaway entities")
+        # Gate 24: the graph is back exactly where it started — no relationship creep.
+        if baseline_rels is not None:
+            final_rels = fg.get_statistics().get("total_relationships")
+            check(final_rels == baseline_rels,
+                  f"relationship count restored to baseline ({baseline_rels}); after cleanup = {final_rels}")
     print(f"\n--- {PASS} passed, {FAIL} failed ---"); return 0 if FAIL == 0 else 1
 
 if __name__ == "__main__":
