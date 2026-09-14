@@ -1,6 +1,6 @@
 # ADR-001: Primary datastore — SQLite stays; explicit exit criteria for Postgres
 
-**Status:** Proposed · 2026-08-01
+**Status:** Implemented · proposed 2026-08-01, confirmed 2026-09-14 — SQLite stayed the system of record through v0.8.0; ADR-002's access layer landed (the precondition in Consequences); none of the four Postgres triggers has fired. Blobs stayed in-row (ADR-007 withdrawn). One file per domain (ADR-018) keeps the single-file backup story.
 
 *Scale and platform re-examined against measurement and prior art in [ADR-014](ADR-014-temporal-prior-art-and-platform.md): SQLite and Python confirmed, with the triggers that would overturn either written down.*
 

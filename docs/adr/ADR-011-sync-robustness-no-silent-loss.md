@@ -1,6 +1,6 @@
 # ADR-011: Sync robustness — no write is ever silently lost
 
-**Status:** Partially implemented · proposed 2026-08-01 · §1/§2/§3/§4 landed (§4 extended 2026-08-22 to cover topology) · Companion to ADR-005 (the ladder decides *who wins*; this ADR guarantees *nobody vanishes*). Carries the salvage from the deleted sync stack (ADR-008) and one live bug.
+**Status:** Implemented except §5 · proposed 2026-08-01 · §1/§2/§3/§4 landed (§4 extended 2026-08-22 to cover topology); the anti-decision on merge authorship is enforced from 2026-09-14 (merge versions carry the winning writer's user id and `content.merged: true`, not a synthetic author). **§5 (persisted manual-review queue) is unbuilt and stays so**: no entity type is flagged `manual` in any manifest and the observed conflict rate is nil; it is revived only if a domain declares a manual type. · Companion to ADR-005 (the ladder decides *who wins*; this ADR guarantees *nobody vanishes*). Carries the salvage from the deleted sync stack (ADR-008) and one live bug.
 
 ## Context
 

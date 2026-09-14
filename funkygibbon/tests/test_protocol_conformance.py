@@ -466,7 +466,8 @@ class TestResolutionLadder:
         [record] = body["conflicts"]
         assert record["resolution_strategy"].startswith("three_way_merge")
         current = self._current(client, headers)
-        assert current["content"] == {"colour": "blue", "watts": 60}, "both edits survive"
+        # ADR-011: the server-authored merge is marked, and authored by the winner.
+        assert current["content"] == {"colour": "blue", "watts": 60, "merged": True}, "both edits survive"
         assert set(current["parent_versions"]) == {v2, v3}
         assert current["version"] == record["resolved_version"]
         assert "M" in body["applied"], "the client may drop its pending mark"
@@ -480,7 +481,7 @@ class TestResolutionLadder:
         [record] = body["conflicts"]
         assert "lww:colour" in record["resolution_strategy"]
         current = self._current(client, headers)
-        assert current["content"] == {"colour": "green", "watts": 60}
+        assert current["content"] == {"colour": "green", "watts": 60, "merged": True}
 
     def test_rung_2_device_capabilities_are_unioned(self, client, headers):
         v1 = self._seed(client, headers, {"capabilities": ["power"]}, entity_type="device", name="Lamp")

@@ -229,7 +229,7 @@ design intends.
 **Cross-domain queries.** Domains are isolated databases with their own sync
 timelines and digests. A query never spans them.
 
-**Cross-domain references** are supported, by value (ADR-012 §4): an interval
+**Cross-domain references** are designed, not built — [ADR-017](adr/ADR-017-cross-domain-references.md) (promoted from ADR-012 §4, with temporal semantics and the four broken-reference states): an interval
 edge living entirely in the referring domain, whose remote endpoint is a
 qualified `(domain, entity_id)` plus a cached label. The vehicles domain's "parts box stored
 in house room X" is a *vehicles* row — it syncs on vehicles' timeline and counts in
@@ -257,9 +257,9 @@ be a reference, not a second home for the same entity.
 | Boundary validation wired to the manifest | done — tool calls and sync pushes; the legacy enums are no longer consulted on any write path |
 | Declarative MCP tools | done — `DomainTool` / `Walk`; the house's `get_devices_in_room` is a walk, its other four are handlers in `domains/house/tools.py`; nothing house-specific remains in the engine |
 | Skills named by the manifest | done — `manifest.skills`; house ships four (`domains/house/skills/`, from Corfe's #92), vehicles one |
-| Per-domain database files and endpoints | done as **one process per domain** (`DOMAIN_MANIFEST`, `DATABASE_URL`, `API_PORT`); one process mounting N domains is not started |
+| Per-domain database files and endpoints | done as **one process per domain** (`DOMAIN_MANIFEST`, `DATABASE_URL`, `API_PORT`) — ADR-018; one process mounting N domains is deferred |
 | `domains/vehicles` | **first pass done** — manifest, seed, 8 tools, `vehicle-walk` skill, tests (`tests/test_vehicles_domain.py`) |
-| Cross-domain references (§4) | not started |
+| Cross-domain references (§4) | proposed — ADR-017 |
 | KittenKong reads its domain from the catalog | not started — the TypeScript client still hard-codes the house tools |
 
 The second domain is **`vehicles`**, not `garage`: `garage` is a room name in

@@ -789,17 +789,22 @@ class SyncHandler:
             strategy += "+lww:" + ",".join(sorted(conflicted))
 
         # Store the incoming edit as history first, then the merge on top.
+        # ADR-011's anti-decision: no synthetic "sync-merge" author. The merge
+        # version carries the WINNING writer's user id and a `merged: true`
+        # marker so history shows who prevailed and that the server merged.
+        winner = change.entity.user_id if remote_wins else existing.user_id
+        content["merged"] = True
         await self._insert_version(change, becomes_latest=False)
         merge = SyncChange(
             change_type="update",
             entity=EntityChange(
                 id=change.entity.id,
-                version=Entity.create_version("server-merge"),
+                version=Entity.create_version(winner or change.entity.user_id or "sync"),
                 entity_type=entity_type,
                 name=name,
                 content=content,
                 source_type=getattr(existing.source_type, "value", existing.source_type),
-                user_id=change.entity.user_id,
+                user_id=winner or change.entity.user_id,
                 parent_versions=[existing.version, change.entity.version],
             ),
         )

@@ -1,6 +1,6 @@
 # ADR-009: The client is a temporal replica — one query interface, time is always a parameter
 
-**Status:** Partially implemented · proposed 2026-08-01 (v2 — rewritten; supersedes the latest-only cache draft after the client-side as-of requirement landed) · temporal storage landed 2026-08-22 on `feat/v3-temporal`.
+**Status:** Implemented except §5 · proposed 2026-08-01 (v2 — rewritten; supersedes the latest-only cache draft after the client-side as-of requirement landed) · §1–§4 and §6 landed: temporal storage 2026-08-22 (`feat/v3-temporal`, v0.5.0), interval edges and as-of reads in both replicas (blowing-off and KittenKong, v0.5.0–v0.6.0). **§5 (history horizon) is deliberately unbuilt** — no client needs it; the protocol was shaped so adding it is not a protocol change.
 
 **What is done:** the Python client (blowing-off) stores edges as intervals rather than mutating them in place, persists `valid_from`/`valid_to` across restarts, keeps retired intervals as history, derives its room index from current edges only, takes an `at` argument on local edge reads, and now *receives* edge intervals on the pull (ADR-005 §3) rather than only sending them — with the pull-guard extended to edges, so a pending local edit is not overwritten before it has been adjudicated. Before this it flattened its whole history on every save/load cycle and destroyed prior topology on every move — so it could not have agreed with the server about the past even in principle.
 

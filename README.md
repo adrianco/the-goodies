@@ -20,7 +20,7 @@ the write that loses is *kept* — stored as a version row, acknowledged, and
 recoverable. A concurrent write can lose prominence; it can never lose existence.
 Replicas then verify they actually agree, rather than assuming it.
 
-The design is written down: 15 [ADRs](docs/adr/) covering the datastore, the
+The design is written down: 18 [ADRs](docs/adr/) covering the datastore, the
 temporal model, the sync protocol, and the domain abstraction, each with the
 alternatives that were rejected and why.
 
@@ -188,7 +188,8 @@ Being precise, because the temporal work is real but mostly unreleased:
 | Domain abstraction — vocabulary in a manifest, not the schema | **shipped** ([ADR-012](docs/adr/ADR-012-domain-abstraction.md)) |
 | Interval edges (`valid_from` / `valid_to`), `inbetweenies-v3` wire | **landing** — implemented, not yet released |
 | `snapshot(T)`, `diff(T1,T2)`, `at` on every read | **designed, not built** |
-| Second domain (`vehicles`) instantiated | **first pass shipped** — [domains/vehicles](domains/vehicles/README.md): manifest, seed, eight declared tools, the `vehicle-walk` skill; runs standalone or alongside the house |
+| Second domain (`vehicles`) instantiated | **first pass shipped** — [domains/vehicles](domains/vehicles/README.md), [ADR-016](docs/adr/ADR-016-vehicles-domain.md) (vocabulary under review): manifest, seed, eight declared tools, the `vehicle-walk` skill; runs alongside the house as its own process ([ADR-018](docs/adr/ADR-018-multi-domain-hosting.md)) |
+| Cross-domain references — time-stamped links between separate back ends | **proposed** ([ADR-017](docs/adr/ADR-017-cross-domain-references.md)) |
 | Vector similarity via sqlite-vec | **deferred** — conditional on embeddings having an owner |
 
 The v3 cutover is a **hard** one: no compatibility window, no version
