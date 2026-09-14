@@ -64,7 +64,17 @@ The owner's description of the actual use (2026-09-14):
    structure into proper entities and relationships — the way ADR-013 cleaned
    up the house from live data rather than from its seed. Until then, resist
    modelling.
-5. **One walk skill, many prompt packs.** Cars, bikes, race cars and
+5. **The record is durable; the interface is disposable.** The graph — one
+   append-only SQLite file per domain, dated rows, interval edges, plain
+   string types — is the long-term artefact and is designed to outlive the
+   software around it (readable with any SQLite tool; backed up by copying
+   the file; ADR-001, ADR-004). The MCP server, the declared tools and the
+   walk skills are the *interface*: tools are data in the manifest, the
+   walk's questions are prose, feeds are scripts that write events, and a
+   promoted entity type is a re-labelling migration (ADR-013's precedent),
+   never a rebuild. Invest in the record's invariants; change everything
+   else freely.
+6. **One walk skill, many prompt packs.** Cars, bikes, race cars and
    restorations differ in the *questions asked*, not in the mechanism. One
    `vehicle-walk` with per-kind and per-lifecycle-stage prompt packs (§3), so
    the mechanism cannot drift across four skills.

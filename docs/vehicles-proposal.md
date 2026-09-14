@@ -136,6 +136,16 @@ The owner's own examples of what the record must be able to answer, and how each
 
 None of these needed a new entity type. They needed the events to carry a date, a symptom and a fix, and the parts to carry intervals — which is what the walk asks for.
 
+## The record is permanent; the software around it is not
+
+Two different things are being built, and they have very different lifetimes.
+
+**The knowledge history graph is the long-term, durable record.** It is one ordinary database file per collection, append-only: every fact is a dated row that is never overwritten, every part and place carries the period it was true for, and the types are plain words (`vehicle`, `event`, `fitted_to`) rather than a schema that has to change when you learn something new. Back it up by copying the file. Read it in fifty years with any SQLite tool and it still says what happened to the car and when, without any of the software described here. That is the thing you keep, and it is designed to outlive everything else on this page — including the AI models that help you write to it.
+
+**The MCP server, its tools and the walk skills are the interface, and they are meant to be evolved.** The tools are declared as data — a name, which edge to follow, what to keep — so adding *"how many races did that gearbox run"* was an afternoon, not a migration. The walk's questions are prose in a file; change them when a walk goes badly. A feed integration is a script that writes events. When real walks show that *modification* deserves its own entity, it is promoted by re-labelling rows, not by rebuilding the record. Even the server itself could be replaced: the file, its rows and their dates are the contract.
+
+So the bet is asymmetric on purpose. Get the record's few invariants right now — dated, append-only, evidence attached, intervals on parts and places — and let everything that reads and writes it change as often as it needs to.
+
 ## The experiment
 
 I do not think the right set of entities can be designed at a desk. The plan is to walk a few vehicles of each kind with a deliberately loose vocabulary — "vehicle, part, location, event-of-some-kind, note, photo, document" — and then look at what actually recurs with structure. Services always have mileage and parts; modifications always have a displaced original and a reversible flag; track days have a venue and a setup. Those become proper things. The rest stay as dated events with text and pictures. That is how the house side of this system found its real vocabulary too: from live data, not from the design.
