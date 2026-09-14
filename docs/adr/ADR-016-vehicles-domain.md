@@ -1,148 +1,201 @@
-# ADR-016: The vehicles domain
+# ADR-016: The vehicles domain — a walk-first knowledge history graph
 
-**Status:** Proposed · 2026-09-14 · A first pass shipped 2026-09-13 in `1225b32`
-(v0.8.0): manifest, seed, eight tools, `vehicle-walk`, `tests/test_vehicles_domain.py`.
-**The vocabulary (§1) is under owner review against the real use cases** and
-will be revised before this ADR is accepted; the *shape* of a domain (§2) is
-the durable part and is not in question.
+**Status:** Accepted in principle · 2026-09-14 · Owner decisions of 2026-09-14
+recorded in §1; the vocabulary in §2 is a deliberately loose *capture*
+vocabulary and will be revised from real walks (§4) before this ADR is marked
+Implemented. A first pass with a tighter, guessed vocabulary shipped
+2026-09-13 in `1225b32` (v0.8.0) and is superseded by this text.
 
 ## Context
 
-ADR-012 abstracted the engine from the house and named vehicles as the
-second domain: a car collection — what vehicles exist, each one's history,
-issues and service records — chosen because "history of the cars" is exactly
-the temporal model (ADR-004) read as a story. The owner's sequencing was
-abstract → prove on house → instantiate vehicles. This ADR records the
-instantiation: what the vehicles domain says, why it says it that way, and
-what proving the abstraction cost the engine.
+ADR-012 named vehicles as the second domain and the proof that the engine is
+domain-blind. The first pass proved that (and fixed the engine where it was
+not — every write path still coerced through house enums, the house tools
+were engine methods, `domains/` was not packaged; all fixed in v0.8.0, none of
+it vehicles-specific). What it got wrong was the *subject*: it modelled a
+garage of daily drivers with a parts shelf, from imagination.
 
-What building it exposed (recorded because it is why v0.8.0 exists):
-the abstraction was *declared* but not *real* at v0.7.0. Every write path still
-coerced through the legacy house enums (`EntityType("vehicle")` raised), the
-five house tools were methods on the engine's `MCPTools`, the tool catalog
-hard-coded house `enum`s, and `domains/` was not even packaged. None of that
-was visible while the only domain was the house. The second domain is the
-test that a domain abstraction is real; this one failed it until the engine
-was fixed.
+The owner's description of the actual use (2026-09-14):
+
+- The collection is cars, bikes and race cars, some new, some collector
+  restorations. Storage may not be at the house.
+- Each vehicle needs nicknames, a detailed specification, and its
+  modifications from stock.
+- **The room-walk mechanism is the main data entry method**: stand by the
+  vehicle with a phone, take pictures, talk; the transcript becomes notes;
+  nothing is written until reviewed and confirmed.
+- **Full history**: the pre-purchase evaluation (including vehicles looked at
+  and not bought), ownership, sale, and the historical record *after* sale.
+- Newer cars have apps and possible data feeds.
+- **FunkyGibbon is the knowledge history graph, not the logging backend for
+  high-volume data.** Fuel and fast-charge purchase history is useful; trip
+  records belong elsewhere unless a trip is a special event.
+- The details are not known yet. The right way to find the entities and
+  relationships is to do a few example walks of each kind and then work them
+  out — not to design them first.
 
 ## Decision
 
-### 1. Vocabulary
+### 1. Principles (the durable part)
 
-One `vehicle` type, not `car` / `bicycle` / `motorcycle`. `content.kind` says
-which. Everything the domain asks — parts, tools, purchase, service, issues,
-location — applies to all of them alike, and a walk skill that must choose
-between five types before it can record anything is a worse walk. The cost is
-that a rule cannot say "only cars have registrations"; that is a content
-convention, not a vocabulary one, and acceptable at this scale.
+1. **Walk-first.** The vehicle walk — the room walk's mechanism unchanged:
+   session file on disk, diffs accumulated, review, `confirm`, every created
+   entity read back before the session archives — is the primary way data
+   enters. Photos and transcribed notes are first-class outputs of a walk,
+   not afterthoughts. Import scripts and feeds are secondary and must produce
+   the same shapes a walk would.
+2. **A knowledge history graph, with a volume boundary.** The graph holds
+   *facts about the vehicle's life*: what it is, what happened to it, when,
+   where, at what cost, with what evidence. It does not hold telemetry. The
+   test for a feed record is *would a person write this in the car's
+   logbook?* — an odometer reading on a service date yes; every drive no. A
+   fuel or charging purchase is a logbook entry (money, place, odometer, a
+   few hundred a year); a trip is not unless it is a named event (a rally, a
+   track day, the drive home from the seller). App integrations summarise
+   before they write.
+3. **Full lifecycle, append-only.** A vehicle's record starts before purchase
+   (an evaluation: viewing, inspection, the decision — including *not*
+   buying, which leaves an entity with an evaluation and no purchase) and
+   continues after sale (where it went, later sightings, a later auction).
+   Nothing is deleted; a sold vehicle is a vehicle with a `sale` event, not a
+   tombstone.
+4. **Derive the vocabulary from examples.** Ship a loose capture vocabulary
+   (§2), do real walks of each kind (§4), then promote what recurs with
+   structure into proper entities and relationships — the way ADR-013 cleaned
+   up the house from live data rather than from its seed. Until then, resist
+   modelling.
+5. **One walk skill, many prompt packs.** Cars, bikes, race cars and
+   restorations differ in the *questions asked*, not in the mechanism. One
+   `vehicle-walk` with per-kind and per-lifecycle-stage prompt packs (§3), so
+   the mechanism cannot drift across four skills.
 
-| Type | Role |
-|---|---|
-| `vehicle` | The machine. `kind`, `make`, `model`, `year`, `registration`, `odometer` + `odometer_unit`. |
-| `part` | A component fitted now or once. Tyres, chain, battery, pads. |
-| `tool` | Workshop equipment that serves vehicles without being fitted. |
-| `location` | Bay, shelf, shed — the domain's own notion of place (not a house room; see ADR-017). |
-| `purchase` | What was paid, to whom, when. One purchase may cover several items, so it is an entity, not a field. |
-| `service_record` | One dated maintenance event with odometer and notes. |
-| `issue` | A known problem; `content.status` open / resolved, `opened_at` / `resolved_at`. |
-| `invoice` | **Attachment** (PDF) — this domain's counterpart of the house's `manual`. |
-| `note` | Free text. |
+### 2. Capture vocabulary (loose on purpose)
 
-`photo` / `has_photo` and `app` / `manages` are inherited from the base and
-not restated (ADR-013 §3/§4).
+Everything a walk captures is one of: *a thing*, *a place*, *something that
+happened to a thing on a date, with evidence*. So:
 
-**`fitted_to` is the interval edge of this domain.** A part on a vehicle is
-`part -fitted_to-> vehicle` with `valid_from`; taking it off *ends* that
-interval; its replacement opens a new one the same instant, and `replaced`
-(new → old) records the succession. `get_parts_on_vehicle(at=…)` is therefore
-the same query as "what is on it now" — no history table, no status field,
-the ADR-004 model doing what it was built for. The seed's tyre swap is the
-worked example and the e2e test pins it: Michelins before 2025-08-22,
-Continentals after, nothing before 2023-09-10.
+| Type | Role | Notes |
+|---|---|---|
+| `vehicle` | The machine, across its whole life | `content.kind` (car / bike / motorcycle / race_car / ev / trailer …), `aliases`, `identity` (VIN, frame number, registration — whichever exist), `spec` (free-form factory/as-delivered specification: engine, drivetrain, paint code, trim, options), `status` (evaluating / owned / sold / …) |
+| `part` | A component with identity, fitted now or once, or on a shelf | Kept as an asset because restorations and modifications care about the displaced original |
+| `tool` | Workshop equipment | |
+| `location` | Where things are kept — **may be off-site** | `kind` (home garage / storage unit / shop / trailer / in transit), address. A house room is an *optional* ADR-017 reference, never required |
+| **`event`** | **Something that happened to a vehicle on a date** | `kind` open: `evaluation`, `purchase`, `service`, `repair`, `modification`, `inspection`, `fuel`, `charge`, `track_day`, `rally`, `show`, `sale`, `sighting`, `recall`, `software_update`, `condition_report` …; `when`, `odometer`, `cost`, `currency`, `where` (text or a location id), free text |
+| `note` | Transcribed speech, free text | The walk's transcript is a note on the vehicle |
+| `photo` | base attachment | |
+| `document` | This domain's attachment type (PDF/scan) | `kind`: invoice, build sheet, title, certificate, period photo, setup sheet … |
 
-Other edges: `located_in` (same word and meaning as the house), `compatible_with`
-(serves without being fitted), `purchased_via`, `service_for`, `used`
-(a job fitted a part or used a tool), `issue_for`, `resolved_by`,
-`documented_by` (notes; invoices onto purchases / services / vehicles), and
-`manages` narrowed to `app → vehicle`.
+Relationships, minimal: `located_in` (interval; vehicles, parts, tools →
+location), `fitted_to` (**interval**, part → vehicle — proven in the first
+pass and kept), `replaced` (part → part), `happened_to` (event → vehicle),
+`involved` (event → part / tool: what a service fitted, what a modification
+displaced), `documented_by` (anything → note / document), base `has_photo`,
+base `manages` narrowed to app → vehicle.
 
-Source types: `manual`, `imported`, `telemetry` (the vehicle or its app said
-so — the one source the house does not have), `generated`.
+**Why one `event` type with an open `kind`.** The alternative is deciding now
+that `service_record`, `modification`, `purchase`, `evaluation`, `sale` are
+each entities with their own shape — five guesses about structure the walks
+have not yet revealed. An event with a `kind` records all of them today with
+no loss (the free text and the evidence are what a walk produces anyway), and
+the promotion later is mechanical: a new type in the manifest and a migration
+that re-types the rows of that kind, exactly as ADR-013 re-typed notes into
+photos. What is *not* loose is the temporal spine: `event.when`,
+`fitted_to`'s interval and `located_in`'s interval are what make "what was on
+the car in March" and "where was it during the restoration" answerable, and
+they are set from day one.
 
-### 2. What a domain package is (the durable part)
+**Merge rules**: `vehicle.odometer` takes the higher reading (an odometer
+only goes up). Nothing else until the walks show a concurrent-edit pattern.
 
-```
-domains/vehicles/
-  manifest.py        vocabulary · merge rules · TOOLS · skills   (the contract)
-  tools.py           handlers, for the tools that are more than a walk
-  seed.py            a dated fixture on the same primitives as the house seed
-  skills/<name>/SKILL.md
-  README.md
-```
+**Tools**: the engine's 18, plus a small declared set that does not presume
+structure — `get_vehicle_history` (every event, oldest first, `at`-aware),
+`get_events(vehicle, kind, since, until)`, `get_parts_on_vehicle(at)`,
+`get_items_in_location`, `get_vehicles_in_location`, `get_tools_for_vehicle`.
+Anything more specific (`get_modifications`, `get_current_spec`,
+`get_service_due`) is added when its kind is promoted.
 
-plus one line in the root `pyproject.toml` package list. The engine is not
-touched; `tests/test_domain_isolation.py` fails if it is.
+### 3. The walk
 
-**Tools are declared, not coded.** Seven of the eight vehicles tools are
-`DomainTool(anchor, walk=(Walk(relationship, direction, target_types, where),), result_key)`;
-the engine renders the schema into the catalog and runs the walk against any
-store — server, replica, test double — `at`-aware. `get_parts_on_vehicle` and
-the house's `get_devices_in_room` are the same engine code with different
-constants, which is what ADR-012 §2 predicted. `get_vehicle_history` is the
-one handler: several walks stitched into one dated timeline is logic.
+`domains/vehicles/skills/vehicle-walk/SKILL.md`: the room walk's phases
+(orient → discovery loop → review → confirm → handoff) with:
 
-**Merge rule** (ADR-005 §2 rung 2): a vehicle's `odometer` only goes up; two
-concurrent readings merge to the higher. That is the whole list for now — the
-domain does not yet know enough about its own concurrent-edit patterns to
-declare more, and a rule that is wrong is worse than the generic merge.
+- **Lifecycle-stage packs** — *evaluating* (what is it, what did the seller
+  say, what did the inspection find, photos of everything, decision);
+  *owning* (the default: what is on it, what has been done, what is wrong,
+  what is where); *selling* (condition, price, buyer, what went with it);
+  *after* (where is it now, sightings).
+- **Kind packs** — *car* (spec, options, apps and feeds, service);
+  *new car / EV* (build sheet, warranty, software, charging);
+  *bike* (frame, groupset, wheelsets, fit, rides that were events);
+  *race car* (setup sheets, tyre sets, event log, scrutineering, damage);
+  *restoration* (originality, provenance, phases, condition reports,
+  displaced originals).
+- Every answer becomes a `vehicle`, `part`, `location` or an `event` of some
+  `kind` with photos and a note; the pack only changes which questions are
+  asked and which kinds are offered.
 
-**Skill:** `vehicle-walk` has the room walk's shape (session file → diffs →
-review → `confirm` → read-back before archive) and reuses the house's
-`fg_client.py` unchanged, because the client is domain-blind and auth is
-shared. It has not been used on a real garage yet.
+### 4. Deriving the real vocabulary
 
-### 3. What proving it changed in the engine
+Do at least two real walks per kind (car, bike, race car, restoration — one
+of them an evaluation of a vehicle not bought, one a vehicle already sold).
+The first three are named: a brand-new Mini Cooper SE (app feed), the 2010
+Tesla Roadster with its OVMS connection (third-party telemetry → monthly
+battery condition reports), and the E30-based Lemons race car stored off-site
+with its trailer and spares and no single VIN (identity as a set of numbers
+over time; hours not miles). `docs/vehicles-proposal.md` works each through.
+Then,
+then read the graph, not the design: which `event.kind`s recur, which carry
+structure beyond text (a service always has odometer and parts; a
+modification always has a displaced original and reversibility; a track day
+has a venue and a setup), which questions people actually ask of it. Promote
+those into typed entities, rules and tools; leave the rest as events. Rewrite
+§2 with what was found, mark this ADR Implemented, and record the migration
+the way ADR-013 did.
 
-Recorded so the next domain knows what to expect: nothing.
+Friends with collections are asked for input on the proposal at this stage
+(`docs/vehicles-proposal.md`), specifically on the questions a walk should
+ask and the questions they would want the graph to answer.
 
-The v0.8.0 engine changes — manifest-driven vocabulary on every write path
-including sync, `catalog_for(manifest)`, `DomainTool` / `Walk` and their
-executor, the five house tools leaving `MCPTools`, `domains/` packaged — were
-all fixes to ADR-012's abstraction, not accommodations of vehicles. The third
-domain should need a manifest and nothing else; if it needs an engine line,
-that line is a bug in the abstraction and gets an issue, as these did (#90,
-#91 were both the same class: a house rule table the manifest had not
-replaced).
+### 5. Feeds and apps
+
+An app integration is an `app` entity that `manages` the vehicle, writing
+events of the kinds above at the *logbook* granularity — an odometer on a
+date, a fault, a recall, a software update, a fast-charge purchase — with
+`source_type: telemetry`. Raw feeds (GPS traces, per-second telemetry, every
+charging session's curve) live in whatever system collects them; the graph
+may hold a `document` pointing at a summary. Deciding which feeds to
+integrate is deferred until a walk has recorded a vehicle that has one.
 
 ## Consequences
 
-- Vehicles runs today as its own server process and database file, alongside
-  the house, on a shared token (ADR-018). Both servers advertise only their
-  own catalog; house vocabulary at the vehicles endpoint is a 400.
-- The vocabulary is a first pass and *will* change. Because it is data, a
-  change is a manifest edit plus, if a type is renamed, a data migration of
-  the same kind ADR-013 did for the house — not a schema change. Candidates
-  already visible: VIN / frame number as the identity field rather than
-  `registration`; whether consumables (oil, brake fluid) are parts or service
-  content; whether `location` should be able to *be* a house room by reference
-  (ADR-017) rather than a parallel notion.
-- The seed carries no `invoice` blobs and the skill has no `vehicle_commit.py`
-  yet; both are gaps to fill on first real use.
-- Cross-domain references — the parts box kept in the house's garage — are the
-  next thing the vehicles domain actually needs and are ADR-017.
+- The manifest gets *smaller* than the first pass (`event` replaces
+  `purchase`, `service_record`, `issue`; `document` replaces `invoice`), and
+  the seed becomes three worked lifecycles rather than a parts inventory.
+  Existing tests are rewritten to the capture vocabulary.
+- The domain is usable for real walks now, before its final shape is known,
+  and the cost of being wrong is a manifest edit plus a re-typing migration —
+  not a schema change and not lost data.
+- Storage off-site means the vehicles domain's `location` is primary and the
+  house reference (ADR-017) is optional; the two domains stay separate back
+  ends (ADR-018).
+- The volume boundary (§1.2) is a rule, not a mechanism: nothing stops a feed
+  writing a thousand events a day. If a feed appears, its integration is
+  where the summarising happens, and `get_statistics` per `event.kind` is
+  how drift would show.
 
 ## Alternatives considered
 
-- **Per-kind entity types (`car`, `bicycle`, …)** — rejected above: every
-  tool and edge rule would be declared N times for the same idea.
-- **Service history as an inline list on the vehicle** — rejected: a service
-  fits parts and uses tools, so it has edges of its own; and the house learned
-  (ADR-013 §3, ordered `images[]` aside) that an inline list is where things
-  go to be invisible to traversal.
-- **Parts as content on the vehicle (`content.tyres = …`)** — rejected: the
-  point of the domain is that a part's life across vehicles is history, and
-  history lives on interval edges, not in a field that gets overwritten.
-- **A separate `garage` domain for tools and locations** — rejected before
-  writing (ADR-012's renaming note): `garage` is a house room name, and the
-  tools serve the vehicles; splitting them puts the domain's most common
-  question (`get_tools_for_vehicle`) across a boundary.
+- **Typed entities for service / modification / purchase from day one**
+  (the first pass) — rejected: five guesses at structure before any walk;
+  ADR-013 showed the house vocabulary designed from a seed was half unused
+  and shaped differently from the real data.
+- **Trips and telemetry as events** — rejected by the owner: this is a
+  knowledge history graph; a logbook, not a data logger.
+- **Per-kind entity types (`car`, `bike`, `race_car`)** — rejected: the
+  lifecycle, the walk and the temporal questions are identical across kinds;
+  the differences are prompt packs.
+- **A separate skill per kind** — rejected: four copies of one mechanism
+  drift; one skill with packs cannot.
+- **Waiting to build anything until the vocabulary is known** — rejected:
+  the vocabulary cannot be known without walks, and walks need a working
+  domain to write into.
