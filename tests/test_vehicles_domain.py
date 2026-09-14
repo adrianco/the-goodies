@@ -329,9 +329,11 @@ class TestVehiclesServer:
 
     def test_the_mini_app_manages_the_car_and_its_facts_are_events(self, http):
         mini = _by_name(http, "vehicle", "2026 Mini Cooper SE")
+        assert mini["content"]["country"] == "UK" and mini["content"]["identity"]["registration_country"] == "UK"
         from_feed = [e for e in _tool(http, "get_events", vehicle_id=mini["id"])["events"]
                      if e["entity"]["content"]["source"] == "feed"]
         assert [e["kind"] for e in from_feed] == ["software_update", "charge", "odometer"]
+        assert from_feed[1]["entity"]["content"]["currency"] == "GBP"
         connected = _tool(http, "get_connected", entity_id=mini["id"], relationship_type="manages", direction="incoming")
         assert [c["entity"]["name"] for c in connected["connected"]] == ["MINI app"]
 

@@ -40,17 +40,17 @@ And different stages of life get different questions: *evaluating* (what did the
 
 Vehicles from the actual collection (and one illustrative UK car), as the system would hold them. Dates, mileage and money are real fields; the text is what a walk transcribed. Each one stresses a different part of the design.
 
-### A brand-new Mini Cooper SE — the app-connected daily driver
+### A brand-new Mini Cooper SE, UK-registered — the app-connected daily driver
 
-Identity is easy (VIN, registration). The interesting part is the **feed**: the MINI app knows every charge and every drive. Only the logbook-grade facts come in.
+Identity is easy (VIN, a 26-plate registration mark). The interesting part is the **feed**: the MINI app knows every charge and every drive. Only the logbook-grade facts come in.
 
 | When | Miles | Event | Evidence |
 |---|---:|---|---|
-| 2026-07-19 | 0 | **Evaluation** — test drove at the dealer; spec chosen: Level 3, Chili Red, black roof, 18" wheels. | build sheet PDF |
-| 2026-08-30 | 6 | **Purchase** — delivered. Warranty and battery certificate attached; app paired. | invoice, warranty PDF |
-| 2026-08-30 | 6 | **Location** → home garage | |
+| 2026-07-19 | 0 | **Evaluation** — test drove at MINI Cambridge; spec chosen: Level 3, Chili Red, black roof, 18" wheels. | build sheet PDF |
+| 2026-08-30 | 6 | **Purchase** — delivered on a 26 plate, £36,500. Warranty and battery certificate attached; app paired; V5C to follow. | invoice, warranty PDF |
+| 2026-08-30 | 6 | **Location** → UK house garage | |
 | 2026-09-02 | 41 | **Software update** — from the app: 2026.3 (charging curve fix). | *from feed* |
-| 2026-09-11 | 380 | **Charge** — fast charge, Electrify America, Gilroy: 31 kWh, $14.88, 18 min. | *from feed* |
+| 2026-09-11 | 380 | **Charge** — fast charge, InstaVolt, Cambridge services: 31 kWh, £22.63, 18 min. | *from feed* |
 | 2026-09-30 | 640 | **Odometer** — month-end reading from the app. | *from feed* |
 
 What the app has that the logbook does not: the 22 home charges this month (summarised into one monthly `charge` event with kWh and cost), the 40 individual drives (not recorded), the live state of charge (not recorded). The rule is the same as for a paper logbook: fast charges you paid for, yes; every time you plugged in at home, one line a month; every drive, no.
@@ -111,7 +111,7 @@ Ask it *what has this car cost since it came to me* and it sums the events after
 
 ### A UK-registered car — the other side of the Atlantic *(illustrative)*
 
-The collection straddles the US and the UK, and the admin differs. In the UK the **registration mark** is the working identity, the V5C is the logbook, road tax and SORN are states the car is in, and — usefully — **the MOT history is a public feed** (DVLA), so every annual test arrives as an inspection event with its advisories and mileage. Money is in pounds, fuel in litres. The record holds all of that per vehicle; nothing about the design is American.
+The collection straddles the US and the UK (the Mini above is UK-registered), and the admin differs. In the UK the **registration mark** is the working identity, the V5C is the logbook, road tax and SORN are states the car is in, and — usefully — **the MOT history is a public feed** (DVLA), so every annual test arrives as an inspection event with its advisories and mileage. Money is in pounds, fuel in litres. The record holds all of that per vehicle; nothing about the design is American.
 
 | When | Miles | Event | Evidence |
 |---|---:|---|---|

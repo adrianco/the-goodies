@@ -11,8 +11,9 @@ the server opens the file.
 The four vehicles are the ones ``docs/vehicles-proposal.md`` works through,
 each stressing a different part of the capture vocabulary:
 
-* **2026 Mini Cooper SE** — a new EV with an app feed: only logbook-grade
-  facts arrive (a fast charge, a software update, a month-end odometer).
+* **2026 Mini Cooper SE**, UK-registered — a new EV with an app feed: only
+  logbook-grade facts arrive (a fast charge, a software update, a month-end
+  odometer); pounds, and a UK garage.
 * **2010 Tesla Roadster Sport** with an OVMS box — third-party telemetry
   summarised into monthly battery condition reports; the OVMS module is a
   part with its own v2 → v3 history.
@@ -102,33 +103,35 @@ async def populate_vehicles(populator: GraphPopulator) -> None:
                              key="home_driveway", at=T["boxster_bought"])
         yard = await ent(session, "location", "Team storage yard, Hollister",
                          {"kind": "yard", "address": "Hollister, CA", "country": "US"}, key="yard", at=T["lemons_bought"])
+        uk_garage = await ent(session, "location", "UK house garage",
+                              {"kind": "home_garage", "address": "Cambridge, UK", "country": "UK"}, key="uk_garage", at=T["mini_evaluated"])
         lockup = await ent(session, "location", "Lock-up, Cambridge",
                            {"kind": "storage_unit", "address": "Cambridge, UK", "country": "UK"}, key="lockup", at=T["elise_bought"])
 
         # ================================================================== #
-        # 2026 Mini Cooper SE -- a new EV with an app feed
+        # 2026 Mini Cooper SE -- a new EV with an app feed, UK-registered
         # ================================================================== #
         mini = await ent(session, "vehicle", "2026 Mini Cooper SE", {
             "kind": "ev", "make": "Mini", "model": "Cooper SE", "year": 2026,
-            "identity": {"vin": "WMW13DJ0XS2T00147", "registration": "9MNI SE1", "registration_country": "US", "state": "CA"},
-            "country": "US", "aliases": ["the Mini"], "status": "owned",
+            "identity": {"vin": "WMW13DJ0XS2T00147", "registration": "EY26 MNI", "registration_country": "UK"},
+            "country": "UK", "aliases": ["the Mini"], "status": "owned",
             "odometer": 640, "odometer_unit": "mi",
             "spec": {"trim": "Level 3", "colour": "Chili Red", "roof": "black", "wheels": "18in",
                      "battery_kwh": 54.2, "motor_kw": 160},
         }, key="mini", at=T["mini_evaluated"])
         await event(mini, "Test drive and spec", "evaluation", T["mini_evaluated"], odometer=0,
                     text="Test drove at the dealer; spec chosen: Level 3, Chili Red, black roof, 18in wheels.",
-                    where="MINI of San Francisco")
-        await event(mini, "Delivery", "purchase", T["mini_delivered"], odometer=6, cost=41900,
-                    text="Delivered. Warranty and battery certificate attached; app paired.")
-        await rel(session, mini, garage, "located_in", valid_from=T["mini_delivered"])
+                    where="MINI Cambridge")
+        await event(mini, "Delivery", "purchase", T["mini_delivered"], odometer=6, cost=36500, currency="GBP",
+                    text="Delivered on a 26 plate. Warranty and battery certificate attached; app paired; V5C to follow.")
+        await rel(session, mini, uk_garage, "located_in", valid_from=T["mini_delivered"])
         mini_app = await ent(session, "app", "MINI app", {"vendor": "BMW Group"}, key="mini_app")
         await rel(session, mini_app, mini, "manages", valid_from=T["mini_delivered"])
         await event(mini, "Software 2026.3", "software_update", T["mini_update"], odometer=41,
                     text="From the app: 2026.3 (charging curve fix).", source="feed")
-        await event(mini, "Fast charge, Gilroy", "charge", T["mini_charge"], odometer=380, cost=14.88,
-                    text="Electrify America, Gilroy: 31 kWh in 18 min.", source="feed",
-                    where="Electrify America, Gilroy", kwh=31, charge_kind="fast")
+        await event(mini, "Fast charge, Cambridge services", "charge", T["mini_charge"], odometer=380, cost=22.63, currency="GBP",
+                    text="InstaVolt, Cambridge services: 31 kWh in 18 min at 73p/kWh.", source="feed",
+                    where="InstaVolt, Cambridge services", kwh=31, charge_kind="fast")
         await event(mini, "Month-end odometer", "odometer", T["mini_odometer"], odometer=640,
                     text="Month-end reading from the app; 22 home charges this month, 118 kWh.",
                     source="feed", home_charges=22, home_kwh=118)

@@ -147,7 +147,7 @@ Anything more specific (`get_modifications`, `get_current_spec`,
 
 Do at least two real walks per kind (car, bike, race car, restoration — one
 of them an evaluation of a vehicle not bought, one a vehicle already sold).
-The first three are named: a brand-new Mini Cooper SE (app feed), the 2010
+The first three are named: a brand-new, UK-registered Mini Cooper SE (app feed), the 2010
 Tesla Roadster with its OVMS connection (third-party telemetry → monthly
 battery condition reports), and the E30-based Lemons race car stored off-site
 with its trailer and spares and no single VIN (identity as a set of numbers
