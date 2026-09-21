@@ -33,9 +33,34 @@ protocol and the edge table, and both changes are hard:
 Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
 below; the migration detects which shape it is starting from.
 
+## v0.8.1 — tombstones end their edges; `--verify` counts what the server counts
+
+**This is the tag both installs should be on.** Additive on v0.8.0; the one
+command upgrades, and there is no data migration.
+
+- **Tombstoning an entity ends its open edges** at the same moment (#96), in
+  both directions, returned as `ended_relationships`. An edge to something
+  that no longer exists was skipped by traversal but still counted as current
+  by `get_statistics` and `list_relationships`, so every retraction leaked a
+  row into the relationship count. Ended, not deleted: the intervals stay as
+  history and `at` still answers. Edges already left open by earlier
+  retractions are not touched — end them with `end_relationship` if your
+  count has crept.
+- **`migrate --verify` prints current counts** (#97) — the same numbers
+  `get_statistics` reports — with tombstoned, version-row and ended-interval
+  counts beside them.
+- **`fg_client_selftest.py` has 24 gates** (#98): it ends its own edges in
+  both directions and asserts it left the relationship count where it found it.
+- **The vehicles domain is a walk-first capture vocabulary** (ADR-016): one
+  open-kind `event` type, US and UK vehicles, `where_is` and
+  `get_part_history`. House installs are unaffected.
+- ADR-016/017/018 added; ADR-001/009/011 closed out. A server-authored merge
+  version carries the winning writer's user id and `content.merged: true`.
+- **Matching clients:** KittenKong `adrianco/the-goodies-typescript` **`v0.8.1`**.
+
 ## v0.8.0 — domains are pluggable; the vehicles domain; #90/#91 fixed
 
-**This is the tag both installs should be on.** v0.7.0 refuses two edges the
+v0.7.0 refuses two edges the
 house vocabulary declares — `device part_of device` (#90, 104 live edges at
 Roland) and `device documented_by note` (#91) — and both are fixed here, so
 an install whose room walk writes keypad buttons must not stop at v0.7.0
@@ -212,8 +237,8 @@ upgrade (#94, #96, #97). Read it before running the script.
 
 Things that surprise people afterwards: every write is a version and every
 delete a tombstone, so the table holds more rows than `get_statistics` counts;
-tombstoning an entity **ends its open edges** at the same moment (from the
-release after v0.8.0 — before that, end them yourself or the relationship
+tombstoning an entity **ends its open edges** at the same moment (from
+v0.8.1 — before that, end them yourself or the relationship
 count creeps); blobs are content-addressed and outlive their photo entity, so
 blob bytes only ever grow.
 
