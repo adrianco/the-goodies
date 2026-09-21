@@ -857,11 +857,25 @@ def verify_db(db_path: Path, domain: str) -> int:
 
         print(f"Database: {db_path}")
 
-        entities = cur.execute(
+        # #97: say what was counted. "Current" means what get_statistics means
+        # by it -- not tombstoned, interval open -- and the history is reported
+        # beside it, so an operator comparing against a baseline (#93) sees the
+        # same number the server reports and where the difference went.
+        latest = cur.execute(
             "SELECT COUNT(*) FROM entities WHERE is_latest = 1").fetchone()[0]
-        rels = cur.execute("SELECT COUNT(*) FROM entity_relationships").fetchone()[0]
+        tombstoned = cur.execute(
+            "SELECT COUNT(*) FROM entities WHERE is_latest = 1 "
+            "AND json_extract(content, '$.deleted') = 1").fetchone()[0]
+        versions = cur.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        open_edges = cur.execute(
+            "SELECT COUNT(*) FROM entity_relationships WHERE valid_to IS NULL").fetchone()[0]
+        ended_edges = cur.execute(
+            "SELECT COUNT(*) FROM entity_relationships WHERE valid_to IS NOT NULL").fetchone()[0]
         blobs = cur.execute("SELECT COUNT(*) FROM blobs").fetchone()[0]
-        print(f"  {entities} current entities, {rels} relationships, {blobs} blobs")
+        print(f"  {latest - tombstoned} current entities "
+              f"({tombstoned} tombstoned, {versions} version rows), "
+              f"{open_edges} current relationships ({ended_edges} ended, kept as history), "
+              f"{blobs} blobs")
 
         problems = 0
 

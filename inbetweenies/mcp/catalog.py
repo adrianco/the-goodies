@@ -288,7 +288,8 @@ ENGINE_TOOL_SPECS: Tuple[ToolSpec, ...] = (
             'Retract an entity by appending a tombstone version. Use this to '
             'remove something that is gone, or to mark a record as an error. '
             'Nothing is deleted: earlier versions remain readable, and the '
-            'reason is recorded. This is the only way to remove something.'
+            'reason is recorded. Its open edges are ended at the same moment '
+            '(kept as history). This is the only way to remove something.'
         ),
         parameters={
             'type': 'object',

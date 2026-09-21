@@ -645,6 +645,30 @@ def test_verify_passes_once_the_rebuild_has_run(corfe_db):
     assert verify_db(path, "domains.house.manifest:HOUSE") == 0
 
 
+def test_verify_reports_current_counts_and_the_history_beside_them(corfe_db, capsys):
+    """Issue #97: "current" must mean what get_statistics means by it.
+
+    --verify counted every is_latest row and every edge row and called both
+    "current", so a tombstone or an ended interval looked like something that
+    had appeared from nowhere when compared against a recorded baseline.
+    """
+    path, conn = corfe_db
+    run_migration(conn, apply=True)
+    latest, edges = (conn.execute(q).fetchone()[0] for q in (
+        "SELECT COUNT(*) FROM entities WHERE is_latest = 1", "SELECT COUNT(*) FROM entity_relationships"))
+    victim = conn.execute("SELECT id, version FROM entities WHERE is_latest = 1 LIMIT 1").fetchone()
+    conn.execute("UPDATE entities SET content = json_set(content, '$.deleted', json('true')) "
+                 "WHERE id = ? AND version = ?", victim)
+    edge = conn.execute("SELECT id FROM entity_relationships WHERE valid_to IS NULL LIMIT 1").fetchone()
+    conn.execute("UPDATE entity_relationships SET valid_to = '2026-09-14 00:00:00' WHERE id = ?", edge)
+    conn.commit()
+
+    assert verify_db(path, "domains.house.manifest:HOUSE") == 0
+    out = capsys.readouterr().out
+    assert f"{latest - 1} current entities (1 tombstoned," in out
+    assert f"{edges - 1} current relationships (1 ended, kept as history)" in out
+
+
 def test_verify_fails_on_any_model_column_the_database_lacks(corfe_db):
     """Generic form of #87: a future model column with no migration must fail
     --verify, not pass it and 500 in production."""

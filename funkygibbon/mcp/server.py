@@ -320,6 +320,13 @@ class FunkyGibbonMCPServer:
         entity = await self.graph_ops.get_entity(entity_id)
         if entity:
             await self._index_entity(entity)
+        # #96: the tombstone ended the entity's open edges; drop them from the
+        # index here too, in the same code path as the write (ADR-003 decision 2).
+        for relationship_id in result.result.get("ended_relationships", []):
+            if self.index_service is not None:
+                await self.index_service.relationship_ended(self.graph_ops.db, relationship_id)
+            else:
+                self.graph.remove_relationship(relationship_id)
         return result.result
 
     # --- Relationship parity (issue #85) and the as-of surface (ADR-004 §3) ---

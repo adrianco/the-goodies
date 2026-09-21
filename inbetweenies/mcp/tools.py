@@ -526,6 +526,13 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
         opposed to a thing that no longer exists. The distinction matters when
         reading history: "this device was removed" and "this device was never
         here" are different facts.
+
+        The entity's open edges are ENDED at the same moment (#96). An edge
+        whose endpoint has been retracted is no longer true, and leaving its
+        interval open meant every retraction leaked a row into "current":
+        traversal skipped it, but statistics and ``list_relationships`` counted
+        an edge to something that no longer exists. Ending is not deleting --
+        the interval stays as history and ``at`` still answers for the period.
         """
         try:
             existing = await self.get_entity(entity_id)
@@ -547,12 +554,19 @@ class MCPTools(GraphOperations, GraphSearch, ABC):
             new_version = await self.update_entity(
                 entity_id, {"content": content}, user_id or "mcp")
 
+            ended: List[str] = []
+            for finder in ({"from_id": entity_id}, {"to_id": entity_id}):
+                for rel in await self.get_relationships(**finder):
+                    if rel.id not in ended and await self.end_relationship(rel.id) is not None:
+                        ended.append(rel.id)
+
             return ToolResult(True, {
                 "entity_id": entity_id,
                 "tombstone_version": new_version.version,
                 "reason": reason,
                 "marked_as_error": bool(is_error),
                 "previous_version": existing.version,
+                "ended_relationships": ended,
             })
         except Exception as e:
             return ToolResult(False, None, str(e))

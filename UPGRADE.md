@@ -183,6 +183,40 @@ check that catches an old client writing the pre-ADR-013 vocabulary.
 - **Attachments wrote a null author**, which broke *reads* for any client that
   later pulled the entity.
 
+## Before you start — the checklist from a real upgrade
+
+Distilled from Corfe's v0.2.2 → v0.7.0 field notes (#93) and Roland's v0.8.0
+upgrade (#94, #96, #97). Read it before running the script.
+
+1. **Baseline first.** Record what the *server* reports (`get_statistics`:
+   current entities and relationships) and the blob count and byte total.
+   Every later step is "unchanged from this", never a number from a document.
+2. **Stop every client, not just the server** — KittenKong included. A client
+   on the old protocol is refused with a 400 after the cutover, which is the
+   good outcome.
+3. **Back up with the server stopped**, then open the backup read-only and
+   re-count. A plain `cp` while the server runs can miss committed WAL data.
+4. Check out the tag, install **into the venv the server actually runs**,
+   `migrate --apply`, then `migrate --verify --domain domains.house.manifest:HOUSE`.
+   `--verify` prints *current* entities and relationships — the same numbers
+   `get_statistics` reports — with tombstones, version rows and ended
+   intervals beside them, so a difference from your baseline is explained on
+   the line that shows it.
+5. Start the server; check auth on a live route (`/api/v1/mcp/tools` → 401
+   unauthenticated) and that the graph is **served**: call `get_statistics`
+   with the minted token. "Healthy + verify PASS" is not "serves data" (#87).
+6. Reconnect clients one at a time, then run
+   `python3 domains/house/skills/scripts/fg_client_selftest.py` — 24 live
+   gates, the last of which asserts it left the relationship count where it
+   found it — and re-run `--verify`.
+
+Things that surprise people afterwards: every write is a version and every
+delete a tombstone, so the table holds more rows than `get_statistics` counts;
+tombstoning an entity **ends its open edges** at the same moment (from the
+release after v0.8.0 — before that, end them yourself or the relationship
+count creeps); blobs are content-addressed and outlive their photo entity, so
+blob bytes only ever grow.
+
 ## Prerequisites
 
 - A clean git working tree in the repo (`git status` shows nothing to commit).

@@ -749,6 +749,33 @@ class TestGetConnected:
         assert (await house.get_connected("ghost")).success is False
 
 
+class TestTombstoneEndsEdges:
+    """Issue #96: a retracted entity's edges are no longer true, so they end with it."""
+
+    async def test_open_edges_in_both_directions_end_with_the_entity(self, house):
+        house.add_entity(make_entity("device-fan", EntityType.DEVICE, "Fan"))
+        house.connect("rel-out", "device-fan", "room-kitchen", RelationshipType.LOCATED_IN)
+        house.connect("rel-in", "device-hub", "device-fan", RelationshipType.CONTROLS)
+        before = {r.id for r in await house.get_relationships()}
+
+        result = await house.tombstone_entity("device-fan", "selftest cleanup", is_error=True, user_id="alice")
+
+        assert result.success, result.error
+        assert sorted(result.result["ended_relationships"]) == ["rel-in", "rel-out"]
+        after = {r.id for r in await house.get_relationships()}
+        assert before - after == {"rel-in", "rel-out"}
+        # Ended, not deleted: the intervals are still there as history.
+        history = {r.id for r in await house.get_relationships(include_all_versions=True)}
+        assert {"rel-in", "rel-out"} <= history
+
+    async def test_re_tombstoning_ends_nothing_more(self, house):
+        house.add_entity(make_entity("device-fan", EntityType.DEVICE, "Fan"))
+        house.connect("rel-out", "device-fan", "room-kitchen", RelationshipType.LOCATED_IN)
+        await house.tombstone_entity("device-fan", "gone")
+        again = await house.tombstone_entity("device-fan", "gone")
+        assert again.result["already_tombstoned"] is True
+
+
 class TestEndRelationshipTool:
     async def test_ends_the_interval_and_keeps_the_row(self, house):
         rel = house.connect("rel-x", "device-light", "room-kitchen", RelationshipType.LOCATED_IN)
