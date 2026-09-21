@@ -33,9 +33,29 @@ protocol and the edge table, and both changes are hard:
 Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
 below; the migration detects which shape it is starting from.
 
+## v0.8.2 — a second domain beside the house, ready for a first vehicle walk
+
+**This is the tag both installs should be on.** Additive on v0.8.1; nothing
+changes for the house service, and there is no data migration.
+
+- **`scripts/add-domain.sh --domain vehicles --port 8001`** stands up the
+  vehicles domain beside the house (ADR-018): its own launchd agent, its own
+  data directory (`~/.funkygibbon/vehicles` — database, backups, audit log),
+  the house's JWT secret so existing client tokens work, an **empty**
+  database, and a check that the catalog is the vehicles one. `--dry-run`
+  first. It never touches the house service or `funkygibbon.db`.
+- **`domains/vehicles/skills/scripts/vehicle_commit.py`** commits a vehicle
+  walk: applies the session's diffs, attaches photos and documents, writes
+  the transcript note, reads every created entity back with a fresh client
+  before archiving, and refuses to run against a house server.
+- `vehicle-walk` talks to `FUNKYGIBBON_VEHICLES_URL` (default
+  `http://localhost:8001`), so one agent can hold both domains.
+- **Matching clients:** KittenKong `adrianco/the-goodies-typescript`
+  **`v0.8.1`** (unchanged; it is a house client).
+
 ## v0.8.1 — tombstones end their edges; `--verify` counts what the server counts
 
-**This is the tag both installs should be on.** Additive on v0.8.0; the one
+Additive on v0.8.0; the one
 command upgrades, and there is no data migration.
 
 - **Tombstoning an entity ends its open edges** at the same moment (#96), in

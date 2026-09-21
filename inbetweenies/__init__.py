@@ -31,6 +31,6 @@ from . import models
 from . import sync
 from . import repositories
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 __all__ = ["models", "sync", "repositories", "__version__"]

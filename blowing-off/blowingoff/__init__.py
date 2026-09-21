@@ -46,7 +46,7 @@ USAGE:
     result = await client.sync()
 """
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 from inbetweenies.sync import SyncState, SyncResult
 from .client import BlowingOffClient

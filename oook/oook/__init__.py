@@ -27,4 +27,4 @@ All CLI commands working correctly. Successfully executes
 MCP tools and provides comprehensive server interaction.
 """
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
