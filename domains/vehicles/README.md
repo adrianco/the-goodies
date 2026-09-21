@@ -20,6 +20,7 @@ domains/vehicles/
   tools.py                       the handlers: get_events, get_vehicle_history, where_is, get_part_history
   seed.py                        the example lifecycles, same primitives as the house seed
   skills/vehicle-walk/SKILL.md   the walk, with kind / stage / country prompt packs
+  skills/scripts/vehicle_commit.py   applies a walk's diffs, reads them back, archives the session
   README.md                      this file
 ```
 
@@ -29,7 +30,18 @@ Nothing under `funkygibbon/`, `inbetweenies/` or `blowing-off/` imports it
 ## Running it
 
 A vehicles server is its own process, database file and port (ADR-018);
-auth is shared with the house server, so one client token works on both:
+auth is shared with the house server, so one client token works on both.
+
+**On a live install, beside the house** — one command writes a start script
+and a launchd agent with the house's JWT secret, in its own data directory
+(`~/.funkygibbon/vehicles`: database, backups, audit log), starts it on 8001
+with an **empty** database, and verifies the catalog:
+
+```bash
+scripts/add-domain.sh --domain vehicles --port 8001      # --dry-run first; --seed-examples for the demo data
+```
+
+**By hand / for development:**
 
 ```bash
 DATABASE_URL=sqlite+aiosqlite:///./vehicles.db python domains/vehicles/seed.py
@@ -122,5 +134,4 @@ owning / selling / after) and per country (US / UK). It reuses the house's
 
 - Typed `modification` / `service` / `sale` entities and their tools — after the walks (ADR-016 §4).
 - Cross-domain references (a location that *is* a house room) — ADR-017.
-- A `vehicle_commit.py`; the walk applies its diffs with `fg_client` directly.
 - KittenKong (TypeScript) still hard-codes the house tools — ADR-018 §3.

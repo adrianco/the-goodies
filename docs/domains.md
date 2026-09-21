@@ -196,6 +196,10 @@ so a client can find them without knowing the repo layout. The house's
    DOMAIN_MANIFEST=domains.vehicles.manifest:VEHICLES DATABASE_URL=sqlite+aiosqlite:///./vehicles.db API_PORT=8001 python -m funkygibbon
    ```
 
+   On a live install, `scripts/add-domain.sh --domain vehicles --port 8001`
+   does this as a launchd service in its own data directory, with the house's
+   JWT secret and an empty database.
+
    That is ADR-012 §3's topology — separate endpoint, separate database,
    separate MCP client per domain, shared auth and protocol — as two processes.
    One process mounting N domains is the later iteration; nothing a client

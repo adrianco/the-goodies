@@ -88,9 +88,14 @@ references (ADR-017): an HTTP hop between the two, with the shared token
 
 ## Consequences
 
-- Adding a domain to a host is: seed its database, add a launchd entry with
-  three environment variables, mint nothing (the token is shared). No engine
-  change, no config schema.
+- Adding a domain to a host is one command — `scripts/add-domain.sh --domain
+  vehicles --port 8001` — which writes a start script and launchd agent
+  carrying the house's JWT secret, in a **data directory of its own**
+  (`~/.funkygibbon/<domain>`), starts it on an empty database and verifies the
+  catalog. The separate working directory is load-bearing: the backup
+  scheduler names and prunes `./backups` relative to the cwd, so two domains
+  sharing one would prune each other's backups. No engine change, no config
+  schema, nothing to mint (the token is shared).
 - Upgrades are per process; both must be on the same release tag, which is
   the rule UPGRADE.md already states for the two installs.
 - Cross-domain dereference (ADR-017) is an HTTP call between local processes

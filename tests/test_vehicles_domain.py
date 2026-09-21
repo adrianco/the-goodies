@@ -14,7 +14,10 @@ Three layers, each asserting the same claim from a different side:
 """
 
 import ast
+import json
+import os
 import pathlib
+import subprocess
 import sys
 
 import httpx
@@ -433,3 +436,68 @@ class TestVehiclesServer:
         body["changes"][0]["entity"].update({"id": "room-1", "entity_type": "room", "version": Entity.create_version("walker")})
         resp = http.post(f"{API}/sync/", json=body)
         assert resp.status_code == 400 and "unknown entity_type 'room'" in resp.text
+
+
+# --- 4. The walk commits through vehicle_commit.py -------------------------- #
+
+class TestVehicleCommit:
+    """The walk's commit script against a real vehicles server (ADR-016 §3).
+
+    Run as a subprocess, the way an agent runs it: the session helpers read
+    their directories from the environment at import time.
+    """
+
+    def _run(self, vehicles_server, tmp_path, code_or_args, *, script=False):
+        scripts = [str(REPO_ROOT / "domains" / "vehicles" / "skills" / "scripts"),
+                   str(REPO_ROOT / "domains" / "house" / "skills" / "scripts")]
+        env = {**os.environ, "FG_SESSIONS_DIR": str(tmp_path), "FUNKYGIBBON_VEHICLES_URL": vehicles_server.base_url,
+               "FUNKYGIBBON_TOKEN": vehicles_server.token, "PYTHONPATH": os.pathsep.join(scripts)}
+        argv = [sys.executable, scripts[0] + "/vehicle_commit.py", *code_or_args] if script else [sys.executable, "-c", code_or_args]
+        return subprocess.run(argv, env=env, capture_output=True, text=True, timeout=120)
+
+    def test_a_first_walk_lands_and_is_read_back(self, vehicles_server, http, tmp_path):
+        build = self._run(vehicles_server, tmp_path, """
+from room_session import RoomSession
+s = RoomSession.create(room_entity_id=None, room_name="1972 Alfa GTV", mode="walk")
+s.log("user", "this is the GTV, it lives at the storage unit in Salinas")
+s.add_diff({"action": "create_location", "draft": {"name": "Storage unit, Salinas", "content": {"kind": "storage_unit", "country": "US"}}})
+s.add_diff({"action": "create_vehicle", "draft": {"name": "1972 Alfa Romeo GTV", "located_in": "draft:0",
+    "content": {"kind": "car", "make": "Alfa Romeo", "model": "2000 GTV", "year": 1972, "country": "US",
+                "identity": {"chassis": "AR2412345"}, "aliases": ["the GTV"], "status": "evaluating", "odometer": 68200, "odometer_unit": "mi"}}})
+s.add_diff({"action": "create_part", "draft": {"name": "Weber 40 DCOE carburettors", "content": {"category": "fuel"}, "fitted_to": "draft:1"}})
+s.add_diff({"action": "create_part", "draft": {"name": "SPICA injection (original)", "content": {"category": "fuel", "originality": "original"}, "located_in": "draft:0"}})
+s.add_diff({"action": "create_event", "draft": {"name": "First viewing", "happened_to": "draft:1", "involved": ["draft:2"],
+    "content": {"kind": "evaluation", "when": "2026-09-22", "odometer": 68200, "text": "Webers fitted, original SPICA in a box. Solid floors.", "source": "walk"}}})
+s.add_diff({"action": "update_vehicle", "entity_id": "draft:1", "content_merges": {"status": "owned"}})
+print(s.id)
+""")
+        assert build.returncode == 0, build.stderr
+        session_id = build.stdout.strip().splitlines()[-1]
+
+        commit = self._run(vehicles_server, tmp_path, [session_id], script=True)
+        assert commit.returncode == 0, commit.stdout + commit.stderr
+        result = json.loads(commit.stdout)
+        assert result["errors"] == [] and result["committed"] == 6
+        assert result["readback"]["missing"] == [] and result["readback"]["checked"] == 6  # 5 created + the transcript note
+
+        gtv = _by_name(http, "vehicle", "1972 Alfa Romeo GTV")
+        assert gtv["content"]["status"] == "owned" and gtv["content"]["identity"]["chassis"] == "AR2412345"
+        assert [p["name"] for p in _tool(http, "get_parts_on_vehicle", vehicle_id=gtv["id"])["parts"]] == ["Weber 40 DCOE carburettors"]
+        spica = _by_name(http, "part", "SPICA injection (original)")
+        assert _tool(http, "where_is", item_id=spica["id"])["location"]["name"] == "Storage unit, Salinas"
+        kinds = [e["kind"] for e in _tool(http, "get_vehicle_history", vehicle_id=gtv["id"])["events"]]
+        assert "evaluation" in kinds and "part_fitted" in kinds and "moved_in" in kinds
+        # Archived only after the read-back.
+        assert (tmp_path / "room-sessions" / "archive" / f"{session_id}.json").exists()
+
+    def test_it_refuses_to_commit_a_vehicle_walk_to_a_house_server(self, funkygibbon_server, tmp_path):
+        class House:  # the session-wide house server from conftest
+            base_url, token = funkygibbon_server
+        build = self._run(House, tmp_path, """
+from room_session import RoomSession
+s = RoomSession.create(room_entity_id=None, room_name="x", mode="walk")
+s.add_diff({"action": "create_vehicle", "draft": {"name": "Wrong server", "content": {"kind": "car"}}})
+print(s.id)
+""")
+        commit = self._run(House, tmp_path, [build.stdout.strip().splitlines()[-1]], script=True)
+        assert commit.returncode == 2 and "HOUSE server" in commit.stdout

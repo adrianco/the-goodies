@@ -30,17 +30,23 @@ directly; a walk is for discovery and for evidence.
 
 ## Required helpers
 
-The house's shared scripts work unchanged against a vehicles server; the
-client is domain-blind and auth is shared. Copy `domains/house/skills/scripts/`
-to `.claude/scripts/` and point it at the vehicles endpoint:
+Copy **both** `domains/house/skills/scripts/` and
+`domains/vehicles/skills/scripts/` into `.claude/scripts/`. The house's
+helpers work unchanged against a vehicles server — the client is domain-blind
+and auth is shared, so the house's client token works:
 
-- `fg_client.py` — `FUNKYGIBBON_URL` = the vehicles server (e.g. `http://localhost:8001`),
-  `FUNKYGIBBON_TOKEN` = a client token (the house's token works).
+- `fg_client.py` — always construct it for the vehicles endpoint, because the
+  same agent usually also talks to the house on `FUNKYGIBBON_URL`:
+  ```python
+  import os, sys; sys.path.insert(0, '.claude/scripts')
+  from fg_client import FGClient
+  fg = FGClient(server_url=os.environ.get("FUNKYGIBBON_VEHICLES_URL", "http://localhost:8001"), user_id="vehicle-walk")
+  ```
 - `room_session.py` — session state; use `room_name` = the vehicle's name.
 - `render_review.py`, `image_compress.py` — review markdown; photos are always downsampled.
-
-There is no `vehicle_commit.py` yet: apply diffs with `fg_client` calls at
-commit (Phase 4) and read every created entity back with a fresh `FGClient()`.
+- `vehicle_commit.py` — applies the diffs on `confirm`, reads every created
+  entity back with a fresh client, archives the session only if all are
+  present, and **refuses to run against a house server**.
 
 ## Before you start
 
@@ -214,20 +220,26 @@ used (`gallons` / `litres`).
 
 ### Phase 4 — Edit or Confirm
 
-On `confirm`, apply diffs in order with `fg_client`, resolving `draft:idx`
-references to the ids just created:
+On `confirm`:
+```bash
+python3 .claude/scripts/vehicle_commit.py <session.id>      # --dry-run lists the diffs first
+```
+It applies the diffs in order, resolving `draft:<idx>` references to the ids
+just created:
 
 | diff | tool calls |
 |---|---|
 | `create_vehicle` / `create_part` / `create_tool` / `create_location` | `create_entity`, then `located_in` / `fitted_to` / `replaced` / `compatible_with` with `create_relationship` |
 | `create_event` | `create_entity(event)`, then `happened_to`, each `involved`, then photos / documents |
 | `remove_part` | `end_relationship` on the current `fitted_to`; `create_relationship` `located_in` |
-| `update_vehicle` | `update_entity` (odometer, status, aliases, spec) |
+| `move` | `end_relationship` on the current `located_in`; a new `located_in` |
+| `update_vehicle` | `update_entity` with `content_merges` (odometer, status, aliases, spec) |
+| `attach_photo` / `attach_document` | onto an existing entity |
 
-Then write the transcript as a `note` linked `documented_by` to the vehicle,
-and **read every created entity back with a fresh `FGClient()`**. Only if all
-are present: `session.set_status("committed")`. Otherwise leave the session
-open with the errors recorded and say what did not land.
+It then writes the transcript as a `note` linked `documented_by` to the
+vehicle and **reads every created entity back with a fresh client**. Only if
+all are present is the session archived; otherwise it stays open with
+`commit_errors` recorded — tell the user what did not land, fix, re-run.
 
 On changes: `session.remove_diff(idx)` / `replace_diff` / `add_diff`,
 re-render, wait. On "discard": `session.set_status("discarded")`.
