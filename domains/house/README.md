@@ -149,7 +149,7 @@ the manifest under `skills=`: `room-walk` (catalogue a room conversationally),
 under [`skills/`](skills/README.md) with the scripts they share; everything
 goes through the MCP tools, and nothing is written until the user reviews a
 diff and confirms. `python3 domains/house/skills/scripts/fg_client_selftest.py`
-runs 23 live gates against a server.
+runs 24 live gates against a server.
 
 ## Two installs, different halves of the vocabulary
 

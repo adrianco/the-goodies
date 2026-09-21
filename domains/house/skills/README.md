@@ -61,7 +61,7 @@ skip those steps.
 python3 .claude/scripts/fg_client_selftest.py
 ```
 
-23 gates: reads, writes read back from a **separate process**, a photo round-tripped
+24 gates: reads, writes read back from a **separate process**, a photo round-tripped
 byte-for-byte through `attach_photo`/`get_blob`, a move with history retained, tombstones.
 Uses throwaway entities and tombstones them at the end.
 
