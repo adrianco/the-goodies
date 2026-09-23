@@ -20,7 +20,7 @@ the write that loses is *kept* — stored as a version row, acknowledged, and
 recoverable. A concurrent write can lose prominence; it can never lose existence.
 Replicas then verify they actually agree, rather than assuming it.
 
-The design is written down: 18 [ADRs](docs/adr/) covering the datastore, the
+The design is written down: 21 [ADRs](docs/adr/) covering the datastore, the
 temporal model, the sync protocol, and the domain abstraction, each with the
 alternatives that were rejected and why.
 
