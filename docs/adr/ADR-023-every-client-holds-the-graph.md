@@ -19,8 +19,9 @@ design ADR-009 already specified as *the reference client*, of which
 KittenKong is one port and the Swift Kit is the next.
 
 Two refinements come with it. **Filtering is optional**: a client may hold a
-subset — one domain, some entity types, a history horizon — and must say so,
-so that a filtered answer is never mistaken for a complete one. And **the
+subset — exclude older data, focus on or exclude particular vehicles, hold
+one domain — and must say so, so that a filtered answer is never mistaken
+for a complete one. And **the
 apps support every domain without domain code**: a Swift app must render the
 vehicles graph and the house graph, and a third domain that does not exist
 yet, from what the server tells it about the domain.
@@ -57,22 +58,32 @@ adding an endpoint; there is no per-domain client code (§4).
 
 ### 3. Filtering is a declared subset, never a silent one
 
-A replica may be **filtered**, in three orthogonal ways, all expressed in the
-sync request the protocol already carries (`SyncFilters`) and all recorded
-in the replica's metadata:
+Owner clarification (2026-09-23): filtering is for **excluding older data**
+and for **focusing on, or excluding, specific vehicles** — not for reshaping
+the vocabulary. So the filters a replica may declare are:
 
-| Filter | Mechanism | Example |
+| Filter | What it means | Mechanism |
 |---|---|---|
-| By domain | which endpoints the client is configured for | the vehicles app on a friend's phone holds only vehicles |
-| By entity type | `SyncFilters.entity_types` on every pull; the server ships only those types and the edges between them | a dashboard that wants rooms and devices, not 27 photo entities' blobs |
-| By history horizon | ADR-009 §5: sync from a cursor floor; as-of reads before it are refused offline or proxied when online | a phone that holds the last year |
+| **Horizon** — exclude older data | Hold history from an instant onward; earlier versions and ended intervals are not fetched | ADR-009 §5: sync from a cursor floor / `SyncFilters.since`; as-of reads before the horizon are refused offline or proxied when online, never answered wrongly |
+| **Focus** — only these things | Hold the subgraph *about* a set of anchor entities: the vehicles named, plus everything that reaches them — their events, parts and their intervals, locations, tools, documents and photos | new `SyncFilters.focus: [entity ids]`; the **server** computes the closure per pull (a walk over the domain's relationship rules from the anchors, both directions, to a bounded depth) so the client never needs the whole graph to know what belongs |
+| **Exclude** — everything but these | The complement: hold the graph minus the subgraph about the named anchors | `SyncFilters.exclude: [entity ids]`, same closure, subtracted |
+| By domain | Which endpoints the client is configured for | ADR-018; a friend's phone holds vehicles and not the house |
+
+Focus and exclude take **entity ids**, and the manifest says which types are
+sensible anchors (`vehicle`, `home`); the Kit offers them by name from the
+served manifest (§4). A vehicle sold years ago, a friend's car you help with,
+a race car whose spares pile is half the graph — each is one anchor in one
+list. The existing `SyncFilters.entity_types` stays for the cases that want
+it but is not the tool for this.
 
 The default is **everything**, and a filtered replica's tool results carry
-the filter in the response (`replica: {domains, entity_types, since}`) the
-same way `sync.degraded` travels (typescript#4): a caller can always tell a
-partial answer from a complete one. Blob bytes remain lazy everywhere (ADR-007's
-surviving fields): a replica holds every blob *row* it is entitled to and
-fetches `data` on demand through `get_blob`.
+the filter in the response — `replica: {domains, since, focus, exclude}` —
+the same way `sync.degraded` travels (typescript#4): a caller can always
+tell a partial answer from a complete one, and a walk on a focused replica
+knows it cannot see the car it excluded. Changing a filter is a re-sync of
+the affected subgraph, not a wipe. Blob bytes remain lazy everywhere
+(ADR-007's surviving fields): a replica holds every blob *row* in its subset
+and fetches `data` on demand through `get_blob`.
 
 ### 4. A domain is data to a client: the server publishes its manifest
 
@@ -120,7 +131,12 @@ to the Kit as to `inbetweenies`: nothing in the Kit imports a domain.
   in `DomainManifest`; KittenKong gains the same manifest-driven behaviour
   (it currently hard-codes the house). Both are small.
 - A filtered replica is a first-class, declared thing, so the friend's
-  vehicles-only phone and the full house replica are the same code.
+  vehicles-only phone, a replica that stops at last year, one that holds
+  only the race car, and the full house replica are the same code.
+- The engine gains the server-side subgraph closure for `focus` / `exclude`
+  (a walk over the manifest's relationship rules from the anchors), which
+  is the one non-trivial addition; it is also exactly what ADR-017's
+  reverse lookup and `oook`'s "export one vehicle" want.
 - Three replicas to keep conformant instead of one; the suite is the
   mechanism, and it already runs against two.
 
