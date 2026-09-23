@@ -32,7 +32,7 @@ one install's fork because there was no seam to contribute them through
 
 ## Decision
 
-### 1. Three clients, each with one job
+### 1. Four clients, each with one job
 
 | Client | Job | Keep? |
 |---|---|---|
@@ -41,11 +41,14 @@ one install's fork because there was no seam to contribute them through
 | **Ecky-Thump** (Swift, ADR-019) | Apple-framework capabilities on a Mac; a thin tool client, not a replica | **Yes — the system-integration daemon.** |
 | blowing-off (Python) | Reference replica; proves PROTOCOL.md is implementable from the text | **Kept as the reference and the conformance harness only** — no new features, no MCP server of its own once KittenKong serves every domain. It stays in the repo because the protocol tests are built on it. |
 | `fg_client.py` | Thin HTTP tool client for the skills | **Folded into `oook`** (§1 above). One Python tool client, tested once. |
-| `c11s-house-ios` | Phone front end | Out of scope here; it re-targets KittenKong's protocol or the tool API when it is next worked on. |
-| WildThing (Swift port) | — | Archived; ADR-019 is the Swift component, and it is deliberately not a replica. |
+| **Goodies for iOS** (Swift, ADR-022) | The phone: where a walk happens — camera, microphone, review, confirm | **Yes — the walk client.** Designed from scratch; shares `TheGoodiesKit` with the helper. Offline replica is the open question (ADR-022 §3). |
+| `c11s-house-ios` | — | **Archived** (ADR-022). Its deployment setup and HomeKit code are retained in `apple/`; nothing else. |
+| WildThing (Swift port) | — | **Archived** (ADR-022). |
 
 The rule that falls out: **a replica is TypeScript, a tool client is Python
-or Swift, and there is one of each.** A new client is a bug report.
+or Swift, and there is one of each** — with the iOS app the one place that
+may earn a second replica, decided when its offline needs are known
+(ADR-022 §3). A new client beyond these is a bug report.
 
 ### 2. One contract for sources: a source proposes, a walk commits
 
@@ -98,7 +101,7 @@ that any one of those checks would have named on day one.
 
 ## Consequences
 
-- Fewer things: one replica, one Python tool client, one Swift daemon, one
+- Fewer things: one replica, one Python tool client, one Swift daemon, one Swift walk app, one
   session format, one install command, one health command. Each issue in the
   context above had a "there was nothing to catch this" component; this is
   what would have caught them.
@@ -106,8 +109,8 @@ that any one of those checks would have named on day one.
   directory with a manifest, not a diff to a skill.
 - `blowing-off` loses its future but not its present; it remains the
   executable specification of the protocol.
-- `c11s-house-ios` is explicitly deferred rather than silently rotting: it is
-  named as out of scope with the two options it has.
+- The old iOS app and the abandoned Swift port are archived rather than
+  silently rotting (ADR-022); the iOS app is designed fresh as the walk client.
 - Sequencing, so nothing is broken on the way: (1) `oook.walk` absorbs
   `fg_client.py` and the session scripts, skills import from it, `oook
   skills install`; (2) KittenKong reads its catalog (ADR-018 §3); (3) the

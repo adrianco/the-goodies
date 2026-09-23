@@ -125,19 +125,22 @@ wrong local extraction is caught at review, not in the graph.
   HTTP when the server is reachable and queues nothing. Offline capture stays
   with KittenKong and the phone. If a Swift replica is ever wanted, it is a
   port of the reference client per ADR-009 and a separate decision.
-- **Not the iOS app.** `c11s-house-ios` is the phone front end; this is the
-  Mac's system-integration daemon. They may share Swift packages (the
-  inbetweenies wire types, the tool client) but not a target.
+- **Not the iOS app.** The iOS 27 app (ADR-022) is the phone front end;
+  this is the Mac's system-integration daemon. They share
+  `apple/TheGoodiesKit/` but not a target.
 - **Not a server-side component.** It never touches `funkygibbon.db`, the
   JWT secret, or launchd entries for the server.
 
 ### 5. Packaging and trust
 
-- Xcode project in its own repository (`adrianco/the-goodies-macos`,
-  proposed), Catalyst target, hardened runtime, notarised, distributed as a
-  signed `.app` (no App Store: it needs no entitlements the store forbids,
-  but the review cycle would slow every fix). Developer ID signing is the
-  cost of TCC; there is no unsigned path.
+- Lives in **this repository** under `apple/EckyThump/`, sharing
+  `apple/TheGoodiesKit/` with the iOS app (ADR-022 supersedes the separate
+  `the-goodies-macos` repo first proposed here). Catalyst target, hardened
+  runtime, notarised, distributed as a signed `.app` (no App Store: it needs
+  no entitlements the store forbids, but the review cycle would slow every
+  fix). Developer ID signing is the cost of TCC; there is no unsigned path.
+  The HomeKit authorization/delegate flow starts from the retained
+  c11s-house-ios code in `apple/salvage/homekit/`.
 - Configuration is the server URL(s) per domain and nothing else; the token
   comes from the Keychain (ADR-020), minted once by `setup_auth` on the
   server host.

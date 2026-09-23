@@ -273,3 +273,10 @@ graphify-out/
 # Local Claude Code tooling config (graphify PreToolUse hooks etc.) -- a
 # per-developer workflow preference, not a project decision.
 .claude/settings.json
+
+# Xcode (ADR-022)
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+apple/**/DerivedData/
+apple/**/.build/

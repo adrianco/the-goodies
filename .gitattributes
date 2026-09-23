@@ -1,0 +1,2 @@
+# Xcode project files: union-merge (ADR-022)
+*.pbxproj merge=union
