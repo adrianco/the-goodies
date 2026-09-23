@@ -196,6 +196,28 @@ def test_sync_status_is_left_alone(conn):
     assert conn.execute("SELECT sync_status FROM blobs WHERE id='b1'").fetchone()[0] == "UPLOADED"
 
 
+def test_extracted_blobs_carry_a_sync_status_the_orm_can_read(conn):
+    """Issue #100: `_insert_blob` wrote the enum VALUE ("uploaded") into an
+    SQLEnum column that SQLAlchemy reads by NAME ("UPLOADED"). Every sync
+    response that serialised such a row raised LookupError -> a bare 500,
+    for every client, from the moment the ADR-013 migration ran."""
+    run_migration(conn, apply=True)
+    statuses = {r[0] for r in conn.execute("SELECT DISTINCT sync_status FROM blobs")}
+    assert statuses == {"UPLOADED"}
+
+
+def test_lowercase_sync_status_rows_are_normalised_to_names(conn):
+    """The rows earlier releases already wrote are repaired, idempotently."""
+    _seed_legacy_vocabulary(conn)
+    conn.execute("UPDATE blobs SET sync_status = 'uploaded' WHERE id = 'b1'")
+    conn.execute("INSERT INTO blobs (id, name, blob_type, mime_type, size, data, checksum, sync_status, created_at, updated_at) "
+                 "VALUES ('b2', 'x', 'jpeg', 'image/jpeg', 1, X'00', 'c', 'pending_upload', '2026-06-16', '2026-06-16')")
+    stats = run_migration(conn, apply=True)
+    assert stats["blob_status_normalised"] == 2
+    assert {r[0] for r in conn.execute("SELECT sync_status FROM blobs WHERE id IN ('b1','b2')")} == {"UPLOADED", "PENDING_UPLOAD"}
+    assert run_migration(conn, apply=True)["blob_status_normalised"] == 0
+
+
 def test_normalisation_is_idempotent_and_spares_unknown_vocabulary(conn):
     _seed_legacy_vocabulary(conn)
     first = run_migration(conn, apply=True)
@@ -667,6 +689,20 @@ def test_verify_reports_current_counts_and_the_history_beside_them(corfe_db, cap
     out = capsys.readouterr().out
     assert f"{latest - 1} current entities (1 tombstoned," in out
     assert f"{edges - 1} current relationships (1 ended, kept as history)" in out
+
+
+def test_verify_fails_on_a_sync_status_the_orm_cannot_read(corfe_db, capsys):
+    """Issue #100: --verify must catch this before an operator reconnects clients."""
+    path, conn = corfe_db
+    run_migration(conn, apply=True)
+    conn.execute("INSERT INTO blobs (id, name, blob_type, mime_type, size, data, checksum, sync_status, created_at, updated_at) "
+                 "VALUES ('bad', 'x', 'jpeg', 'image/jpeg', 1, X'00', 'c', 'uploaded', '2026-06-16', '2026-06-16')")
+    conn.commit()
+    assert verify_db(path, "domains.house.manifest:HOUSE") == 1
+    assert "blobs.sync_status values the ORM cannot read: ['uploaded']" in capsys.readouterr().out
+    run_migration(conn, apply=True)
+    conn.commit()
+    assert verify_db(path, "domains.house.manifest:HOUSE") == 0
 
 
 def test_verify_fails_on_any_model_column_the_database_lacks(corfe_db):

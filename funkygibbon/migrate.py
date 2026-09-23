@@ -105,7 +105,12 @@ def _insert_blob(cur, blob_id, name, mime, b64, user_id, now, summary) -> bool:
             created_at, updated_at, sync_id)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (blob_id, (name or "photo")[:255], _blob_type_for(mime), mime, len(data),
-         data, None, hashlib.sha256(data).hexdigest(), "uploaded", None, None,
+         # The member NAME, not its value: sync_status is an SQLEnum (engine
+         # state, deliberately not a String column -- ADR-012 §1), and SQLAlchemy
+         # stores and reads enum names. Writing the value here put "uploaded"
+         # rows in a column the ORM could only read as "UPLOADED", and every
+         # sync response that touched such a row 500'd on LookupError (#100).
+         data, None, hashlib.sha256(data).hexdigest(), "UPLOADED", None, None,
          user_id, summary, now, now, None),
     )
     return bool(cur.rowcount)
@@ -253,6 +258,7 @@ def run_migration(conn: sqlite3.Connection, *, apply: bool) -> Dict[str, int]:
     # 'has_blob', which is still 'HAS_BLOB' until normalisation has run.
     stats.update(_converge_blob_linking(cur))
     stats.update(_retire_controlled_by_app(cur))
+    stats.update(_normalise_blob_sync_status(cur))
     _assert_types_normalised(cur)
 
     # --- relationships: v2 rows -> ADR-004 interval rows -------------------- #
@@ -888,6 +894,16 @@ def verify_db(db_path: Path, domain: str) -> int:
         else:
             print("  ok    every entity type is declared")
 
+        # #100: blobs.sync_status is an SQLEnum read by member NAME; any other
+        # spelling 500s every sync response that serialises the row.
+        bad_status = _blob_status_problems(cur)
+        if bad_status:
+            print(f"  FAIL  blobs.sync_status values the ORM cannot read: {bad_status} "
+                  "(run `migrate --apply` to normalise them)")
+            problems += 1
+        else:
+            print("  ok    every blob sync_status is readable")
+
         # ADR-004 §1: audit the CURRENT graph, not every interval ever written.
         # `r.valid_to IS NULL` is the whole of the filter — without it a device
         # that moved rooms was checked in both its old and new placement, and a
@@ -1103,6 +1119,38 @@ def _retire_controlled_by_app(cur) -> Dict[str, int]:
         stats["controlled_by_app_retired"] += 1
 
     return stats
+
+
+_BLOB_STATUS_NAMES = {
+    "PENDING_UPLOAD", "UPLOADED", "PENDING_DOWNLOAD", "DOWNLOADED", "SYNC_ERROR",
+}
+
+
+def _normalise_blob_sync_status(cur) -> Dict[str, int]:
+    """Rewrite blobs.sync_status rows that hold an enum VALUE as its NAME (#100).
+
+    The ADR-013 blob extraction (`_insert_blob`) wrote ``"uploaded"``; the
+    column is an SQLEnum, which SQLAlchemy reads by member name, so those rows
+    raised ``LookupError`` on every read and ``/api/v1/sync/`` answered a bare
+    500 for every client from the moment the migration ran. Idempotent: a row
+    already holding a member name is left alone; an unknown value that is not
+    the lowercase of a member name is reported, not guessed at.
+    """
+    stats = {"blob_status_normalised": 0}
+    if not _table_has_column(cur, "blobs", "sync_status"):
+        return stats
+    for name in sorted(_BLOB_STATUS_NAMES):
+        cur.execute("UPDATE blobs SET sync_status = ? WHERE sync_status = ?", (name, name.lower()))
+        stats["blob_status_normalised"] += cur.rowcount
+    return stats
+
+
+def _blob_status_problems(cur) -> list:
+    """Rows whose sync_status the ORM cannot read. Empty on a healthy database."""
+    if not _table_has_column(cur, "blobs", "sync_status"):
+        return []
+    return [row[0] for row in cur.execute(
+        "SELECT DISTINCT sync_status FROM blobs") if row[0] not in _BLOB_STATUS_NAMES]
 
 
 def _assert_types_normalised(cur) -> None:

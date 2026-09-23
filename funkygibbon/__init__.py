@@ -57,7 +57,7 @@ app = create_app()
 # API docs at http://localhost:8000/docs
 """
 
-__version__ = "0.8.2"
+__version__ = "0.8.3"
 __author__ = "The Goodies Team"
 
 # Load a local .env into the process environment before any submodule reads

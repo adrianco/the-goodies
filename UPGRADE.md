@@ -33,9 +33,32 @@ protocol and the edge table, and both changes are hard:
 Upgrading **from v0.4.0** and **from v0.2.2** both work with the one command
 below; the migration detects which shape it is starting from.
 
+## v0.8.3 — sync was 500ing on every request at Corfe (#100): fixed, and the one command repairs the data
+
+**This is the tag both installs should be on.** Run the one command; it
+repairs the data as part of `migrate --apply`, and `--verify` now checks it.
+
+- **Cause, ours.** The ADR-013 blob extraction in `migrate.py` wrote the enum
+  *value* `uploaded` into `blobs.sync_status`, a column the ORM reads by member
+  *name* (`UPLOADED`). Every sync response that serialised one of those rows
+  raised `LookupError`, so `/api/v1/sync/` answered a bare 500 for every client
+  from the moment that migration ran. It was invisible until KittenKong
+  v0.8.2 started flagging failed syncs on tool results — which is exactly why
+  that flag exists.
+- **Fix.** The writer uses the name; `migrate --apply` rewrites any rows that
+  hold a value (`blob_status_normalised` in its summary); `migrate --verify`
+  fails with `blobs.sync_status values the ORM cannot read: [...]` if any are
+  left; and the sync endpoint answers a stored-value fault with a 500 whose
+  body names the value and the command that fixes it, instead of nothing.
+- **After upgrading**, reconnect clients and confirm `sync.degraded` is gone
+  from KittenKong tool results (or that `blowing-off sync` completes). Writes
+  made through KittenKong while sync was failing are still queued locally and
+  push on the first successful sync.
+- **Matching clients:** KittenKong **`v0.8.2`** (unchanged).
+
 ## v0.8.2 — a second domain beside the house, ready for a first vehicle walk
 
-**This is the tag both installs should be on.** Additive on v0.8.1; nothing
+Additive on v0.8.1; nothing
 changes for the house service, and there is no data migration.
 
 - **`scripts/add-domain.sh --domain vehicles --port 8001`** stands up the

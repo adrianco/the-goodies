@@ -1071,7 +1071,19 @@ async def sync_data(
 ):
     """Main sync endpoint"""
     handler = SyncHandler(db)
-    return await handler.handle_sync_request(request)
+    try:
+        return await handler.handle_sync_request(request)
+    except LookupError as exc:
+        # A stored enum spelling the ORM cannot read (#100: blobs.sync_status
+        # holding 'uploaded'). Without this the client saw a bare 500 and the
+        # cause was only in the server log; now the response names it and the
+        # command that fixes it.
+        raise HTTPException(
+            status_code=500,
+            detail=(f"stored value the server cannot read: {exc}. This is a data "
+                    "inconsistency, not a client error -- run `python -m funkygibbon.migrate "
+                    "--apply` on the server, then `--verify`."),
+        )
 
 
 @router.get("/status")

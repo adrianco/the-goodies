@@ -1053,3 +1053,16 @@ class TestRelationshipToolsOverMcp:
     def test_the_catalog_advertises_the_new_tools(self, client, headers):
         tools = {t["name"] for t in client.get("/api/v1/mcp/tools", headers=headers).json()["tools"]}
         assert {"list_relationships", "get_connected", "end_relationship", "get_graph_diff"} <= tools
+
+
+def test_an_unreadable_stored_enum_is_a_named_500_not_a_bare_one(client, headers, monkeypatch):
+    """Issue #100: the cause was only in the server log; the response now names it."""
+    from funkygibbon.api import sync as sync_module
+
+    async def explode(self, request):
+        raise LookupError("'uploaded' is not among the defined enum values. Enum name: blobstatus.")
+
+    monkeypatch.setattr(sync_module.SyncHandler, "handle_sync_request", explode)
+    resp = _sync(client, headers, "full")
+    assert resp.status_code == 500
+    assert "blobstatus" in resp.json()["detail"] and "migrate --apply" in resp.json()["detail"]
