@@ -55,12 +55,10 @@ and can be enabled and disabled by the user without a plist — and it keeps
 no window open by default; a menu-bar item shows status and hosts the
 consent flows.
 
-It is a **client of FunkyGibbon**, exactly like KittenKong or blowing-off:
-it authenticates with a client token, talks to a domain's endpoint over
-`/api/v1/mcp/tools/*`, and never opens a database file. It writes through
-the tools, so every write is validated against the domain's manifest,
-versioned, and visible to sync. It is not a server, holds no replica in the
-first version (§4), and is not on the sync protocol.
+It is a **client of FunkyGibbon**, exactly like KittenKong: it authenticates
+with a client token, holds a replica per domain through `TheGoodiesKit`
+(ADR-023), serves the tools from that replica, and syncs. It never opens the
+server's database file. It is not a server.
 
 ### 2. It owns every Apple-framework capability, and nothing else does
 
@@ -121,10 +119,10 @@ wrong local extraction is caught at review, not in the graph.
 
 ### 4. What it is not, in the first version
 
-- **Not a replica.** No local store, no sync loop; it reads and writes over
-  HTTP when the server is reachable and queues nothing. Offline capture stays
-  with KittenKong and the phone. If a Swift replica is ever wanted, it is a
-  port of the reference client per ADR-009 and a separate decision.
+- ~~**Not a replica.**~~ **Superseded by ADR-023** (2026-09-23): every MCP
+  client holds the graph. The helper embeds `TheGoodiesKit`'s replica and
+  syncs like any other client; its proposals are reviewed and committed
+  locally and pushed.
 - **Not the iOS app.** The iOS 27 app (ADR-022) is the phone front end;
   this is the Mac's system-integration daemon. They share
   `apple/TheGoodiesKit/` but not a target.

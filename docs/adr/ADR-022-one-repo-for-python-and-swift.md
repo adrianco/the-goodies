@@ -31,8 +31,9 @@ lives outside it:
 
 ```
 apple/
-  TheGoodiesKit/        Swift Package: inbetweenies wire types, tool client, Keychain,
-                        session-file (proposal) format, sync-degradation, HomeKit access
+  TheGoodiesKit/        Swift Package: the reference replica (store, sync, resolution, tool
+                        executor -- ADR-023), wire types, Keychain, session-file (proposal)
+                        format, the served domain manifest, HomeKit access
   EckyThump/            the macOS helper (Mac Catalyst) -- ADR-019
   Goodies/              the iOS 27 app
   Goodies.xcworkspace   both targets, the package by path
@@ -87,11 +88,11 @@ thing — and the app's job is to make a walk fast and to keep it honest
 when the first vehicles walk has been done; this ADR only fixes where it
 lives and what it inherits.
 
-One tension is recorded now rather than solved: ADR-019 §4 says the helper
-is not a replica, and ADR-021 wants one replica (KittenKong). The phone will
-be in a garage with no signal, so at some point `TheGoodiesKit` grows the
-replica ADR-009 designed for a Swift port — and then there are two replicas
-again. Decide when the app is real, with the walks' offline needs in hand.
+The tension first recorded here — helper not a replica (ADR-019 §4) versus
+one replica (ADR-021) versus a phone in a garage with no signal — was
+resolved the same day by ADR-023: every MCP client holds the graph, and
+`TheGoodiesKit` is the Swift port of the reference replica (ADR-009),
+embedded by both apps.
 
 ## Consequences
 

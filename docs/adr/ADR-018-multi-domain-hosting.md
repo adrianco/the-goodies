@@ -62,10 +62,12 @@ loops against two endpoints, two MCP servers), which is exactly the
 *separate MCP client per domain* of the original decision.
 
 KittenKong does not yet do this: it hard-codes the house catalog. The fix is
-for it to read `GET /api/v1/mcp/tools` from the server it is pointed at and
-serve that, with its local implementations keyed by tool name and the
-declared walks executed generically as blowing-off does. Until then KittenKong
-is a house client only. Tracked as the last open item of ADR-012 §3.
+for it to read the served manifest (`GET /api/v1/domain`, ADR-023 §4) and
+the catalog from the server it is pointed at and serve that, with its local
+implementations keyed by tool name and the declared walks executed
+generically as blowing-off does. Until then KittenKong is a house client
+only. Tracked as the last open item of ADR-012 §3; ADR-023 extends it to
+every client.
 
 ### 4. Skills travel with the domain
 

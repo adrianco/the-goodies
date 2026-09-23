@@ -9,7 +9,7 @@ apple/
   README.md                  this file
   deployment/                retained from c11s-house-ios: the Apple deployment setup
   salvage/homekit/           retained from c11s-house-ios: HomeKit access code, for reference
-  TheGoodiesKit/             (to come) Swift Package shared by both apps
+  TheGoodiesKit/             (to come) the reference replica in Swift, shared by both apps -- ADR-023
   EckyThump/                 (to come) the macOS helper, Mac Catalyst  -- ADR-019
   Goodies/                   (to come) the iOS 27 app                  -- ADR-022
   Goodies.xcworkspace        (to come)

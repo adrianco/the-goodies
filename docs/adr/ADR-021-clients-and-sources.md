@@ -38,17 +38,17 @@ one install's fork because there was no seam to contribute them through
 |---|---|---|
 | **KittenKong** (TS) | The replica: local store, sync, offline, stdio MCP for agents and skills | **Yes — the client.** Gains ADR-018 §3 (reads its domain's catalog from the server, so it serves vehicles too). |
 | **`oook`** (Python) | Local administration on the server host: stats, verify, token minting, backups, one-off tool calls | **Yes — the operator's CLI.** Absorbs `fg_client.py`'s Python API so the skills import `oook.client` instead of carrying their own. |
-| **Ecky-Thump** (Swift, ADR-019) | Apple-framework capabilities on a Mac; a thin tool client, not a replica | **Yes — the system-integration daemon.** |
+| **Ecky-Thump** (Swift, ADR-019) | Apple-framework capabilities on a Mac; a replica through the Kit (ADR-023) | **Yes — the system-integration daemon.** |
 | blowing-off (Python) | Reference replica; proves PROTOCOL.md is implementable from the text | **Kept as the reference and the conformance harness only** — no new features, no MCP server of its own once KittenKong serves every domain. It stays in the repo because the protocol tests are built on it. |
 | `fg_client.py` | Thin HTTP tool client for the skills | **Folded into `oook`** (§1 above). One Python tool client, tested once. |
-| **Goodies for iOS** (Swift, ADR-022) | The phone: where a walk happens — camera, microphone, review, confirm | **Yes — the walk client.** Designed from scratch; shares `TheGoodiesKit` with the helper. Offline replica is the open question (ADR-022 §3). |
+| **Goodies for iOS** (Swift, ADR-022) | The phone: where a walk happens — camera, microphone, review, confirm; a replica through the Kit | **Yes — the walk client.** Designed from scratch; shares `TheGoodiesKit` with the helper. |
 | `c11s-house-ios` | — | **Archived** (ADR-022). Its deployment setup and HomeKit code are retained in `apple/`; nothing else. |
 | WildThing (Swift port) | — | **Archived** (ADR-022). |
 
-The rule that falls out: **a replica is TypeScript, a tool client is Python
-or Swift, and there is one of each** — with the iOS app the one place that
-may earn a second replica, decided when its offline needs are known
-(ADR-022 §3). A new client beyond these is a bug report.
+The rule that falls out (as amended by ADR-023): **every MCP client is a
+replica of one reference design — ported once in TypeScript (KittenKong) and
+once in Swift (the Kit, embedded by both apps) — and the Python tool client
+is `oook`.** A new client beyond these is a bug report.
 
 ### 2. One contract for sources: a source proposes, a walk commits
 
