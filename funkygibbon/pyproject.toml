@@ -42,6 +42,16 @@ dependencies = [
     # this floor is about keeping the declared constraint set resolvable across
     # requires-python). Do not lower it.
     "fastapi>=0.133.0",
+    # fastapi 0.135.3 still constructs APIRouter() expecting Starlette's Router
+    # to accept on_startup/on_shutdown kwargs -- starlette 1.6.0 (2026-09-2x)
+    # removed them, so any unpinned install crashes on EVERY APIRouter() call,
+    # including a bare one with no args (fastapi passes them internally).
+    # Verified working: starlette 1.5.1. Verified broken: 1.6.0, 1.7.0.
+    # This is what silently crash-looped every restart of this service for
+    # days while one already-running process (started before the drift) kept
+    # serving and masked it. Do not remove this ceiling without re-verifying
+    # against whatever fastapi version is current at the time.
+    "starlette>=0.48,<1.6.0",
     "uvicorn[standard]>=0.24.0",
     "httpx>=0.25.2",
     "click>=8.1.7",
