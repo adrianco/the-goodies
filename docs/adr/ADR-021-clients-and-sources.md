@@ -1,8 +1,11 @@
 # ADR-021: Clients and sources — which clients survive, and one contract for everything that feeds the graph
 
-**Status:** Proposed · 2026-09-23 · The architecture clean-up that ADR-019
-makes necessary and that the last two months of field use have been asking
-for.
+**Status:** Proposed · 2026-09-23 · Updated 2026-09-28: §2 (the sources
+directory and manifest) is Accepted and detailed in
+[ADR-024](ADR-024-sources-directory.md); §1 (client consolidation), §3
+(skills → `oook.walk`) and §4 (`oook doctor`) remain Proposed here. The
+architecture clean-up that ADR-019 makes necessary and that the last two
+months of field use have been asking for.
 
 ## Context
 
