@@ -23,21 +23,15 @@ skills read naturally, and maps it onto the tools:
 - delete → `tombstone_entity`; a move → `end_relationship` + `create_relationship` (ADR-004)
 - `list_relationships` / `get_connected` / `get_blob` are exposed directly
 
-## Weather / air-quality device access (reference, not a skill)
+## Device integration tooling lives in `sources/` (ADR-024)
 
-`scripts/weather_devices.py` is a stdlib-only reference for reading three common
-device families directly (Ambient Weather's cloud REST API, a PurpleAir sensor's
-local LAN JSON, and the pattern used for a Tempest/WeatherFlow public station
-page) — contributed from the same real install as the skills above, because the
-non-obvious parts (a rate-limited key shared across callers, a sensor's numbered
-API slots vs. its dashboard label, cross-checking two PM2.5 laser channels
-before trusting either, a device that is genuinely slow to answer cold) cost
-real time to work out once and are generic to any install using these device
-families. Read the module docstring before wiring one in — each device has a
-specific gotcha documented next to its function. This does not go through
-`fg_client.py`: it only talks to the external device/cloud APIs, so use
-`fg_client.py` separately (as any skill would) to resolve which device/station
-you're reading from the graph.
+Read access for weather/air-quality devices (Ambient Weather, PurpleAir,
+Tempest/WeatherFlow) and other device families now lives in
+[`sources/weather_devices/`](../../../sources/weather_devices/SOURCE.md), not
+here — see [`sources/README.md`](../../../sources/README.md) for the
+contract every source follows. It doesn't go through `fg_client.py`: it only
+talks to external device/cloud APIs, so use `fg_client.py` separately (as any
+skill would) to resolve which device/station you're reading from the graph.
 
 ## The one design rule: local until saved
 

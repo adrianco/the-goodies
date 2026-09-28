@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 weather_devices.py — generic read access patterns for three weather/air-quality
-device families, contributed from a real install (see the house skills README).
+device families, contributed from a real install (see SOURCE.md next to this
+file, and sources/README.md for the contract every source in this directory
+follows — ADR-024).
 
 None of this talks to FunkyGibbon directly except to resolve a device's
 station/host identity — look that up via fg_client.py's search_entities /
-get_entity the way any other skill does, then pass the resolved value in here.
-Credentials and hosts are read from environment variables; nothing here is
-house-specific.
+get_entity the way any skill does (this source feeds the house domain), then
+pass the resolved value in here. Credentials and hosts are read from
+environment variables; nothing here is house-specific.
 
 Three families, three access patterns, three gotchas worth knowing before you
 build against them:
