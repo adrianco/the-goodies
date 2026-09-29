@@ -103,10 +103,14 @@ You run a continuous conversation with the user over your messaging channel. Bet
    candidates = new_candidates
    ```
 
-   **Home Assistant** (if you run it; set `HA_TOKEN`):
+   **Home Assistant** (if you run it; set `HA_URL` and `HA_TOKEN` — an Instar agent may instead keep them in `.instar/config.json` → `homeAssistant.{url,token}`, so check there before concluding HA isn't available):
    ```bash
-   curl -s "$HA_URL/api/states" -H "Authorization: Bearer $HA_TOKEN" 2>/dev/null | python3 -c "import json,sys; [print(e['entity_id'], e['state']) for e in json.load(sys.stdin) if '<room>' in e.get('attributes',{}).get('friendly_name','').lower()]"
+   # Rooms imported from HA carry content.ha_area_id. Match by AREA, not friendly_name —
+   # device names often don't contain the room name ("TriSensor 8").
+   curl -s -X POST "$HA_URL/api/template" -H "Authorization: Bearer $HA_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"template":"{{ area_devices(\"<ha_area_id>\") | map(\"device_attr\",\"name\") | list }} {{ area_entities(\"<ha_area_id>\") }}"}'
    ```
+   Use curl rather than Python `urllib` for `homeassistant.local`: when mDNS only returns IPv6, urllib fails with "nodename nor servname provided" while curl connects.
 
    **Amazon Alexa / Google Home / other hubs**: Check if the user has mentioned these for this home. If configured, query them. Otherwise note "not configured".
 

@@ -29,12 +29,38 @@ JPEG_QUALITY_MIN = 55
 JPEG_QUALITY_STEP = 5
 
 
+def _compress_with_sips(data: bytes) -> Tuple[bytes, Dict[str, Any]]:
+    """macOS fallback when Pillow is missing or can't decode (e.g. HEIC without
+    pillow-heif). sips ships with macOS and reads HEIC natively."""
+    import os, subprocess, tempfile
+    with tempfile.TemporaryDirectory() as td:
+        src, out = os.path.join(td, "in"), os.path.join(td, "out.jpg")
+        with open(src, "wb") as f:
+            f.write(data)
+        final = b""
+        for dim in (MAX_DIMENSION, 1200, 1000):
+            for q in range(JPEG_QUALITY_START, JPEG_QUALITY_MIN - 1, -JPEG_QUALITY_STEP):
+                subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(q),
+                                "-Z", str(dim), src, "--out", out],
+                               check=True, capture_output=True)
+                with open(out, "rb") as f:
+                    final = f.read()
+                if len(final) <= TARGET_MAX_BYTES:
+                    break
+            if len(final) <= TARGET_MAX_BYTES:
+                break
+    return final, {"orig_size": len(data), "final_size": len(final),
+                   "format_in": "via-sips", "format_out": "JPEG"}
+
+
 def compress_image(data: bytes) -> Tuple[bytes, Dict[str, Any]]:
     """Compress image bytes to ~100KB JPEG, max 1600px. Returns (bytes, info_dict)."""
     try:
         from PIL import Image
-    except ImportError as e:
-        raise RuntimeError("Pillow required: pip install pillow") from e
+    except ImportError:
+        if sys.platform == "darwin":
+            return _compress_with_sips(data)
+        raise RuntimeError("Pillow required: pip install pillow")
 
     # HEIC support (iPhone default). Silent if not installed — JPEG/PNG still work.
     try:
@@ -43,7 +69,12 @@ def compress_image(data: bytes) -> Tuple[bytes, Dict[str, Any]]:
     except ImportError:
         pass
 
-    img = Image.open(io.BytesIO(data))
+    try:
+        img = Image.open(io.BytesIO(data))
+    except Exception:
+        if sys.platform == "darwin":
+            return _compress_with_sips(data)
+        raise
     orig_format = img.format or "UNKNOWN"
     orig_dims = img.size
     orig_size = len(data)
