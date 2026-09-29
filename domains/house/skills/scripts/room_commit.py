@@ -329,7 +329,7 @@ def _apply_photo_attachments(
     for d in session.diffs:
         action = d["action"]
         entity_id = None
-        if action in ("create_device", "create_keypad"):
+        if action in ("create_device", "create_keypad", "create_door"):
             entity_id = created.get(str(d.get("idx")))
         elif action == "attach_photo":
             entity_id = _resolve_entity_ref(d.get("entity_id"), created)
