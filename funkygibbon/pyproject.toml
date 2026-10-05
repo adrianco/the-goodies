@@ -51,7 +51,7 @@ dependencies = [
     # days while one already-running process (started before the drift) kept
     # serving and masked it. Do not remove this ceiling without re-verifying
     # against whatever fastapi version is current at the time.
-    "starlette>=0.48,<1.6.0",
+    "starlette>=0.48,<1.8.0",
     "uvicorn[standard]>=0.24.0",
     "httpx>=0.25.2",
     "click>=8.1.7",
